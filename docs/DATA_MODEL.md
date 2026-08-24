@@ -4,7 +4,7 @@ Schema version in this reconstruction: `PRAGMA user_version = 12`.
 
 The original alpha.16 QA reported schema version 11 and 31 user tables. This reconstruction keeps the 31-table scale and increments the schema version for hardening changes.
 
-## 31 user tables
+## 33 user tables
 
 1. `matters`
 2. `matter_folder_bindings`
@@ -37,6 +37,14 @@ The original alpha.16 QA reported schema version 11 and 31 user tables. This rec
 29. `office_templates`
 30. `legal_export_audit`
 31. `domain_events`
+32. `app_settings`
+33. `matter_suggestions`
+
+`app_settings` is a single-row key/value blob (`id=1`) for local application settings.
+
+`matter_suggestions` tracks top-level office-root folders discovered during a scan that do not
+match any active `matter_folder_bindings` path, so a lawyer can bind them to a new or existing
+Matter (`bind_existing_matter`) or dismiss them (`reject_matter_suggestion`).
 
 ## Integrity principles
 

@@ -43,7 +43,7 @@ Backend:
 - Tauri 2 / Rust
 - SQLCipher + OS keyring design
 - ordered schema migration v12
-- 31 user tables
+- 33 user tables
 - batched metadata scanner
 - Stage B content hashing
 - exact-byte OCR source snapshot + SHA verification
@@ -58,13 +58,15 @@ Backend:
 
 ## Important reconstruction status
 
-The package contains a complete architectural source tree, but it is a **developer reconstruction**.
+The package contains a complete architectural source tree. It is a **developer reconstruction**:
+historical alpha.16 command *internals* (exact original logic/behavior) could not be recovered
+from the missing source.
 
-Some historical alpha.16 command internals cannot be reconstructed truthfully without the missing source. Those commands return:
-
-`RECONSTRUCTED_COMMAND_NOT_YET_WIRED:<command>`
-
-instead of pretending to succeed.
+All 61 commands in the Tauri contract now have real, DB-backed handlers (see
+`docs/MISSING_IMPLEMENTATION_MATRIX.md` for the specific design decisions made while wiring them).
+Where a real implementation would require something this reconstruction doesn't have — a
+DOCX/PDF converter, for example — the command fails closed with a stable error
+(`PdfConverterUnavailable`) instead of faking success.
 
 This package must not be used for client work until the Windows release gates pass.
 

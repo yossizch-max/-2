@@ -29,7 +29,7 @@ fn client(local:bool)->AppResult<Client>{
     builder.build().map_err(|e|AppError::Http(e.to_string()))
 }
 
-fn validate_loopback(base_url:&str)->AppResult<()>{
+pub(crate) fn validate_loopback(base_url:&str)->AppResult<()>{
     let url=Url::parse(base_url).map_err(|e|AppError::Validation(e.to_string()))?;
     let host=url.host_str().unwrap_or("");
     if !matches!(host,"127.0.0.1"|"localhost"|"::1"){

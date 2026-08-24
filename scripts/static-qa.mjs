@@ -18,7 +18,7 @@ const checks={
   commandPaletteFocusTrap:palette.includes('e.key!=="Tab"')&&palette.includes("openerRef"),
   ariaCurrent:shell.includes("aria-current"),
   focusVisible:tokens.includes(":focus-visible"),
-  thirtyOneTables:(sql.match(/CREATE TABLE /g)||[]).length===31,
+  thirtyThreeTables:(sql.match(/CREATE TABLE /g)||[]).length===33,
   ocrSourceMismatch:snapshot.includes("SourceShaMismatch"),
   ocrReverify:extraction.includes("snapshot.verify_unchanged()"),
   docxDocumentAnchoring:extraction.includes('anchor_kind: "document"')&&extraction.includes("page_number: None"),

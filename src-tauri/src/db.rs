@@ -45,3 +45,21 @@ impl DbState {
         f(&conn)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn migration_is_idempotent_across_repeated_app_launches() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let migration = include_str!("../migrations/001_schema_v12.sql");
+        conn.execute_batch(migration).unwrap();
+        // A real app re-runs the full schema on every launch against an
+        // already-initialized database; every statement must tolerate that.
+        conn.execute_batch(migration).unwrap();
+        let table_count: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(table_count, 33);
+    }
+}

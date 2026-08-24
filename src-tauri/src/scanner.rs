@@ -39,11 +39,11 @@ pub fn scan_metadata(db: &DbState, root: &Path) -> AppResult<String> {
         let mtime = metadata.modified().ok().map(|x| format!("{x:?}")).unwrap_or_default();
         batch.push((entry.path().to_path_buf(), name, metadata.len() as i64, mtime));
         if batch.len() >= 250 {
-            flush_batch(db, &run_id, &batch)?;
+            flush_batch(db, &run_id, root, &batch)?;
             batch.clear();
         }
     }
-    if !batch.is_empty() { flush_batch(db, &run_id, &batch)?; }
+    if !batch.is_empty() { flush_batch(db, &run_id, root, &batch)?; }
 
     db.write(|conn| {
         conn.execute(
@@ -55,13 +55,19 @@ pub fn scan_metadata(db: &DbState, root: &Path) -> AppResult<String> {
     Ok(run_id)
 }
 
-fn flush_batch(db: &DbState, run_id: &str, rows: &[(PathBuf, String, i64, String)]) -> AppResult<()> {
+fn suggestion_folder(root: &Path, path: &Path) -> Option<PathBuf> {
+    let rel = path.strip_prefix(root).ok()?;
+    let first = rel.components().next()?;
+    Some(root.join(first.as_os_str()))
+}
+
+fn flush_batch(db: &DbState, run_id: &str, root: &Path, rows: &[(PathBuf, String, i64, String)]) -> AppResult<()> {
     db.write(|conn| {
         let tx = conn.transaction()?;
         for (path, name, size, mtime) in rows {
             let key = path_key(path);
             let id = Uuid::new_v4().to_string();
-            tx.execute(
+            let matched = tx.execute(
                 "INSERT INTO file_occurrences(
                     id,matter_id,path_display,path_key,file_name,byte_size,observed_mtime,
                     availability_state,discovered_at,last_seen_at
@@ -78,6 +84,22 @@ fn flush_batch(db: &DbState, run_id: &str, rows: &[(PathBuf, String, i64, String
                     exists_now=1",
                 params![id, path.to_string_lossy(), key, name, size, mtime, Utc::now().to_rfc3339()],
             )?;
+            if matched == 0 {
+                if let Some(folder) = suggestion_folder(root, path) {
+                    let folder_key = path_key(&folder);
+                    let folder_name = folder.file_name()
+                        .map(|x| x.to_string_lossy().to_string())
+                        .unwrap_or_else(|| folder.to_string_lossy().to_string());
+                    tx.execute(
+                        "INSERT INTO matter_suggestions(
+                            id,path_display,path_key,suggested_title,file_count,status,created_at
+                         ) VALUES(?1,?2,?3,?4,1,'pending',?5)
+                         ON CONFLICT(path_key) DO UPDATE SET file_count=file_count+1
+                         WHERE matter_suggestions.status='pending'",
+                        params![Uuid::new_v4().to_string(), folder.to_string_lossy(), folder_key, folder_name, Utc::now().to_rfc3339()],
+                    )?;
+                }
+            }
         }
         tx.execute(
             "UPDATE scan_runs SET discovered_count=discovered_count+?2 WHERE id=?1",
