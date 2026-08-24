@@ -1,0 +1,7 @@
+{
+  "command": "tsc -p tsconfig.qa.json",
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "",
+  "result": "PASS"
+}
