@@ -3,11 +3,14 @@
 Current reconstruction verdict:
 **Developer source only. No client use.**
 
-Status as of this reconstruction pass (Linux dev container, no Windows machine, no
-elevated CI permissions available in this session): **A and B verified below. D's
-automated checks verified, one real WCAG AA failure found and fixed. C, E and F cannot
-be completed from this environment — see each gate for exactly what is missing and who
-needs to do it.**
+Status as of this reconstruction pass: **A and B verified. D's automated checks
+verified, one real WCAG AA failure found and fixed. E: a real Windows build now
+succeeds in CI and produces an unsigned installer (see Gate E for the artifact link) —
+signing, release manifest and rollback package are still outstanding. C and F remain
+fully blocked — see each gate for exactly what is missing and who needs to do it.**
+
+**This is still not a client-ready release.** An unsigned installer from a
+reconstruction that hasn't passed Gates C or F must not be used for real client work.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -69,32 +72,40 @@ To close this gate, a human (not this session) must:
   directly, not by inspection.
 - no stale text claiming legal-document engine is blocked — checked, none found. ✅
 
-## Gate E, real Windows build — blocked, cannot be completed from this session
-This reconstruction is a Tauri 2 app: SQLCipher, the Windows OS credential store via
-`keyring`, and WebView2 are all real Windows-native dependencies that cannot be
-cross-compiled with confidence from this Linux container. This gate needs an actual
-Windows machine (or CI runner). The repo ships
-`.github/workflows/windows-release-gate.yml` (`windows-2025` runner) for exactly this,
-triggered manually (`workflow_dispatch`), but this session's GitHub integration got
-`403 Resource not accessible by integration` attempting to dispatch it — it lacks
-`actions: write` on this repo. To close this gate, a human needs to either:
-- grant that permission so a future session can trigger it, or
-- run `scripts/windows-build-gate.ps1` (or the workflow) themselves on Windows/via the
-  GitHub UI's Actions tab.
+## Gate E, real Windows build — partially closed
+`.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
+`windows-2025` GitHub Actions runner:
+[run #3](https://github.com/yossizch-max/-2/actions/runs/32759664126), commit
+`879daa3`, 2026-08-24. Build took ~41 minutes total (no cross-run cache: everything,
+including SQLCipher/OpenSSL, compiles from source every run).
 
-Even a successful run of that workflow only produces an **unsigned** NSIS installer —
-code signing, the release SHA256/manifest and the rollback package still need to be
-done by whoever owns the signing certificate.
-- Node/npm versions recorded
-- rustc/cargo versions recorded
-- frontend release build
-- Rust locked compile
-- Rust locked tests
-- NSIS bundle
-- Windows code signing
-- release SHA256
-- release manifest
-- rollback package
+- Node/npm versions recorded (in the run log) ✅
+- rustc/cargo versions recorded (in the run log) ✅
+- frontend release build ✅
+- Rust locked compile (`cargo check --locked`) ✅
+- Rust locked tests (`cargo test --locked`, 4/4) ✅
+- NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
+  Actions artifact (5.4MB, expires 14 days after the run)
+- Windows code signing — ❌ not done. Needs a human with a real code-signing
+  certificate; nothing in this repo can substitute for that.
+- release SHA256 / release manifest / rollback package — ❌ not done. These are
+  release-process steps for whoever owns distribution, not something a CI run
+  produces on its own.
+
+Two real bugs were found and fixed getting this far (neither was catchable from
+Linux `cargo check`, which is why they only surfaced here):
+1. `src-tauri/icons/icon.ico` was missing — `tauri-build`'s build script requires it
+   on the Windows target specifically to generate the `.exe`'s resource file. Added a
+   real multi-resolution ICO.
+2. The workflow ran `npm run desktop:build` but never uploaded the resulting
+   installer anywhere — a successful build produced a file inside the ephemeral
+   runner that was discarded when the job ended. Added `actions/upload-artifact`.
+
+Earlier note, kept for history: this session's GitHub integration initially got
+`403 Resource not accessible by integration` trying to dispatch the workflow. That
+resolved after the repo owner updated the GitHub App's permissions **and** the
+workflow file was merged to `main` (GitHub only discovers `workflow_dispatch`
+workflows that exist on the default branch).
 
 ## Gate F, end-to-end synthetic acceptance — blocked, cannot be completed from this session
 This requires a running, packaged desktop app (Gate E's output) on Windows, real
