@@ -23,6 +23,7 @@ export type DocumentRow = {
   currentVersionId?: string | null;
   currentSha256?: string | null;
   modifiedAt: string;
+  occurrenceId?: string | null;
 };
 
 export type ActionItem = {

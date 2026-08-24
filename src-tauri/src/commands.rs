@@ -259,7 +259,7 @@ pub fn list_documents(state: State<'_, AppState>, payload: Value) -> AppResult<V
         let mut stmt=conn.prepare(
             "SELECT d.id,d.matter_id,coalesce(o.file_name,d.logical_title,''),d.category,
              coalesce(o.availability_state,'unknown'),coalesce(v.extraction_state,'not_started'),
-             v.id,v.content_sha256,coalesce(o.observed_mtime,'')
+             v.id,v.content_sha256,coalesce(o.observed_mtime,''),o.id
              FROM documents d LEFT JOIN document_versions v ON v.document_id=d.id AND v.matter_id=d.matter_id
              LEFT JOIN file_occurrences o ON o.document_version_id=v.id
              WHERE d.matter_id=?1 GROUP BY d.id ORDER BY d.updated_at DESC"
@@ -268,7 +268,8 @@ pub fn list_documents(state: State<'_, AppState>, payload: Value) -> AppResult<V
             "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,"fileName":r.get::<_,String>(2)?,
             "category":r.get::<_,String>(3)?,"sourceState":r.get::<_,String>(4)?,
             "extractionState":r.get::<_,String>(5)?,"currentVersionId":r.get::<_,Option<String>>(6)?,
-            "currentSha256":r.get::<_,Option<String>>(7)?,"modifiedAt":r.get::<_,String>(8)?
+            "currentSha256":r.get::<_,Option<String>>(7)?,"modifiedAt":r.get::<_,String>(8)?,
+            "occurrenceId":r.get::<_,Option<String>>(9)?
         })))?.collect::<Result<Vec<_>,_>>()?;
         Ok(Value::Array(rows))
     })
