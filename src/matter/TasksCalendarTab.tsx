@@ -4,6 +4,7 @@ import { useCommand } from "../lib/hooks";
 import type { Task, Deadline } from "../types";
 
 type WaitingFor = {id:string;matterId:string;partyLabel:string;itemLabel:string;followUpAt?:string|null;status:string};
+type CalendarEvent = {id:string;matterId:string;title:string;startsAt:string;endsAt?:string|null;eventKind:string;status:string};
 
 export function TasksCalendarTab({matterId}:{matterId:string}) {
   const {data:tasks,loading:tasksLoading,reload:reloadTasks}=useCommand(
@@ -14,6 +15,9 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
   );
   const {data:waiting,loading:waitingLoading,reload:reloadWaiting}=useCommand(
     ()=>commands.list_waiting_for({matterId}) as Promise<WaitingFor[]>, [matterId]
+  );
+  const {data:events,loading:eventsLoading,reload:reloadEvents}=useCommand(
+    ()=>commands.list_calendar_items({matterId}) as Promise<CalendarEvent[]>, [matterId]
   );
 
   const [title,setTitle]=useState("");
@@ -51,6 +55,16 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
     setWaitingBusy(id);
     try{ await commands.close_waiting_for({waitingForId:id}); reloadWaiting(); }
     finally{ setWaitingBusy(null); }
+  };
+
+  const [eventTitle,setEventTitle]=useState("");
+  const [startsAt,setStartsAt]=useState("");
+  const [eventBusy,setEventBusy]=useState(false);
+  const addEvent=async()=>{
+    if(!eventTitle.trim()||!startsAt)return;
+    setEventBusy(true);
+    try{ await commands.create_calendar_item({matterId,title:eventTitle,startsAt}); setEventTitle("");setStartsAt(""); reloadEvents(); }
+    finally{ setEventBusy(false); }
   };
 
   return <div>
@@ -98,6 +112,20 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
       {waiting?.map(w=><div className="timeline-row" key={w.id}>
         <div><strong>{w.partyLabel}</strong><small>{w.itemLabel}{w.followUpAt?` · מעקב: ${w.followUpAt}`:""}</small></div>
         {w.status==="open" && <button className="btn secondary" onClick={()=>closeWaiting(w.id)} disabled={waitingBusy===w.id}>סגור</button>}
+      </div>)}
+    </section>
+    <section className="workspace-card">
+      <h2>אירועי יומן</h2>
+      <div className="header-actions">
+        <input value={eventTitle} onChange={e=>setEventTitle(e.target.value)} placeholder="כותרת (למשל: דיון קדם משפט)"/>
+        <input type="datetime-local" value={startsAt} onChange={e=>setStartsAt(e.target.value)}/>
+        <button className="btn secondary" onClick={addEvent} disabled={eventBusy||!eventTitle.trim()||!startsAt}>הוסף אירוע</button>
+      </div>
+      {eventsLoading && <p className="quiet">טוען...</p>}
+      {!eventsLoading && events?.length===0 && <p className="quiet">אין אירועים.</p>}
+      {events?.map(e=><div className="timeline-row" key={e.id}>
+        <b>{e.startsAt}</b>
+        <div><strong>{e.title}</strong><small>{e.eventKind}</small></div>
       </div>)}
     </section>
   </div>;
