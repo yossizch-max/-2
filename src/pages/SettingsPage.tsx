@@ -3,6 +3,7 @@ import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 
 type Suggestion={id:string;pathDisplay:string;suggestedTitle:string;fileCount:number;createdAt:string};
+type ScanRun={id:string;rootPath:string;status:string;startedAt:string;finishedAt?:string|null;discoveredCount:number;hashedCount:number;errorCount:number};
 
 export function SettingsPage() {
   const {data:officeRoot,reload:reloadRoot}=useCommand(
@@ -10,6 +11,9 @@ export function SettingsPage() {
   );
   const {data:suggestions,reload:reloadSuggestions}=useCommand(
     ()=>commands.list_matter_suggestions() as Promise<Suggestion[]>, []
+  );
+  const {data:scanRuns,reload:reloadScanRuns}=useCommand(
+    ()=>commands.list_scan_runs() as Promise<ScanRun[]>, []
   );
   const [busy,setBusy]=useState<string|null>(null);
   const [status,setStatus]=useState<string|null>(null);
@@ -30,6 +34,7 @@ export function SettingsPage() {
     try{
       await commands.scan_office_root();
       reloadSuggestions();
+      reloadScanRuns();
       setStatus("הסריקה הושלמה.");
     }catch(e){setStatus(String(e));}
     finally{setBusy(null);}
@@ -74,6 +79,15 @@ export function SettingsPage() {
           <button className="btn secondary" onClick={()=>reject(s)} disabled={busy===s.id}>התעלם</button>
           <button className="btn primary" onClick={()=>createFromSuggestion(s)} disabled={busy===s.id}>{busy===s.id?"יוצר...":"צור תיק"}</button>
         </span>
+      </div>)}
+    </section>}
+
+    {scanRuns && scanRuns.length>0 && <section className="workspace-card">
+      <h2>היסטוריית סריקות</h2>
+      {scanRuns.map(r=><div className="tr" key={r.id}>
+        <span>{r.startedAt}</span>
+        <span>{r.status}</span>
+        <span>{r.discoveredCount} קבצים · {r.hashedCount} עובדו{r.errorCount>0?` · ${r.errorCount} שגיאות`:""}</span>
       </div>)}
     </section>}
 
