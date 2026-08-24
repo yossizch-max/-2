@@ -1,0 +1,35 @@
+{
+  "tesseract": {
+    "version": "5.4.0.20240606",
+    "distribution": "UB-Mannheim/tesseract (community-maintained official Windows build, referenced by the tesseract-ocr project itself)",
+    "license": "Apache-2.0",
+    "url": "https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe",
+    "sha256": "c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9",
+    "installerKind": "innosetup"
+  },
+  "poppler": {
+    "version": "24.08.0-0",
+    "distribution": "oschwartz10612/poppler-windows",
+    "license": "GPL-2.0-or-later / GPL-3.0-or-later (poppler itself); mere aggregation via subprocess invocation, not linked into this codebase",
+    "url": "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip",
+    "sha256": "58a6f9ae269756231d2f9aa6cba39d75fec6deacaf3c4a50683383b5f3d5a527"
+  },
+  "tessdata": {
+    "distribution": "tesseract-ocr/tessdata (official)",
+    "license": "Apache-2.0",
+    "languages": {
+      "heb": {
+        "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/heb.traineddata",
+        "sha256": "7da6ea6b7a2620ec8e8b41de2967a13d429635a56657a0b30b622501a573d3e1"
+      },
+      "ara": {
+        "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/ara.traineddata",
+        "sha256": "2005976778bbc14fc56a4ea8d43c6080847aeee72fcc2201488f240daca15c5b"
+      },
+      "eng": {
+        "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/eng.traineddata",
+        "sha256": "daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047"
+      }
+    }
+  }
+}
