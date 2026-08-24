@@ -1,0 +1,10 @@
+{
+  "user_version": 12,
+  "tables": 31,
+  "indexes": 20,
+  "triggers": 18,
+  "integrity": "ok",
+  "foreign_key_check": [],
+  "locked_damage_mutation_blocked": true,
+  "cross_matter_damage_reference_blocked": true
+}

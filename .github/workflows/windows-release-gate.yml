@@ -1,0 +1,29 @@
+name: TAHRIR Windows Release Gate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run contract:check
+      - run: npm run qa:static
+      - run: npm run build
+
+      - working-directory: src-tauri
+        run: cargo check --locked
+
+      - working-directory: src-tauri
+        run: cargo test --locked -- --test-threads=1
+
+      - run: npm run desktop:build

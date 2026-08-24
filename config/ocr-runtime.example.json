@@ -1,0 +1,18 @@
+{
+  "tesseract": {
+    "version": "PIN_VERSION",
+    "url": "PIN_OFFICIAL_OR_APPROVED_DISTRIBUTION_URL",
+    "sha256": "PIN_64_HEX_SHA256"
+  },
+  "poppler": {
+    "version": "PIN_VERSION",
+    "url": "PIN_APPROVED_WINDOWS_DISTRIBUTION_URL",
+    "sha256": "PIN_64_HEX_SHA256"
+  },
+  "tessdata": {
+    "version": "PIN_VERSION",
+    "url": "PIN_TESSDATA_ARCHIVE_URL",
+    "sha256": "PIN_64_HEX_SHA256",
+    "languages": ["heb","ara","eng"]
+  }
+}

@@ -1,0 +1,33 @@
+[package]
+name = "tahrir"
+version = "0.1.0-alpha.16.1"
+description = "TAHRIR local-first legal workspace, reconstructed canonical source"
+edition = "2021"
+
+[lib]
+name = "tahrir_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+walkdir = "2"
+unicode-normalization = "0.1"
+zip = "4"
+quick-xml = "0.41"
+keyring = { version = "3", features = ["windows-native"] }
+getrandom = "0.2"
+rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+url = "2"
