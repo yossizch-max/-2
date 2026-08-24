@@ -1,7 +1,7 @@
 :root{
   font-family:"Segoe UI Variable","Segoe UI",Arial,sans-serif;
   direction:rtl;color:#17212b;background:#f4f3ef;
-  --canvas:#f4f3ef;--surface:#fff;--surface-soft:#f8f7f3;--ink:#17212b;--muted:#68737d;
+  --canvas:#f4f3ef;--surface:#fff;--surface-soft:#f8f7f3;--ink:#17212b;--muted:#5c6670;
   --navy:#102536;--navy-2:#18364b;--bronze:#9a7441;--bronze-text:#765224;
   --verified:#2e6b58;--warning:#8a611e;--risk:#8e3742;--line:rgba(16,37,54,.11);
   --shadow:0 12px 34px rgba(16,37,54,.055);--r:14px;
