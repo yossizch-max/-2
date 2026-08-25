@@ -65,9 +65,9 @@
   "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
   "windows_tauri_build": {
     "status": "PASS on a real windows-2025 GitHub Actions runner",
-    "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32866131285",
-    "most_recent_verified_commit": "d0cdb3e88cc85e3ce06205c0ab69d42c396858dd",
-    "note": "commits after that run (including this regeneration, which adds the legal-rules infrastructure) have not yet had a fresh Windows CI run - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
+    "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32877320049",
+    "most_recent_verified_commit": "64b70661254867e857a39c1c86c5e883055f7c8f",
+    "note": "this run includes the legal-rules infrastructure (44/44 tests passed on the real runner) - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds, since any commit after this one needs its own fresh run"
   },
   "ocr_third_party_runtime": {
     "status": "BUNDLED_AND_VERIFIED",

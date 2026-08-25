@@ -31,10 +31,11 @@ Verified Authority not requiring an approved passage — were then also fixed (s
 "Follow-up fixes" section below), confirmed on real Windows CI at run #12, commit
 `d0cdb3e` (2026-08-25). A fourth document then specified governed infrastructure for
 deterministic legal rules; Phase A (schema, DSL interpreter, ruleset lifecycle, engine
-runs, Settings UI — deliberately zero Israeli substantive law) is now built and tested
-(see "Legal rules infrastructure, Phase A" below) but **not yet reconfirmed on Windows
-CI** — that run is still needed before Gate C/E can be called current again. What's
-left needs a human on a real Windows machine with a fresh installer: real OCR, real AI
+runs, Settings UI — deliberately zero Israeli substantive law) is now built, tested, and
+confirmed on real Windows CI at run #13, commit `64b7066` (2026-08-25) — the latest
+commit on `main`, and current as of this pass (see "Legal rules infrastructure, Phase A"
+below). What's left needs a human on a real Windows machine with a fresh installer: real
+OCR, real AI
 provider calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
@@ -367,7 +368,9 @@ DSL's 11 pure-function unit tests) — 44/44 total. `cargo check/test --locked`,
 file (`thirtyThreeTablesInBaseSchema`/`fiveTablesInLegalRulesInfra`) rather than one
 combined total — the same class of silent-staleness risk as the `contract:check`
 `=== 61` bug from earlier in this project, caught proactively this time instead of by
-a CI failure.
+a CI failure. Confirmed on real Windows CI at
+[run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049), commit
+`64b7066`, 2026-08-25 — see the updated Gate C/E entries below.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -397,7 +400,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #12)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #13)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -486,6 +489,15 @@ verification both succeeded, and the installer artifact
 (`tahrir-windows-installer-unsigned`) is 61,431,884 bytes — consistent with the OCR
 payload being unchanged (only the cleanup logic around it changed).
 
+**Reconfirmed again after the legal rules infrastructure Phase A landed (2026-08-25,
+run #13):** this round touched schema (a new migration), a large new Rust module, new
+commands and a new UI page, but nothing in the OCR vendoring/extraction path.
+[Run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049), commit
+`64b7066`, succeeded end-to-end: `cargo test --locked` (44/44, including all 15 new
+legal-rules tests) passed on the real runner, OCR vendoring and verification both
+succeeded, and the installer artifact is 61,506,165 bytes — the small delta from
+run #12 is expected (application code size grew; the OCR payload itself did not).
+
 Still remaining:
 1. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
    packaged app actually running on a real machine, which this session cannot do.
@@ -512,25 +524,26 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285), commit
-`d0cdb3e`, 2026-08-25 (round-2 and round-3 fixes were separately confirmed at
-[run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829), commit
-`7a3ec11`, and [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830),
-commit `721cc03`, same day). Build took ~42 minutes total (no cross-run cache:
-everything, including SQLCipher/OpenSSL, compiles from source every run).
+[run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049), commit
+`64b7066`, 2026-08-25 (rounds 2/3 and the follow-up fixes were separately confirmed at
+[run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829) commit `7a3ec11`,
+[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830) commit `721cc03`,
+and [run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285) commit
+`d0cdb3e`, all same day). Build took ~33 minutes total (no cross-run cache: everything,
+including SQLCipher/OpenSSL, compiles from source every run).
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 24/24 as of run #12, up from 19 at run #11 as
-  the OCR-RAII and authority-passage regression tests were added) ✅
+- Rust locked tests (`cargo test --locked`, 44/44 as of run #13, up from 24 at run #12 as
+  the legal-rules-infrastructure regression tests were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #12]
-  (https://github.com/yossizch-max/-2/actions/runs/32866131285) reconfirms the artifact
-  at 61,431,884 bytes on the current source. Each run's artifact expires 14 days after
+  full OCR runtime (see Gate C) at 61.4MB, and [run #13]
+  (https://github.com/yossizch-max/-2/actions/runs/32877320049) reconfirms the artifact
+  at 61,506,165 bytes on the current source. Each run's artifact expires 14 days after
   that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
