@@ -19,10 +19,13 @@ one — export+audit, DB reopen) — genuinely executed, not mocked. An independ
 (2026-08-25, see "External audit response" below) then found and this pass fixed seven
 P0 integrity gaps a passing test suite hadn't caught — approved-document immutability,
 source-lifecycle/staleness, fact-grounding requirements, and a client-trusted damage
-hash — with 10 new regression tests (`integrity_tests.rs`). What's left needs a human
-on a real Windows machine with a fresh Gate E build off the current commit: real OCR,
-real AI provider calls, and DOCX export, which doesn't exist in this reconstruction
-yet.**
+hash — with 10 new regression tests (`integrity_tests.rs`). Gate C/E have since been
+reconfirmed on the current, audit-response-fixed source (run #9, commit `fb1ec86`) -
+that took three CI attempts, two of which caught real bugs (a stale hardcoded command
+count, and a keyring test assertion that was actually wrong on real Windows - see the
+"External audit response" section's P0-7 entry). What's left needs a human on a real
+Windows machine with that installer: real OCR, real AI provider calls, and DOCX export,
+which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -72,9 +75,18 @@ faith. All seven are now closed:
   the source's `content_sha256` into the integrity hash. `AuthoritiesTab` gained a
   source-document picker so this is reachable from the UI.
 - **P0-7, installer stale relative to source** — `main` was 5 commits ahead of the
-  commit (`e92a148`) Gate C's installer was built from. Not independently re-fixed here
-  (it's a consequence of every fix above); Gate C/E need a fresh Windows run against the
-  current commit before this reconstruction can be called verified end-to-end again.
+  commit (`e92a148`) Gate C's installer was built from. Closed by rerunning the Windows
+  Release Gate against the current commit — see the updated Gate C/E entries below.
+  This took three attempts on real CI, each a genuine bug caught by actually running it
+  rather than assuming: run #7 failed at `contract:check`
+  (`scripts/check-command-contract.mjs` had a hardcoded `=== 61` check left over from
+  before this session added any commands - fixed to just check `missing`/`extra` are
+  empty); run #8 got past that and failed a real `cargo test` assertion in
+  `gate_f_partial.rs`, which had hard-asserted the DB-reopen-without-a-retrievable-key
+  path always fails closed - true in the Linux dev sandbox this was written in, but
+  false (and *should* be false) on real Windows, where the OS Credential Manager
+  correctly persists the key; fixed to accept either valid outcome and actually verify
+  whichever one occurs. Run #9 succeeded end-to-end.
 
 Also closed while responding to the same report (flagged there as P1, not P0, but easy
 to close alongside these and directly relevant to "don't trust unverified state"):
@@ -127,12 +139,13 @@ that live check belongs to Gate F.
 - `package-lock.json` and `src-tauri/Cargo.lock` are committed and reviewed. ✅
 - `npm ci` — clean install, 0 vulnerabilities from `npm audit --audit-level=high`. ✅
 - `cargo check --locked` — passes. ✅
-- `cargo test --locked -- --test-threads=1` — 4/4 tests pass. ✅
+- `cargo test --locked -- --test-threads=1` — 15/15 tests pass (grown from the original
+  4 as Gates F and the external-audit response added real coverage). ✅
 - Build does not modify either lockfile — verified by hashing both files before and
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #9)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -175,10 +188,29 @@ D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftoppm.exe
 D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftotext.exe
 D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\tesseract\tesseract.exe
 ```
+
+**Reconfirmed on the current source (2026-08-25, run #9):** after the external-audit
+response landed (P0-1 through P0-7 above), Gate C/E needed a fresh Windows run to prove
+the *current* commit still builds, not just the one from three days' worth of commits
+ago — see P0-7 above for the two real bugs run #7 and run #8 caught along the way (a
+stale hardcoded command count, and a keyring test assertion that was actually wrong on
+real Windows). [Run #9](https://github.com/yossizch-max/-2/actions/runs/32835457436),
+commit `fb1ec86`, succeeded end-to-end: `cargo check`/`cargo test` (15/15) both passed
+on the real runner, OCR vendoring and verification succeeded, and the same six files
+landed in the same places again:
+```
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\ara.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\eng.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\heb.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftoppm.exe
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftotext.exe
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\tesseract\tesseract.exe
+```
 Gate C's "verify final Tauri bundle contains all required runtime files" is satisfied —
-the resulting installer artifact (`tahrir-windows-installer-unsigned`, this run) is
-61.4MB, up from 5.4MB before OCR vendoring existed, consistent with the OCR runtime
-actually being embedded.
+the resulting installer artifact (`tahrir-windows-installer-unsigned`, run #9) is
+61,398,227 bytes (~61.4MB, identical to run #6's size), up from 5.4MB before OCR
+vendoring existed, consistent with the OCR runtime actually being embedded and
+unchanged by the audit-response commits.
 
 Still remaining:
 1. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
@@ -205,21 +237,23 @@ Still remaining:
 
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
-`windows-2025` GitHub Actions runner:
-[run #3](https://github.com/yossizch-max/-2/actions/runs/32759664126), commit
-`879daa3`, 2026-08-24. Build took ~41 minutes total (no cross-run cache: everything,
-including SQLCipher/OpenSSL, compiles from source every run).
+`windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
+[run #9](https://github.com/yossizch-max/-2/actions/runs/32835457436), commit `fb1ec86`,
+2026-08-25. Build took ~40 minutes total (no cross-run cache: everything, including
+SQLCipher/OpenSSL, compiles from source every run).
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 4/4) ✅
+- Rust locked tests (`cargo test --locked`, 15/15 as of run #9) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB. Each run's artifact expires 14 days after
-  that run.
+  full OCR runtime (see Gate C) at 61.4MB, and [run #9]
+  (https://github.com/yossizch-max/-2/actions/runs/32835457436) reconfirms the same
+  61,398,227-byte artifact on the current, audit-response-fixed source. Each run's
+  artifact expires 14 days after that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
 - release SHA256 / release manifest / rollback package — ❌ not done. These are
