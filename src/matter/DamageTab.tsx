@@ -67,7 +67,7 @@ export function DamageTab({matterId}:{matterId:string}) {
     {creating && <div className="modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setCreating(false);}}>
       <div className="workspace-card" style={{width:"min(480px,90vw)"}}>
         <h2>תחשיב נזק חדש</h2>
-        <label>משטר<select value={regime} onChange={e=>setRegime(e.target.value as "pip"|"tort")}><option value="tort">נזיקין</option><option value="pip">ביטוח חובה (PIP)</option></select></label>
+        <label>משטר<select value={regime} onChange={e=>setRegime(e.target.value as "pip"|"tort")}><option value="tort">נזיקין</option><option value="pip">ביטוח חובה (פלת"ד)</option></select></label>
         <label>מצב<select value={lifeState} onChange={e=>setLifeState(e.target.value as "living"|"death")}><option value="living">נפגע בחיים</option><option value="death">עיזבון</option></select></label>
         {INPUT_LABELS.map(([key,label])=>
           <label key={key}>{label} (₪)<input type="number" min="0" value={amounts[key]??""} onChange={e=>setAmounts(a=>({...a,[key]:e.target.value}))}/></label>

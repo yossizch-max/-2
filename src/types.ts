@@ -34,6 +34,7 @@ export type ActionItem = {
   title: string;
   subtitle: string;
   actionLabel: string;
+  dueAt?: string | null;
 };
 
 export type Deadline = {
@@ -58,11 +59,17 @@ export type AiProfile = {
   model?: string | null; enabled: boolean; clientDataAuthorized: boolean;
 };
 
+export type SourceExcerpt = {
+  sourceId: string; page?: number | null; fileName?: string | null;
+  excerpt: string; truncated: boolean;
+};
+
 export type AiProposal = {
   id: string; proposalKind: string;
   structured: {subject?: string; predicate?: string; value?: string; sourceIds?: string[]};
   status: "pending" | "approved" | "rejected" | "needs_revision";
   reviewedAt?: string | null; reviewNote?: string | null;
+  sourceExcerpts: SourceExcerpt[];
 };
 
 export type AiRun = {

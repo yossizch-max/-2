@@ -5,7 +5,7 @@ import { commands } from "../lib/ipc";
 type SearchHit = {kind:string; matterId?:string|null; id:string; title:string; subtitle:string};
 const KIND_LABEL:Record<string,string>={matter:"תיק",file:"מסמך",verified_fact:"עובדה",document_page:"טקסט מסמך"};
 
-export function SearchPage() {
+export function SearchPage({onOpenMatter}:{onOpenMatter:(matterId:string)=>void}) {
   const [q,setQ]=useState("");
   const [rows,setRows]=useState<SearchHit[]>([]);
   const [loading,setLoading]=useState(false);
@@ -26,7 +26,9 @@ export function SearchPage() {
     <div className="page-head"><div><span className="eyebrow">SEARCH</span><h1>חיפוש</h1><p>Metadata, שמות קבצים, טקסט מחולץ ועובדות מאומתות.</p></div></div>
     <input className="big-search" value={q} onChange={(e: ChangeEvent<HTMLInputElement>)=>setQ(e.target.value)} placeholder="שם תיק, מספר או מסמך..."/>
     {loading && <p className="quiet">מחפש...</p>}
-    <div className="dense-list">{rows.map((x,i)=><button className="work-row" key={i}><div><span className="eyebrow">{KIND_LABEL[x.kind]??x.kind}</span><strong>{x.title}</strong><small>{x.subtitle}</small></div><span>פתח</span></button>)}</div>
+    <div className="dense-list">{rows.map((x,i)=><button className="work-row" key={i}
+      onClick={()=>x.matterId&&onOpenMatter(x.matterId)} disabled={!x.matterId}>
+      <div><span className="eyebrow">{KIND_LABEL[x.kind]??x.kind}</span><strong>{x.title}</strong><small>{x.subtitle}</small></div><span>פתח</span></button>)}</div>
     {!loading && q.trim().length>=2 && rows.length===0 && <p className="quiet">אין תוצאות.</p>}
   </div>;
 }

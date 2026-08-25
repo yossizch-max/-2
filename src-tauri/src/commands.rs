@@ -19,8 +19,32 @@ fn required_string<'a>(payload:&'a Value,key:&str)->AppResult<&'a str>{
 
 #[tauri::command]
 pub fn get_app_health(state: State<'_, AppState>, _payload: Value) -> AppResult<Value> {
-    let _=&state;
-    Ok(json!({"database":"ok","sourceIndex":"ok","ocrRuntime":"runtime_checked_at_use","aiProvider":"configured_per_profile"}))
+    let database = if state.db.read(|conn| Ok(conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))?)).is_ok() {
+        "ok"
+    } else {
+        "unreachable"
+    };
+
+    let source_index = if state.office_root.lock().map(|g| g.is_some()).unwrap_or(false) {
+        "bound"
+    } else {
+        "not_configured"
+    };
+
+    let pdftotext = state.resource_root.join("ocr").join("vendor").join("poppler").join("pdftotext.exe");
+    let tesseract = state.resource_root.join("ocr").join("vendor").join("tesseract").join("tesseract.exe");
+    let ocr_runtime = if pdftotext.exists() && tesseract.exists() { "ok" } else { "missing" };
+
+    let ai_provider = state.db.read(|conn| Ok(conn.query_row(
+        "SELECT COUNT(*) FROM ai_provider_profiles WHERE enabled=1", [], |r| r.get::<_, i64>(0)
+    )?)).map(|n: i64| n > 0).unwrap_or(false);
+
+    Ok(json!({
+        "database": database,
+        "sourceIndex": source_index,
+        "ocrRuntime": ocr_runtime,
+        "aiProvider": if ai_provider { "enabled" } else { "disabled" },
+    }))
 }
 
 #[tauri::command]
@@ -739,7 +763,7 @@ pub fn get_ai_run(state: State<'_, AppState>, payload: Value) -> AppResult<Value
             "SELECT id,proposal_kind,structured_json,status,reviewed_at,review_note
              FROM ai_proposals WHERE ai_run_id=?1"
         )?;
-        let proposals=stmt.query_map([run_id],|r|{
+        let mut proposals=stmt.query_map([run_id],|r|{
             let structured:String=r.get(2)?;
             Ok(json!({
                 "id":r.get::<_,String>(0)?,"proposalKind":r.get::<_,String>(1)?,
@@ -748,6 +772,34 @@ pub fn get_ai_run(state: State<'_, AppState>, payload: Value) -> AppResult<Value
                 "reviewNote":r.get::<_,Option<String>>(5)?
             }))
         })?.collect::<Result<Vec<_>,_>>()?;
+
+        let mut excerpt_stmt=conn.prepare(
+            "SELECT p.page_number,p.display_text,
+             (SELECT o.file_name FROM file_occurrences o
+              WHERE o.document_version_id=p.document_version_id AND o.exists_now=1 LIMIT 1)
+             FROM document_pages p WHERE p.id=?1"
+        )?;
+        for proposal in proposals.iter_mut(){
+            let source_ids:Vec<String>=proposal["structured"]["sourceIds"].as_array()
+                .map(|a|a.iter().filter_map(|v|v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let mut excerpts=Vec::with_capacity(source_ids.len());
+            for source_id in &source_ids{
+                if let Ok((page,text,file_name))=excerpt_stmt.query_row([source_id],|r|{
+                    Ok((r.get::<_,Option<i64>>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))
+                }){
+                    let truncated:String=text.chars().take(400).collect();
+                    excerpts.push(json!({
+                        "sourceId":source_id,"page":page,
+                        "fileName":file_name,
+                        "excerpt":truncated,
+                        "truncated":text.chars().count()>400
+                    }));
+                }
+            }
+            proposal["sourceExcerpts"]=Value::Array(excerpts);
+        }
+
         let mut run=run; run["proposals"]=Value::Array(proposals);
         Ok(run)
     })

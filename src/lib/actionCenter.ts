@@ -17,13 +17,13 @@ export async function loadActionItems():Promise<ActionItem[]>{
     for(const d of deadlines){
       if(d.state!=="committed")continue;
       items.push({id:`dl-${d.id}`,matterId:matter.id,matterTitle:matter.title,kind:"critical",
-        title:`מועד: ${d.action} · ${d.dueAt}`,subtitle:d.sourceLabel,actionLabel:"פתח מועד"});
+        title:`מועד: ${d.action} · ${d.dueAt}`,subtitle:d.sourceLabel,actionLabel:"פתח מועד",dueAt:d.dueAt});
     }
     for(const t of tasks){
       if(t.status!=="open")continue;
       items.push({id:`t-${t.id}`,matterId:matter.id,matterTitle:matter.title,
         kind:t.riskClass==="approval_required"?"review":"new",
-        title:t.title,subtitle:t.dueAt?`יעד: ${t.dueAt}`:"אין יעד",actionLabel:"בדוק"});
+        title:t.title,subtitle:t.dueAt?`יעד: ${t.dueAt}`:"אין יעד",actionLabel:"בדוק",dueAt:t.dueAt});
     }
     for(const w of waiting){
       if(w.status!=="open")continue;
@@ -34,5 +34,10 @@ export async function loadActionItems():Promise<ActionItem[]>{
   }));
 
   const order:Record<ActionItem["kind"],number>={critical:0,review:1,waiting:2,resume:3,new:4};
-  return items.sort((a,b)=>order[a.kind]-order[b.kind]);
+  return items.sort((a,b)=>{
+    if(a.dueAt&&b.dueAt&&a.dueAt!==b.dueAt)return a.dueAt<b.dueAt?-1:1;
+    if(a.dueAt&&!b.dueAt)return -1;
+    if(!a.dueAt&&b.dueAt)return 1;
+    return order[a.kind]-order[b.kind];
+  });
 }

@@ -104,6 +104,12 @@ export function FactsAITab({matterId}:{matterId:string}) {
         {run.proposals.map(p=><div className="proposal" key={p.id}>
           <p><strong>{p.structured.subject} · {p.structured.predicate}</strong>: {p.structured.value}</p>
           <small className="quiet">מבוסס על {p.structured.sourceIds?.length??0} מקור/ות · {p.status}</small>
+          {p.sourceExcerpts.length>0 && <div className="source-excerpts">
+            {p.sourceExcerpts.map(s=><blockquote key={s.sourceId} className="source-excerpt">
+              <small className="quiet">{s.fileName??"מקור לא ידוע"}{s.page?` · עמוד ${s.page}`:""}</small>
+              <p>{s.excerpt}{s.truncated?"…":""}</p>
+            </blockquote>)}
+          </div>}
           {p.status==="pending" && <div className="proposal-actions">
             <button className="primary-lite" disabled={reviewingId===p.id} onClick={()=>review(p.id,"approved")}>אשר → צור עובדה מאומתת</button>
             <button disabled={reviewingId===p.id} onClick={()=>review(p.id,"needs_revision")}>דורש תיקון</button>

@@ -28,11 +28,11 @@ export default function App() {
   const navigate=(target:string)=>{setMatterId(null);setNav(target as NavKey);};
   const page=matterId
     ? <MatterWorkspace matterId={matterId} onBack={()=>setMatterId(null)}/>
-    : nav==="today" ? <TodayPage/>
+    : nav==="today" ? <TodayPage onOpenMatter={setMatterId}/>
     : nav==="matters" ? <MattersPage onOpen={setMatterId}/>
-    : nav==="actions" ? <ActionCenterPage/>
+    : nav==="actions" ? <ActionCenterPage onOpenMatter={setMatterId}/>
     : nav==="calendar" ? <CalendarPage/>
-    : nav==="search" ? <SearchPage/>
+    : nav==="search" ? <SearchPage onOpenMatter={setMatterId}/>
     : nav==="templates" ? <TemplatesPage/>
     : nav==="ai" ? <AISettingsPage/>
     : <SettingsPage/>;

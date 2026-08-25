@@ -48,10 +48,13 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
     catch(e){setActionError(String(e));}
     finally{ setDeadlineBusy(false); }
   };
+  const [pendingCommitId,setPendingCommitId]=useState<string|null>(null);
+  const [commitBusy,setCommitBusy]=useState(false);
   const commit=async(deadlineId:string)=>{
-    setActionError(null);
+    setActionError(null);setCommitBusy(true);
     try{ await commands.commit_deadline({deadlineId}); reloadDeadlines(); }
     catch(e){setActionError(String(e));}
+    finally{ setCommitBusy(false); setPendingCommitId(null); }
   };
 
   const [partyLabel,setPartyLabel]=useState("");
@@ -111,8 +114,18 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
         {!deadlinesLoading && deadlines?.length===0 && <p className="quiet">אין מועדים.</p>}
         {deadlines?.map(d=><div className="timeline-row" key={d.id}>
           <b>{d.dueAt}</b>
-          <div><strong>{d.action}</strong><small>{d.sourceLabel} · {d.state}</small></div>
-          {d.state==="draft" && <button className="btn secondary" onClick={()=>commit(d.id)}>אשר (Commit)</button>}
+          <div>
+            <strong>{d.action}</strong><small>{d.sourceLabel} · {d.state}</small>
+            {pendingCommitId===d.id && <div className="warning-box" style={{marginTop:8}}>
+              <p className="quiet">אישור המועד נועל אותו כמועד מחייב ({d.dueAt}, מקור: {d.sourceLabel}). לא ניתן לבטל בלחיצה חוזרת.</p>
+              <div className="header-actions">
+                <button className="btn primary" disabled={commitBusy} onClick={()=>commit(d.id)}>{commitBusy?"מאשר...":"אשר סופית"}</button>
+                <button className="btn secondary" disabled={commitBusy} onClick={()=>setPendingCommitId(null)}>ביטול</button>
+              </div>
+            </div>}
+          </div>
+          {d.state==="draft" && pendingCommitId!==d.id &&
+            <button className="btn secondary" onClick={()=>setPendingCommitId(d.id)}>אשר (Commit)</button>}
         </div>)}
       </section>
     </div>

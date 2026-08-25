@@ -43,7 +43,7 @@ export function DocumentsTab({matterId}:{matterId:string}) {
     {loading && <p className="quiet">טוען מסמכים...</p>}
     {error && <p className="quiet">שגיאה: {error}</p>}
     {!loading && !error && documents?.length===0 && <p className="quiet">אין עדיין מסמכים בתיק זה. יש לוודא שהתיקייה משויכת ולסרוק.</p>}
-    <div className="table">
+    <div className="table documents-table">
       <div className="tr th"><span>קובץ</span><span>קטגוריה</span><span>מצב מקור</span><span>טקסט</span><span>פעולות</span></div>
       {documents?.map(d=><div className="tr" key={d.id}>
         <span><b>{d.fileName}</b><small>{d.modifiedAt}</small></span>
