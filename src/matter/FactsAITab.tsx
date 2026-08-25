@@ -34,6 +34,10 @@ export function FactsAITab({matterId}:{matterId:string}) {
     reload();
   };
 
+  const openSource=(occurrenceId:string)=>{
+    commands.open_occurrence({occurrenceId});
+  };
+
   const runAi=async()=>{
     if(!profileId)return;
     setBusy(true);setRunError(null);
@@ -64,7 +68,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
       {!loading && !error && facts?.length===0 && <p className="quiet">אין עדיין עובדות מאומתות בתיק זה.</p>}
       {facts?.map(f=><div className="fact-row" key={f.id}>
         <strong>{f.subject} · {f.predicate}</strong><p>{f.value}</p>
-        <button className="source-link">פתח מקור · {f.sourceLabel}</button>
+        <button className="source-link" disabled={!f.occurrenceId} onClick={()=>f.occurrenceId&&openSource(f.occurrenceId)}>פתח מקור · {f.sourceLabel}</button>
         <button className="source-link" onClick={()=>invalidate(f.id)}>בטל תוקף</button>
       </div>)}
     </section>

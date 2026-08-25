@@ -50,7 +50,7 @@ export type Task = {
 
 export type VerifiedFact = {
   id: string; matterId: string; subject: string; predicate: string; value: string;
-  sourceLabel: string; stale: boolean; verifiedAt: string;
+  sourceLabel: string; stale: boolean; verifiedAt: string; occurrenceId?: string | null;
 };
 
 export type AiProfile = {

@@ -15,29 +15,30 @@ F: a real automated test (`cargo test gate_f_partial`) now covers every step of 
 fail-closed source-tamper rejection, full-text search, fact verification, damage lock,
 legal-document authoring — template sections, auto-fill from verified facts, manual
 paragraph add/edit/confirm/delete, approval, starting a new version from an approved
-one — export+audit, DB reopen) — genuinely executed, not mocked. An independent audit
-(2026-08-25, see "External audit response" below) then found and this pass fixed seven
-P0 integrity gaps a passing test suite hadn't caught — approved-document immutability,
-source-lifecycle/staleness, fact-grounding requirements, and a client-trusted damage
-hash — with 10 new regression tests (`integrity_tests.rs`). Gate C/E have since been
-reconfirmed on the current, audit-response-fixed source (run #9, commit `fb1ec86`) -
-that took three CI attempts, two of which caught real bugs (a stale hardcoded command
-count, and a keyring test assertion that was actually wrong on real Windows - see the
-"External audit response" section's P0-7 entry). What's left needs a human on a real
-Windows machine with that installer: real OCR, real AI provider calls, and DOCX export,
-which doesn't exist in this reconstruction yet.**
+one — export+audit, DB reopen) — genuinely executed, not mocked. Two rounds of an
+independent audit (2026-08-25, see the two "External audit response" sections below)
+then found and this project fixed eleven P0-severity integrity gaps a passing test
+suite hadn't caught — approved-document immutability, source-lifecycle/staleness
+(including partial-scan safety and stale-source AI approvals), fact-grounding
+requirements, a client-trusted damage hash, and stale/self-contradictory package
+provenance metadata — with regression tests for everything code-level. Gate C/E were
+reconfirmed on the source as of round 1's fixes (run #9, commit `fb1ec86`) but round 2's
+fixes land after that run, so Gate C/E need re-confirming again before this reconstruction
+can be called current. What's left needs a human on a real Windows machine with a fresh
+installer: real OCR, real AI provider calls, and DOCX export, which doesn't exist in this
+reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
 
-## External audit response — "Deep Control" report, 2026-08-25
+## External audit response, round 1 — "Deep Control" report, 2026-08-25
 
 An independent audit of this source (`TAHRIR_CANONICAL_DEEP_CONTROL_20260825.md`)
 returned a **NO-GO**, backed by seven P0-severity findings. Each was independently
 re-verified directly against this codebase before being fixed — none were taken on
 faith. All seven are now closed:
 
-- **P0-1, source version lifecycle incomplete** — `scanner::hash_pending` only ever
+- **v1 P0-1, source version lifecycle incomplete** — `scanner::hash_pending` only ever
   hashed occurrences with `document_version_id IS NULL`, so a file edited/replaced
   after being hashed could never enter the source graph as a new version; nothing ever
   set `document_versions.stale`. Fixed: `scanner::rehash_changed_versions` detects a
@@ -47,34 +48,34 @@ faith. All seven are now closed:
   logical Document, marks the old version `stale=1`, and cascades `stale=1` onto any
   `verified_facts` grounded in the old version's pages. A metadata-only touch
   (identical content, bumped mtime) does not spawn a version.
-- **P0-2, deleted/moved sources never marked missing** — nothing ever set
+- **v1 P0-2, deleted/moved sources never marked missing** — nothing ever set
   `exists_now=0`. Fixed: a full, uninterrupted `scan_metadata` run now marks
   previously-known occurrences under its root that weren't re-observed this run as
   `exists_now=0`. A scan that errors out mid-walk returns before this step and never
   mass-marks anything missing.
-- **P0-3, approved legal-document content not immutable at the DB level** — a direct
+- **v1 P0-3, approved legal-document content not immutable at the DB level** — a direct
   `UPDATE legal_document_paragraphs`/`legal_document_sections` succeeded even after the
   parent version was approved; only `legal_document_versions` and
   `legal_document_sources` had triggers. Fixed: six new triggers
   (insert/update/delete × sections/paragraphs) in `001_schema_v12.sql`, mirroring the
   existing `legal_document_sources` pattern.
-- **P0-4, paragraph "confirmed" required no provenance** — `confirm_paragraph` flipped
+- **v1 P0-4, paragraph "confirmed" required no provenance** — `confirm_paragraph` flipped
   any paragraph to `confirmed` with no check that a source existed. Fixed:
   `add_paragraph` now only ever produces `paragraph_kind='argument'` (lawyer-authored
   legal text — confirming is editorial review, no source needed); `paragraph_kind='fact'`
   paragraphs are only ever created by `fill_from_verified_facts`, which grounds them
   atomically, and `confirm_paragraph` now refuses to confirm a `'fact'` paragraph
   without a currently-valid, non-stale `verified_fact` source.
-- **P0-5, invalid/stale facts could remain in an approvable draft** — `approve_version`
+- **v1 P0-5, invalid/stale facts could remain in an approvable draft** — `approve_version`
   only checked `provenance_state`, never re-checked that a linked fact was still valid.
   Fixed: `approve_version` now re-validates every `'fact'` paragraph's grounding at
   approval time, not just at confirm time — a fact invalidated or gone stale after
   being confirmed blocks approval.
-- **P0-6, an authority could be "verified" without a source** — `verify_authority` never
+- **v1 P0-6, an authority could be "verified" without a source** — `verify_authority` never
   required `source_document_version_id`. Fixed: verification now requires it, and binds
   the source's `content_sha256` into the integrity hash. `AuthoritiesTab` gained a
   source-document picker so this is reachable from the UI.
-- **P0-7, installer stale relative to source** — `main` was 5 commits ahead of the
+- **v1 P0-7, installer stale relative to source** — `main` was 5 commits ahead of the
   commit (`e92a148`) Gate C's installer was built from. Closed by rerunning the Windows
   Release Gate against the current commit — see the updated Gate C/E entries below.
   This took three attempts on real CI, each a genuine bug caught by actually running it
@@ -124,6 +125,73 @@ source-grounded `VerifiedFact` (it previously only flipped a status flag), the O
 client-data-authorization checkbox that was missing from the settings UI now exists, and
 `FactsAITab` has a real run/review flow. Covered by a new regression test; not covered
 against a live provider, since none is reachable from this environment.
+
+## External audit response, round 2 — "Deep Control v2" report, 2026-08-25
+
+A second-round audit of the round-1-fixed source (`TAHRIR_DEEP_CONTROL_V2_20260825.md`)
+confirmed the round-1 fixes hold (directly re-attempted the approved-document mutation
+attack and it's still blocked; reconfirmed 69/69 commands, 33 tables, 24 triggers,
+`integrity_check`/`foreign_key_check` clean) but found four new P0s and three more P1s.
+All re-verified against the actual code before being fixed - the round-2 report reused
+the same P0-1..P0-4 numbering as round 1 for unrelated findings, so these are
+disambiguated as "v2 P0-N" everywhere below and in the code comments themselves.
+
+- **v2 P0-1, partial-scan safety wasn't actually guaranteed.** `scanner::scan_metadata`
+  iterated with `WalkDir::new(root).into_iter().filter_map(Result::ok)`, silently
+  discarding any traversal error (an unreadable subdirectory, a race with deletion),
+  then unconditionally treated reaching the end of the walk as proof the scan was
+  complete - so an unreadable subtree could still trigger the missing-file mass-update
+  for everything else. Fixed: every traversal and per-entry metadata error is now
+  counted (not discarded), and the missing-marking step only runs when that count is
+  zero; `scan_runs.error_count`/`.partial` (columns that already existed in the schema
+  but were never written to) now actually record this.
+- **v2 P0-2, a stale AI proposal could still be approved into a fresh VerifiedFact.**
+  `ai::plan_context` correctly excludes stale DocumentVersions when a run starts, but
+  `ai::approve_proposal` validated a cited `sourceId` only against `document_pages`,
+  never checking whether its version had since gone stale while the proposal sat
+  pending. Fixed: approval now joins `document_versions` and requires `stale=0` for
+  every cited source, failing the whole approval closed (no partial fact creation) if
+  any source has changed since the run.
+- **v2 P0-3, the shipped SOURCE-MANIFEST.json/QA_*.json were describing a different,
+  older version of the source than the one they shipped with** (61 commands/31
+  tables/18 triggers, a `tsconfig.qa.json` that doesn't exist, hash/size mismatches for
+  37 files) - these were one-time hand snapshots from the original package import that
+  were never regenerated as the source changed underneath them. Fixed at the root
+  cause, not just patched once: `scripts/generate-source-manifest.mjs` now computes
+  `SOURCE-MANIFEST.json` for real from the actual git-tracked file tree (path/size/
+  sha256 for all 86 files, plus the commit it was generated against), and
+  `QA_SCHEMA.json`/`QA_RECONSTRUCTION_REPORT.json`/`QA_TYPESCRIPT.json` were
+  regenerated from checks actually run against the current source, not re-typed by
+  hand. Whoever packages a release build should re-run the manifest script rather than
+  editing these files directly - that's exactly how they went stale the first time.
+- **v2 P0-4, the Windows installer was behind the latest source again** - expected: any
+  further code change (including this round's own fixes) makes the previous CI run
+  stale by definition. Not independently re-fixed; needs another Windows Release Gate
+  run against the commit these fixes land in before Gate C/E can be called current
+  again.
+
+Also fixed (v2 P1, not P0, but cheap to close alongside these):
+- **v2 P1-4, malformed `damage_inputs.value_text` silently became 0** via
+  `.parse().unwrap_or(0)` in both the list and lock paths - a corrupted persisted
+  financial figure would be treated as zero instead of raising an error. Fixed to a
+  hard, propagated parse error in both places.
+- **v2 P1-7, `FactsAITab`'s "פתח מקור" (open source) button had no `onClick`** - a
+  leftover from before this pass's AI-review-UI work, carried over unchanged.
+  `list_verified_facts` now also returns an `occurrenceId` (joined through
+  `verified_fact_sources.document_version_id`), and the button calls `open_occurrence`.
+
+**Deliberately not addressed** (v2 P1/P2, out of scope for this pass): v2 P1-2
+(Verified Authority still doesn't require an approved passage, only a source document);
+v2 P1-3 (damage engine still an additive prototype, not a versioned rules engine); v2
+P1-5 (no deterministic deadline engine); v2 P1-6 (DOCX/PDF export still absent); the
+round-1 OCR RAII cleanup gap. None of these were claimed fixed.
+
+Real regression coverage lives in `src-tauri/src/integrity_tests.rs` (4 new tests) and
+`src-tauri/src/scanner.rs`'s own test module (1 new unit test for the partial-scan
+gating logic - a genuine WalkDir permission error isn't reliably forceable when tests
+run as root, which is documented directly on that test rather than worked around
+silently). v2 P1-7 is a frontend-only wire-up with no new backend logic, so it has no
+dedicated test.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -198,7 +266,7 @@ D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\tesseract\tesseract.exe
 ```
 
 **Reconfirmed on the current source (2026-08-25, run #9):** after the external-audit
-response landed (P0-1 through P0-7 above), Gate C/E needed a fresh Windows run to prove
+response landed (v1 P0-1 through v1 P0-7 above), Gate C/E needed a fresh Windows run to prove
 the *current* commit still builds, not just the one from three days' worth of commits
 ago — see P0-7 above for the two real bugs run #7 and run #8 caught along the way (a
 stale hardcoded command count, and a keyring test assertion that was actually wrong on
@@ -349,7 +417,7 @@ Per-step outcome:
 11. Run AI review — ❌ same as #10
 12. Approve/reject fact proposal — ⚠️ the direct "commit a verified fact" half is
     covered for real; the AI-proposal review half needs #11 first
-13. Change source and prove stale propagation — ✅ real, as of the P0-1 fix above:
+13. Change source and prove stale propagation — ✅ real, as of the v1 P0-1 fix above:
     `scanner::rehash_changed_versions` now sets `document_versions.stale=1` on the
     superseded version and cascades `stale=1` onto any grounded `verified_facts`;
     `integrity_tests.rs` asserts both, plus that `approve_version` refuses a document

@@ -1,6 +1,6 @@
 use crate::{
     db::DbState,
-    error::{AppError, AppResult},
+    error::AppResult,
     source_snapshot::hash_file,
 };
 use chrono::Utc;
@@ -17,6 +17,15 @@ fn ignored_name(name: &str) -> bool {
     name.starts_with("~$") || name.ends_with(".tmp") || name.ends_with(".part")
 }
 
+/// Whether a scan's mass-"mark missing" step is safe to run: only when the walk saw
+/// zero traversal errors. Pulled out as its own pure function so this gating decision
+/// is directly unit-testable - forcing a real WalkDir permission error in an
+/// integration test isn't reliable in an environment running as root, which bypasses
+/// the directory-permission checks that would normally produce one.
+fn scan_is_authoritative(error_count: i64) -> bool {
+    error_count == 0
+}
+
 pub fn scan_metadata(db: &DbState, root: &Path) -> AppResult<String> {
     let run_id = Uuid::new_v4().to_string();
     let started_at = Utc::now().to_rfc3339();
@@ -28,14 +37,27 @@ pub fn scan_metadata(db: &DbState, root: &Path) -> AppResult<String> {
         Ok(())
     })?;
 
+    // WalkDir yields an Err entry for anything it couldn't read (permission denied on
+    // a subdirectory, a race with deletion, ...). Silently dropping those with
+    // `filter_map(Result::ok)` would let the walk "complete" while quietly having
+    // skipped part of the tree - and the missing-file step below trusts completion to
+    // mean "this saw everything". So every error is counted, not discarded, and that
+    // count is what actually gates whether this run is allowed to mass-mark anything
+    // missing.
     let mut batch: Vec<(PathBuf, String, i64, String)> = Vec::with_capacity(250);
-    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+    let mut error_count: i64 = 0;
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => { error_count += 1; continue; }
+        };
         if !entry.file_type().is_file() { continue; }
         let name = entry.file_name().to_string_lossy().to_string();
         if ignored_name(&name) { continue; }
-        let metadata = entry.metadata().map_err(|e| {
-            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
-        })?;
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => { error_count += 1; continue; }
+        };
         let mtime = metadata.modified().ok().map(|x| format!("{x:?}")).unwrap_or_default();
         batch.push((entry.path().to_path_buf(), name, metadata.len() as i64, mtime));
         if batch.len() >= 250 {
@@ -45,31 +67,32 @@ pub fn scan_metadata(db: &DbState, root: &Path) -> AppResult<String> {
     }
     if !batch.is_empty() { flush_batch(db, &run_id, root, &batch, &started_at)?; }
 
-    // Reaching here means the walk above completed without an early `?` return, i.e.
-    // this was a full, uninterrupted scan of `root` - so it's authoritative: anything
-    // previously known under this root that wasn't touched this run (its last_seen_at
-    // is still older than started_at) genuinely isn't there anymore. A failed/partial
-    // scan returns before this point and never mass-marks anything missing.
-    let root_key = path_key(root);
-    db.write(|conn| {
-        // julianday(), not raw string comparison: chrono's to_rfc3339() uses
-        // variable-precision fractional seconds (no digits at all when they're
-        // exactly zero), so two RFC3339 strings aren't guaranteed lexicographically
-        // sortable against each other. julianday() parses ISO8601 into a comparable
-        // numeric value regardless of the source strings' formatting.
-        conn.execute(
-            "UPDATE file_occurrences SET exists_now=0
-             WHERE exists_now=1 AND julianday(last_seen_at)<julianday(?1)
-               AND (path_key=?2 OR path_key LIKE ?2 || '\\%')",
-            params![started_at, root_key],
-        )?;
-        Ok(())
-    })?;
+    // Only a genuinely complete walk (zero traversal errors) is authoritative enough
+    // to mass-mark unseen occurrences missing. A partial walk still indexes whatever
+    // it did see (below) - it just never gets to treat silence as absence.
+    let partial = !scan_is_authoritative(error_count);
+    if !partial {
+        let root_key = path_key(root);
+        db.write(|conn| {
+            // julianday(), not raw string comparison: chrono's to_rfc3339() uses
+            // variable-precision fractional seconds (no digits at all when they're
+            // exactly zero), so two RFC3339 strings aren't guaranteed lexicographically
+            // sortable against each other. julianday() parses ISO8601 into a comparable
+            // numeric value regardless of the source strings' formatting.
+            conn.execute(
+                "UPDATE file_occurrences SET exists_now=0
+                 WHERE exists_now=1 AND julianday(last_seen_at)<julianday(?1)
+                   AND (path_key=?2 OR path_key LIKE ?2 || '\\%')",
+                params![started_at, root_key],
+            )?;
+            Ok(())
+        })?;
+    }
 
     db.write(|conn| {
         conn.execute(
-            "UPDATE scan_runs SET status='complete',finished_at=?2 WHERE id=?1",
-            params![run_id, Utc::now().to_rfc3339()],
+            "UPDATE scan_runs SET status='complete',finished_at=?2,error_count=?3,partial=?4 WHERE id=?1",
+            params![run_id, Utc::now().to_rfc3339(), error_count, partial as i64],
         )?;
         Ok(())
     })?;
@@ -277,4 +300,15 @@ fn rehash_changed_versions(db: &DbState, matter_id: &str) -> AppResult<usize> {
         count += 1;
     }
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_is_authoritative;
+    #[test]
+    fn only_a_zero_error_walk_is_authoritative() {
+        assert!(scan_is_authoritative(0));
+        assert!(!scan_is_authoritative(1));
+        assert!(!scan_is_authoritative(50));
+    }
 }

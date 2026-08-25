@@ -1,21 +1,27 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
-  "tested_at": "2026-08-24",
+  "tested_at": "2026-08-25",
+  "regenerated_note": "This file was stale from the 2026-08-24 initial import (61 commands, 31 tables, 25 wired/36 stub) through many subsequent commits before being regenerated here against actually-current, actually-run checks. Treat any future drift the same way this drift was found: by an independent check against the real source, not by trusting this file.",
+  "regenerated_against_parent_commit": "6cd9fc75332f9f422069d034bbd2b9543b3cbeb5",
   "reconstruction_not_byte_for_byte": true,
   "frontend_backend_contract": {
-    "frontend_invokes": 61,
-    "rust_commands": 61,
+    "frontend_invokes": 69,
+    "rust_commands": 69,
     "missing": [],
     "extra": [],
+    "result": "PASS",
+    "verified_by": "node scripts/check-command-contract.mjs"
+  },
+  "typescript_strict_structural": {
+    "command": "npx tsc -b",
     "result": "PASS"
   },
-  "typescript_strict_structural": "PASS",
   "static_hardening": {
     "commandPaletteDialog": true,
     "commandPaletteFocusTrap": true,
     "ariaCurrent": true,
     "focusVisible": true,
-    "thirtyOneTables": true,
+    "thirtyThreeTables": true,
     "ocrSourceMismatch": true,
     "ocrReverify": true,
     "docxDocumentAnchoring": true,
@@ -23,13 +29,14 @@
     "aiLoopbackGate": true,
     "aiNoRawProviderPersistence": true,
     "aiStoreFalse": true,
-    "aiBackgroundFalse": true
+    "aiBackgroundFalse": true,
+    "verified_by": "node scripts/static-qa.mjs"
   },
   "database": {
     "user_version": 12,
-    "tables": 31,
-    "indexes": 20,
-    "triggers": 18,
+    "tables": 33,
+    "indexes": 21,
+    "triggers": 24,
     "integrity_check": "ok",
     "foreign_key_check": [],
     "locked_damage_update_blocked": true,
@@ -37,16 +44,31 @@
     "cross_matter_damage_blocked": true,
     "verified_authority_update_blocked": true,
     "approved_legal_version_update_blocked": true,
+    "approved_legal_sections_mutation_blocked": true,
+    "approved_legal_paragraphs_mutation_blocked": true,
     "cross_matter_fact_source_blocked": true
   },
   "reconstructed_commands": {
-    "total": 61,
-    "wired": 25,
-    "fail_closed_not_yet_wired": 36
+    "total": 69,
+    "wired": 69,
+    "fail_closed_not_yet_wired": 0,
+    "note": "All 69 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command."
   },
-  "rust_compile": "NOT_RUN_TOOLCHAIN_UNAVAILABLE",
-  "npm_ci": "NOT_RUN_NO_LOCKFILE",
-  "windows_tauri_build": "NOT_RUN",
-  "ocr_third_party_runtime": "NOT_BUNDLED_RELEASE_GATE",
-  "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE"
+  "rust_compile": {
+    "cargo_check_locked": "PASS",
+    "cargo_test_locked": "PASS (19/19)"
+  },
+  "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
+  "windows_tauri_build": {
+    "status": "PASS on a real windows-2025 GitHub Actions runner",
+    "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32835457436",
+    "most_recent_verified_commit": "fb1ec8690e8b409497182af55ae1ffb679fe4513",
+    "note": "commits after that run (including this regeneration) have not yet had a fresh Windows CI run - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
+  },
+  "ocr_third_party_runtime": {
+    "status": "BUNDLED_AND_VERIFIED",
+    "detail": "Tesseract/Poppler/heb+ara+eng.traineddata vendored, SHA256-verified against config/ocr-runtime.json, and confirmed present in the built installer's resources/ocr/ directory on real Windows CI - see docs/RELEASE_GATES.md Gate C"
+  },
+  "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE",
+  "release_verdict_detail": "See docs/RELEASE_GATES.md for the authoritative, actively-maintained gate-by-gate status. This file is a point-in-time snapshot, not a live source of truth."
 }

@@ -778,13 +778,17 @@ pub fn list_verified_facts(state: State<'_, AppState>, payload: Value) -> AppRes
     state.db.read(|conn|{
         let mut stmt=conn.prepare(
             "SELECT f.id,f.matter_id,f.subject,f.predicate,f.value_text,f.status,f.stale,f.verified_at,
-             coalesce((SELECT display_quote FROM verified_fact_sources s WHERE s.verified_fact_id=f.id LIMIT 1),'')
+             coalesce((SELECT display_quote FROM verified_fact_sources s WHERE s.verified_fact_id=f.id LIMIT 1),''),
+             (SELECT o.id FROM verified_fact_sources s
+              JOIN file_occurrences o ON o.document_version_id=s.document_version_id
+              WHERE s.verified_fact_id=f.id AND o.exists_now=1 LIMIT 1)
              FROM verified_facts f WHERE f.matter_id=?1 AND f.status='valid' ORDER BY f.verified_at DESC"
         )?;
         let rows=stmt.query_map([matter_id],|r|Ok(json!({
             "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,"subject":r.get::<_,String>(2)?,
             "predicate":r.get::<_,String>(3)?,"value":r.get::<_,String>(4)?,"status":r.get::<_,String>(5)?,
-            "stale":r.get::<_,i64>(6)?!=0,"verifiedAt":r.get::<_,String>(7)?,"sourceLabel":r.get::<_,String>(8)?
+            "stale":r.get::<_,i64>(6)?!=0,"verifiedAt":r.get::<_,String>(7)?,"sourceLabel":r.get::<_,String>(8)?,
+            "occurrenceId":r.get::<_,Option<String>>(9)?
         })))?.collect::<Result<Vec<_>,_>>()?;
         Ok(Value::Array(rows))
     })
@@ -850,11 +854,12 @@ pub fn list_damage_calculations(state: State<'_, AppState>, payload: Value) -> A
         )?;
         let mut out=Vec::with_capacity(calcs.len());
         for c in calcs{
-            let inputs=input_stmt.query_map([&c.id],|r|Ok(json!({
-                "key":r.get::<_,String>(0)?,
-                "cents":r.get::<_,String>(1)?.parse::<i64>().unwrap_or(0),
-                "source":r.get::<_,String>(2)?
-            })))?.collect::<Result<Vec<_>,_>>()?;
+            let inputs=input_stmt.query_map([&c.id],|r|{
+                let cents=r.get::<_,String>(1)?.parse::<i64>().map_err(|_|
+                    rusqlite::Error::InvalidColumnType(1,"value_text".to_string(),rusqlite::types::Type::Text)
+                )?;
+                Ok(json!({"key":r.get::<_,String>(0)?,"cents":cents,"source":r.get::<_,String>(2)?}))
+            })?.collect::<Result<Vec<_>,_>>()?;
             out.push(json!({
                 "id":c.id,"matterId":c.matter_id,"regime":c.regime,"lifeState":c.life_state,"status":c.status,
                 "grossCents":c.gross,"deductionsCents":c.deductions,"netCents":c.net,
@@ -932,7 +937,10 @@ pub fn lock_damage_calculation(state: State<'_, AppState>, payload: Value) -> Ap
                 let key:String=r.get(0)?;
                 let value_text:String=r.get(1)?;
                 let source:String=r.get(2)?;
-                Ok(models::DamageInput{key,cents:value_text.parse().unwrap_or(0),source})
+                let cents=value_text.parse::<i64>().map_err(|_|
+                    rusqlite::Error::InvalidColumnType(1,"value_text".to_string(),rusqlite::types::Type::Text)
+                )?;
+                Ok(models::DamageInput{key,cents,source})
             })?.collect::<Result<Vec<_>,_>>()?;
             rows
         };

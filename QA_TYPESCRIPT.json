@@ -1,7 +1,10 @@
 {
-  "command": "tsc -p tsconfig.qa.json",
+  "command": "npx tsc -b",
+  "note": "The original tsconfig.qa.json referenced here does not exist in this source tree; tsc -b (via npm run build) is the real strict TypeScript check actually used by this project's CI and this session throughout.",
   "returncode": 0,
   "stdout": "",
   "stderr": "",
-  "result": "PASS"
+  "result": "PASS",
+  "regenerated_at": "2026-08-25",
+  "regenerated_against_parent_commit": "6cd9fc75332f9f422069d034bbd2b9543b3cbeb5"
 }

@@ -1,28 +1,59 @@
-//! Regression coverage for the P0 integrity gaps found by the external "Deep Control"
-//! audit of this reconstruction (2026-08-25), verified directly against this codebase
-//! before being fixed:
-//!  - P0-1: a source that changed after hashing never got a new DocumentVersion.
-//!  - P0-2: a deleted/moved source was never marked missing (exists_now stayed 1).
-//!  - P0-3: legal_document_sections/legal_document_paragraphs had no immutability
+//! Regression coverage for integrity gaps found by two rounds of an external "Deep
+//! Control" audit of this reconstruction (2026-08-25). Both rounds re-used P0-N/P1-N
+//! numbering for unrelated findings, so this file refers to them as "v1 P0-N" / "v2
+//! P0-N" throughout to avoid collisions - never bare "P0-N".
+//!
+//! v1 findings, verified directly against this codebase before being fixed:
+//!  - v1 P0-1: a source that changed after hashing never got a new DocumentVersion.
+//!  - v1 P0-2: a deleted/moved source was never marked missing (exists_now stayed 1).
+//!  - v1 P0-3: legal_document_sections/legal_document_paragraphs had no immutability
 //!    trigger, so an approved legal document's actual text could still be edited.
-//!  - P0-4: confirm_paragraph flipped provenance_state to 'confirmed' with no check
+//!  - v1 P0-4: confirm_paragraph flipped provenance_state to 'confirmed' with no check
 //!    that a 'fact' paragraph actually had a live grounding source.
-//!  - P0-5: approve_version only checked provenance_state, never re-checked that a
+//!  - v1 P0-5: approve_version only checked provenance_state, never re-checked that a
 //!    fact confirmed earlier in the session was still valid/non-stale at approval time.
-//!  - P1-6: lock_damage_calculation trusted a client-supplied integrity hash outright.
-//! P0-6 (Verified Authority requiring a source) is fixed in commands.rs but not
+//!  - v1 P1-6: lock_damage_calculation trusted a client-supplied integrity hash outright.
+//! v1 P0-6 (Verified Authority requiring a source) is fixed in commands.rs but not
 //! re-tested here: verify_authority lives behind tauri::State with no public
 //! constructor outside a running app, same limitation already documented for
 //! export_legal_document's PDF guard in gate_f_partial.rs - verified by direct code
 //! reading instead.
 //!
-//! Also covers the P1-1 gap ("the lawyer cannot complete the AI -> proposal -> review
-//! -> Verified Fact workflow"): `review_ai_proposal`'s 'approved' path previously only
+//! Also covers v1 P1-1 ("the lawyer cannot complete the AI -> proposal -> review ->
+//! Verified Fact workflow"): `review_ai_proposal`'s 'approved' path previously only
 //! flipped `ai_proposals.status` with no command anywhere that turned an approved
 //! proposal into an actual VerifiedFact. `ai::approve_proposal` is the fix, and is
 //! plain-Rust testable without a live provider (a real AI response is simulated by
 //! inserting a synthetic `ai_proposals` row directly, exactly like the run/proposal
 //! `run_capability` itself would have produced).
+//!
+//! v2 findings (a second audit pass against the v1 fixes above):
+//!  - v2 P0-1: `scan_metadata` used `filter_map(Result::ok)` over the WalkDir iterator,
+//!    silently discarding traversal errors (e.g. an unreadable subdirectory), then
+//!    unconditionally treated reaching the end of the walk as proof of a complete scan
+//!    - so a partially-failed walk could still mass-mark previously-known files
+//!    missing. Fixed by counting errors instead of discarding them and gating the
+//!    missing-marking step on that count (`scan_is_authoritative`, unit-tested directly
+//!    in `scanner.rs`'s own test module - forcing a real WalkDir permission error
+//!    isn't reliable in an integration test when the test process runs as root, which
+//!    bypasses the directory-permission checks that would normally produce one).
+//!  - v2 P0-2: `ai::approve_proposal` validated a cited `sourceId` only against
+//!    `document_pages`, never checking whether its `document_versions` row had since
+//!    gone stale - so a proposal that sat pending while its source was edited (and
+//!    superseded by `scanner::rehash_changed_versions`) could still be approved into a
+//!    VerifiedFact grounded in outdated content. Fixed: approval now validates every
+//!    cited source's version is non-stale *before* creating anything.
+//!  - v2 P1-4: `damage_inputs.value_text` parsing used `.unwrap_or(0)` in both the list
+//!    and lock paths - corrupt persisted data would silently become a zero financial
+//!    figure instead of failing. Fixed to a hard `rusqlite::Error` on parse failure.
+//!  - v2 P1-7: `FactsAITab`'s "פתח מקור" (open source) button had no `onClick` at all.
+//!    Fixed by having `list_verified_facts` also return an `occurrenceId` (joined
+//!    through `verified_fact_sources.document_version_id`) and wiring the button to
+//!    `open_occurrence` - this one is a frontend wire-up with no new backend logic to
+//!    unit test, so it isn't covered by a test in this file.
+//!  - v2 P0-3 (stale SOURCE-MANIFEST.json/QA_*.json at the repo root) and v2 P0-4 (the
+//!    Windows installer trailing the latest source again) aren't code-level findings
+//!    and have no corresponding test here.
 
 #![cfg(test)]
 
@@ -492,4 +523,107 @@ fn approving_an_ai_proposal_creates_a_real_grounded_verified_fact() {
         params![bad_proposal_id, run_id, matter_id, bad_structured],
     ).map_err(AppError::Db)).unwrap();
     assert!(ai::approve_proposal(&db, &bad_proposal_id, None).is_err());
+}
+
+// --- P0-2: approving a proposal whose cited source has since gone stale must fail ---
+// (a run's context only ever offers non-stale pages - see ai::plan_context's `v.stale=0`
+// filter - but a proposal can sit pending while the source changes underneath it)
+
+#[test]
+fn approving_a_proposal_whose_source_has_gone_stale_is_rejected() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-2 test");
+    let now = Utc::now().to_rfc3339();
+
+    let document_id = Uuid::new_v4().to_string();
+    let version_id = Uuid::new_v4().to_string();
+    let page_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at) VALUES(?1,?2,'מסמך',?3,?3)",
+            params![document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,created_at) VALUES(?1,?2,?3,'x',?4)",
+            params![version_id, document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES(?1,?2,?3,1,'page',0,'טקסט מקורי.','טקסט מקורי.','x','native_text',?4)",
+            params![page_id, matter_id, version_id, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
+    let run_id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO ai_runs(id,matter_id,capability,status,context_manifest_sha256,started_at)
+         VALUES(?1,?2,'extract_facts','completed','x',?3)",
+        params![run_id, matter_id, now],
+    ).map_err(AppError::Db)).unwrap();
+
+    let proposal_id = Uuid::new_v4().to_string();
+    let structured = json!({
+        "sourceIds": [page_id], "subject": "x", "predicate": "y", "value": "z"
+    }).to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO ai_proposals(id,ai_run_id,matter_id,proposal_kind,structured_json,source_manifest_json,status)
+         VALUES(?1,?2,?3,'extract_facts',?4,'[]','pending')",
+        params![proposal_id, run_id, matter_id, structured],
+    ).map_err(AppError::Db)).unwrap();
+
+    // the source changes underneath the still-pending proposal, exactly like
+    // scanner::rehash_changed_versions would do for real
+    db.write(|conn| conn.execute(
+        "UPDATE document_versions SET stale=1 WHERE id=?1", [&version_id]
+    ).map_err(AppError::Db)).unwrap();
+
+    let approve_stale = ai::approve_proposal(&db, &proposal_id, None);
+    assert!(approve_stale.is_err(), "approving a proposal whose cited source version has gone stale must be rejected");
+
+    let fact_count: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM verified_facts WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(fact_count, 0, "a rejected approval must not have created any VerifiedFact");
+}
+
+// --- P1-4: corrupt damage_inputs.value_text must fail closed, never silently become 0 ---
+
+#[test]
+fn malformed_damage_input_value_fails_closed_instead_of_becoming_zero() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P1-4 test");
+    let now = Utc::now().to_rfc3339();
+
+    let calc_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO damage_calculations(id,matter_id,regime,life_state,status,ruleset_id,ruleset_version,created_at,updated_at)
+             VALUES(?1,?2,'tort','living','draft','default','1',?3,?3)",
+            params![calc_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO damage_inputs(id,matter_id,calculation_id,input_key,value_kind,value_text,source_kind)
+             VALUES(?1,?2,?3,'past_wage_loss','cents','NOT-A-NUMBER','manual')",
+            params![Uuid::new_v4().to_string(), matter_id, calc_id],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
+    // this exercises the exact query shape commands.rs uses for both
+    // list_damage_calculations and lock_damage_calculation's input parsing
+    let result: Result<i64, _> = db.read(|conn| {
+        let mut stmt = conn.prepare("SELECT value_text FROM damage_inputs WHERE calculation_id=?1")?;
+        stmt.query_row([&calc_id], |r| {
+            let value_text: String = r.get(0)?;
+            value_text.parse::<i64>().map_err(|_|
+                rusqlite::Error::InvalidColumnType(0, "value_text".to_string(), rusqlite::types::Type::Text)
+            )
+        }).map_err(AppError::Db)
+    });
+    assert!(result.is_err(), "a corrupt damage_inputs.value_text must be a hard error, never silently parsed as 0");
 }

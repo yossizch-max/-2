@@ -1,10 +1,15 @@
 {
   "user_version": 12,
-  "tables": 31,
-  "indexes": 20,
-  "triggers": 18,
+  "tables": 33,
+  "indexes": 21,
+  "triggers": 24,
   "integrity": "ok",
   "foreign_key_check": [],
   "locked_damage_mutation_blocked": true,
-  "cross_matter_damage_reference_blocked": true
+  "cross_matter_damage_reference_blocked": true,
+  "approved_legal_sections_mutation_blocked": true,
+  "approved_legal_paragraphs_mutation_blocked": true,
+  "regenerated_at": "2026-08-25",
+  "regenerated_against_parent_commit": "6cd9fc75332f9f422069d034bbd2b9543b3cbeb5",
+  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql (real, not estimated)"
 }

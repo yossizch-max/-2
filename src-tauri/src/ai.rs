@@ -252,6 +252,30 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             return Err(AppError::InvalidSourceReference);
         }
 
+        // Validate every cited source BEFORE creating anything: a source page must
+        // still belong to a non-stale DocumentVersion. plan_context only ever offers
+        // non-stale pages when a run starts, but a proposal can sit pending for a
+        // while - if the source changed and got superseded in the meantime (see
+        // scanner::rehash_changed_versions), approving on the old page would create a
+        // VerifiedFact grounded in content that's no longer current. Fail the whole
+        // approval closed rather than partially create it.
+        let mut sources=Vec::with_capacity(source_ids.len());
+        for page_id in &source_ids {
+            let (document_version_id,display_text,text_sha,stale):(String,String,String,i64)=tx.query_row(
+                "SELECT p.document_version_id,p.display_text,p.text_sha256,v.stale
+                 FROM document_pages p
+                 JOIN document_versions v ON v.id=p.document_version_id AND v.matter_id=p.matter_id
+                 WHERE p.id=?1 AND p.matter_id=?2",
+                params![page_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
+            ).map_err(|_|AppError::InvalidSourceReference)?;
+            if stale!=0{
+                return Err(AppError::Validation(
+                    "a cited source has changed since this proposal was created - the source is now stale, re-run before approving".into()
+                ));
+            }
+            sources.push((page_id.clone(),document_version_id,display_text,text_sha));
+        }
+
         let fact_id=Uuid::new_v4().to_string();
         let now=Utc::now().to_rfc3339();
         tx.execute(
@@ -261,12 +285,7 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             params![fact_id,matter_id,subject,predicate,value,proposal_id,now]
         )?;
 
-        for page_id in &source_ids {
-            let (document_version_id,display_text,text_sha):(String,String,String)=tx.query_row(
-                "SELECT document_version_id,display_text,text_sha256
-                 FROM document_pages WHERE id=?1 AND matter_id=?2",
-                params![page_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
-            ).map_err(|_|AppError::InvalidSourceReference)?;
+        for (page_id,document_version_id,display_text,text_sha) in sources {
             tx.execute(
                 "INSERT INTO verified_fact_sources(
                     id,matter_id,verified_fact_id,document_version_id,document_page_id,

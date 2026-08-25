@@ -135,3 +135,15 @@ which simulates what a real provider response would have produced (a synthetic `
 in the same shape `ai::run_capability` itself writes) since this reconstruction has no live
 provider to test against in this environment — and asserts the fact-creation-with-a-real-source
 path, the double-approval rejection, and the ungrounded-`sourceId` rejection all work as described.
+
+## Second-round audit fixes (2026-08-25)
+
+A second external audit pass ("Deep Control v2") found four more P0s and three more P1s against
+the fixes above — see `docs/RELEASE_GATES.md`'s "External audit response, round 2" section for the
+full writeup: partial-scan safety wasn't actually guaranteed (a silently-discarded WalkDir error
+could still trigger mass-marking files missing), a stale AI proposal could still be approved into a
+fresh VerifiedFact, the shipped `SOURCE-MANIFEST.json`/`QA_*.json` described an old version of the
+source (now regenerated for real via `scripts/generate-source-manifest.mjs`, and from-scratch for
+the QA files), a malformed `damage_inputs.value_text` silently became 0 instead of failing, and the
+Verified Facts "open source" button had no `onClick`. All fixed; see `RELEASE_GATES.md` for detail
+per finding and which ones are covered by new tests.
