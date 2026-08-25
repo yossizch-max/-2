@@ -1010,6 +1010,15 @@ pub fn approve_legal_document(state: State<'_, AppState>, payload: Value) -> App
 }
 
 #[tauri::command]
+pub fn create_legal_document_version(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let _=&state;
+    {
+    let matter_id=required_string(&payload,"matterId")?;let legal_document_id=required_string(&payload,"legalDocumentId")?;
+    Ok(json!({"versionId":legal_docs::create_new_version(&state.db,matter_id,legal_document_id)?}))
+}
+}
+
+#[tauri::command]
 pub fn export_legal_document(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     let version_id=required_string(&payload,"legalDocumentVersionId")?;

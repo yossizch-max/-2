@@ -168,13 +168,25 @@ exercises it **for real** — actual `DbState`, actual SQLite/SQLCipher schema a
 triggers, actual `scanner`/`extraction`/`search`/`damage`/`legal_docs` modules, no
 mocking — end to end: create a matter → bind a folder → scan → hash → tamper with the
 source and confirm extraction fails closed (`SourceShaMismatch`, zero pages written) →
-restore and extract for real → search by matter/file/fact → verify a fact grounded in
-the extracted page → calculate and lock a damage total (and confirm the
-locked-calculation trigger really blocks further mutation) → draft a legal document,
-add a confirmed-provenance paragraph, approve it (and confirm the
-approved-version trigger really blocks mutation) → export as text and confirm the
-export-audit trigger is really append-only → reopen the encrypted DB file and confirm
-the matter/export/damage rows are still there.
+restore and extract for real → search by matter/file/fact **and by full-text content of
+the extracted page itself** → verify a fact grounded in the extracted page → calculate
+and lock a damage total (and confirm the locked-calculation trigger really blocks
+further mutation) → draft a legal document, add a confirmed-provenance paragraph,
+approve it (and confirm the approved-version trigger really blocks mutation, and that
+the parent document is marked approved) → **start a new draft version from the approved
+one, confirming a document whose current version isn't approved is refused, the new
+version deep-copies its sections/paragraphs/sources, the prior version and its
+paragraphs stay untouched, and the parent document flips back to `draft`** → export as
+text and confirm the export-audit trigger is really append-only → reopen the encrypted
+DB file and confirm the matter/export/damage rows are still there.
+
+Writing this test's step 8 and step 16 originally surfaced two real product gaps — no
+full-text search over extracted document content, and no command to start a new version
+of an approved legal document. Both are now fixed (`search::search` gained a
+`document_pages`-backed branch; `legal_docs::create_new_version` plus the
+`create_legal_document_version` command were added) and are covered by the test for
+real, not just claimed — see `docs/MISSING_IMPLEMENTATION_MATRIX.md` for the full
+writeup of what changed.
 
 While building this test, it surfaced that this sandbox's `keyring` backend doesn't
 actually persist an entry across separate `Entry` instances (a `set` immediately
@@ -201,9 +213,10 @@ Per-step outcome:
 7. Extract native PDF — ⚠️ proxied with `.txt` extraction instead (real code path,
    wrong file format — real PDF text extraction shells out to `pdftotext.exe`, also
    blocked by #4's reasoning)
-8. Search text and open source — ✅ real (`search::search`, by matter/file/fact — there
-   is no full-text index over extracted page content in this reconstruction, discovered
-   while writing this test, not assumed)
+8. Search text and open source — ✅ real (`search::search`, by matter/file/fact, and now
+   also by full-text content of the extracted `document_pages` themselves — the missing
+   full-text branch was discovered while first writing this test, and has since been
+   added and is covered by the test for real)
 9. Configure local provider — ❌ needs a live local OpenAI-compatible endpoint
 10. Configure OpenAI with synthetic data and explicit egress approval — ❌ needs live
     network access to a real provider
@@ -212,13 +225,16 @@ Per-step outcome:
     covered for real; the AI-proposal review half needs #11 first
 13. Change source and prove stale propagation — ⚠️ re-extraction rejection is the same
     mechanism as #3, covered for real; the `document_versions.stale` column itself is
-    never actually set by any of the 61 commands in this reconstruction — a real
+    never actually set by any of the 62 commands in this reconstruction — a real
     product gap, flagged here rather than silently worked around in the test
 14. Create and lock damage calculation — ✅ real, including the immutability trigger
 15. Create legal draft — ✅ real
-16. Edit as a new version — ❌ **not implemented**: no command in the 61-command
-    contract creates a new `legal_document_versions` row from an approved one. A real
-    product gap, not a test gap.
+16. Edit as a new version — ✅ real (`legal_docs::create_new_version` plus the
+    `create_legal_document_version` command: validates the current version is
+    `approved`, deep-copies its sections/paragraphs/sources onto a new draft version,
+    rejects a document whose current version isn't approved, and leaves the prior
+    approved version untouched and immutable — all asserted directly by the test, not
+    just code-read)
 17. Confirm paragraph provenance — ✅ real (a 'confirmed' paragraph is required for
     approval to succeed; the test exercises this rather than using a degenerate
     zero-paragraph draft)
@@ -241,5 +257,5 @@ Per-step outcome:
 
 **Still needed to actually close this gate:** a human, on a real Windows machine, with
 Gate E's packaged installer and real scanned documents, doing steps 4-6, 9-11, and
-confirming 7/19/20's real (non-`.txt`) paths — plus building steps 16/17's missing
-features first if they're wanted.
+confirming 7/19/20's real (non-`.txt`) paths. Steps 16/17 no longer block this — both
+are implemented and covered by the automated test.

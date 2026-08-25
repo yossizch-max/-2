@@ -65,5 +65,6 @@ export const commands = {
   list_legal_documents: (payload:Record<string,unknown>={}) => call("list_legal_documents",payload),
   save_legal_document_draft: (payload:Record<string,unknown>={}) => call("save_legal_document_draft",payload),
   approve_legal_document: (payload:Record<string,unknown>={}) => call("approve_legal_document",payload),
+  create_legal_document_version: (payload:Record<string,unknown>={}) => call("create_legal_document_version",payload),
   export_legal_document: (payload:Record<string,unknown>={}) => call("export_legal_document",payload),
 };

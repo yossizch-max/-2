@@ -11,6 +11,7 @@ export function LegalDocumentsTab({matterId}:{matterId:string}) {
   const [title,setTitle]=useState("");
   const [kind,setKind]=useState("demand");
   const [busy,setBusy]=useState(false);
+  const [versioning,setVersioning]=useState<string|null>(null);
 
   const submit=async()=>{
     if(!title.trim())return;
@@ -19,13 +20,24 @@ export function LegalDocumentsTab({matterId}:{matterId:string}) {
     finally{ setBusy(false); }
   };
 
+  const newVersion=async(legalDocumentId:string)=>{
+    setVersioning(legalDocumentId);
+    try{ await commands.create_legal_document_version({matterId,legalDocumentId}); reload(); }
+    finally{ setVersioning(null); }
+  };
+
   return <div>
     <section className="workspace-card">
       <div className="card-head"><div><span className="eyebrow">LEGAL DOCUMENTS</span><h2>מסמכים משפטיים</h2></div><button className="btn primary" onClick={()=>setCreating(true)}>טיוטה חדשה</button></div>
       {loading && <p className="quiet">טוען...</p>}
       {error && <p className="quiet">שגיאה: {error}</p>}
       {!loading && !error && legalDocuments?.length===0 && <p className="quiet">אין עדיין מסמכים משפטיים בתיק זה.</p>}
-      {legalDocuments?.map(d=><div className="legal-card" key={d.id}><div><strong>{d.title}</strong><small>{d.kind} · {d.status}</small></div></div>)}
+      {legalDocuments?.map(d=><div className="legal-card" key={d.id}>
+        <div><strong>{d.title}</strong><small>{d.kind} · {d.status}</small></div>
+        {d.status==="approved" && <button className="btn secondary" disabled={versioning===d.id} onClick={()=>newVersion(d.id)}>
+          {versioning===d.id?"יוצר גרסה...":"צור גרסה חדשה"}
+        </button>}
+      </div>)}
     </section>
     {creating && <div className="modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setCreating(false);}}>
       <div className="workspace-card" style={{width:"min(480px,90vw)"}}>

@@ -3,7 +3,7 @@ import type { ChangeEvent } from "react";
 import { commands } from "../lib/ipc";
 
 type SearchHit = {kind:string; matterId?:string|null; id:string; title:string; subtitle:string};
-const KIND_LABEL:Record<string,string>={matter:"תיק",file:"מסמך",verified_fact:"עובדה"};
+const KIND_LABEL:Record<string,string>={matter:"תיק",file:"מסמך",verified_fact:"עובדה",document_page:"טקסט מסמך"};
 
 export function SearchPage() {
   const [q,setQ]=useState("");

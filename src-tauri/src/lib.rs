@@ -101,6 +101,7 @@ pub fn run() {
             commands::list_legal_documents,
             commands::save_legal_document_draft,
             commands::approve_legal_document,
+            commands::create_legal_document_version,
             commands::export_legal_document
         ])
         .run(tauri::generate_context!())

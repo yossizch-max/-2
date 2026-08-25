@@ -14,7 +14,10 @@
 //!  7. Extract native (non-PDF) text                           -> covered (.txt path; real PDF
 //!                                                                needs poppler pdftotext.exe,
 //!                                                                a Windows binary)
-//!  8. Search text and open source                             -> covered (search::search)
+//!  8. Search text and open source                             -> covered (search::search,
+//!                                                                including full-text search
+//!                                                                over extracted document_pages
+//!                                                                content, not just metadata)
 //! 12. Approve a fact (direct verified-fact commit)             -> covered
 //! 13. Change source, prove stale propagation is at least detectable -> partially covered
 //!     (re-extraction after a source change is rejected the same way as step 3; the
@@ -22,6 +25,9 @@
 //!     this reconstruction - flagged as a real product gap below, not silently worked around)
 //! 14. Create and lock damage calculation                      -> covered
 //! 15. Create legal draft                                      -> covered
+//! 16. Start a new draft version from an approved legal document -> covered
+//!     (legal_docs::create_new_version: deep-copies sections/paragraphs/sources, the
+//!     prior approved version stays immutable, the parent document flips back to draft)
 //! 18. Approve immutable version                                -> covered
 //! 19. Export (txt)                                             -> covered
 //! 21. Close/reopen and verify audit                            -> covered
@@ -33,10 +39,10 @@
 //!       container has no Windows loader.
 //!  9-11. AI provider configuration/review - needs a real network call to a real
 //!        local or OpenAI-compatible endpoint.
-//! 16-17. "Edit as a new version" / paragraph provenance UI - there is no command in
-//!        the 61-command contract that creates a new `legal_document_versions` row
-//!        from an existing approved one. This is a real gap in the reconstruction's
-//!        feature set, not a test limitation - flagged here rather than worked around.
+//! 17. Paragraph provenance review is a frontend/UI concern layered on the
+//!     `provenance_state` column that `approve_version` already gates on (a version
+//!     with any non-'confirmed' paragraph cannot be approved); not independently
+//!     re-tested here.
 //! 20. PDF export returning PDF_CONVERTER_UNAVAILABLE - the guard
 //!     (`if output_kind!="txt" { return Err(PdfConverterUnavailable) }`) lives directly
 //!     in `commands::export_legal_document`, which takes a `tauri::State` with no public
@@ -152,14 +158,17 @@ fn gate_f_partial_real_flow() {
     ).map_err(AppError::Db)).unwrap();
 
     // --- Step 8: search text and locate the source ---
-    // search::search only queries matters.title/internal_number, file_occurrences.file_name
-    // and verified_facts - there is no full-text index over extracted document_pages
-    // content in this reconstruction, so "locate the source" here means locating it via
-    // its matter/filename/fact metadata, not raw extracted text.
     let matter_hits = search::search(&db, "GF-1").unwrap();
     assert!(matter_hits.iter().any(|h| h.kind == "matter"), "matter should be findable by internal_number");
     let file_hits = search::search(&db, "medical_record").unwrap();
     assert!(file_hits.iter().any(|h| h.kind == "file"), "file should be findable by file name");
+    // full-text search over the extracted document_pages content itself (not just
+    // filename/matter/fact metadata) - "התאונה" only occurs in the extracted page text.
+    let page_hits = search::search(&db, "התאונה").unwrap();
+    assert!(
+        page_hits.iter().any(|h| h.kind == "document_page" && h.id == document_id),
+        "extracted page text should be full-text searchable and resolve back to its document"
+    );
 
     // --- Step 12 (direct commit half): verify a fact grounded in the extracted page ---
     let fact_id = Uuid::new_v4().to_string();
@@ -275,6 +284,61 @@ fn gate_f_partial_real_flow() {
             .map_err(AppError::Db)
     });
     assert!(mutate_approved.is_err(), "trg_approved_legal_version_no_update must block mutating an approved version");
+
+    let status_after_approval: String = db.read(|conn| conn.query_row(
+        "SELECT status FROM legal_documents WHERE id=?1", [&legal_doc_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(status_after_approval, "approved", "approving the current version should mark the parent document approved");
+
+    // --- Step 16: start a new draft version from the approved one ---
+    // an already-draft document must refuse a second "new version" (nothing approved yet)
+    let second_draft_id = legal_docs::create_draft(&db, &matter_id, "טיוטה נוספת", "claim").unwrap();
+    let reject_non_approved = legal_docs::create_new_version(&db, &matter_id, &second_draft_id);
+    assert!(reject_non_approved.is_err(), "create_new_version must refuse a document whose current version is not approved");
+
+    let new_version_id = legal_docs::create_new_version(&db, &matter_id, &legal_doc_id).unwrap();
+    assert_ne!(new_version_id, legal_version_id);
+
+    let (new_status, new_version_number, parent_version_id): (String, i64, Option<String>) = db.read(|conn| conn.query_row(
+        "SELECT status,version_number,parent_version_id FROM legal_document_versions WHERE id=?1",
+        [&new_version_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(new_status, "draft");
+    assert_eq!(new_version_number, 2);
+    assert_eq!(parent_version_id.as_deref(), Some(legal_version_id.as_str()));
+
+    let (doc_current_version, doc_status): (String, String) = db.read(|conn| conn.query_row(
+        "SELECT current_version_id,status FROM legal_documents WHERE id=?1", [&legal_doc_id], |r| Ok((r.get(0)?, r.get(1)?))
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(doc_current_version, new_version_id, "the document should now point at the new draft version");
+    assert_eq!(doc_status, "draft", "starting a new version should flip the parent document back to draft");
+
+    // the paragraph, its confirmed provenance state and its source grounding must all
+    // have been deep-copied onto the new version, not merely referenced
+    let (copied_paragraph_count, copied_body, copied_provenance): (i64, String, String) = db.read(|conn| conn.query_row(
+        "SELECT count(*),max(body_text),max(provenance_state) FROM legal_document_paragraphs
+         WHERE legal_document_version_id=?1",
+        [&new_version_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(copied_paragraph_count, 1);
+    assert!(copied_body.contains("הדסה"));
+    assert_eq!(copied_provenance, "confirmed");
+    let copied_source_count: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM legal_document_sources WHERE legal_document_version_id=?1",
+        [&new_version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(copied_source_count, 1, "the paragraph's source grounding must be copied onto the new version too");
+
+    // the original approved version and its paragraph must be untouched
+    let original_paragraph_count: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM legal_document_paragraphs WHERE legal_document_version_id=?1",
+        [&legal_version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(original_paragraph_count, 1, "the prior approved version's paragraphs must be untouched by the copy");
+    let original_status_unchanged: String = db.read(|conn| conn.query_row(
+        "SELECT status FROM legal_document_versions WHERE id=?1", [&legal_version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(original_status_unchanged, "approved", "the prior approved version must remain approved and immutable");
 
     // --- Step 19: export (txt) -- replicates commands::export_legal_document's txt path ---
     let content: String = db.read(|conn| {
