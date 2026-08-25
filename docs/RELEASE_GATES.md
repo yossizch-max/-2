@@ -3,11 +3,14 @@
 Current reconstruction verdict:
 **Developer source only. No client use.**
 
-Status as of this reconstruction pass: **A and B verified. D's automated checks
-verified, one real WCAG AA failure found and fixed. E: a real Windows build now
-succeeds in CI and produces an unsigned installer (see Gate E for the artifact link) —
-signing, release manifest and rollback package are still outstanding. C and F remain
-fully blocked — see each gate for exactly what is missing and who needs to do it.**
+Status as of this reconstruction pass: **A and B verified. C: a real, verified OCR
+runtime (Tesseract/Poppler/tessdata) now builds into the Windows installer and was
+confirmed present in the release bundle output — only the actual OCR smoke test against
+real documents remains, which needs a human running the packaged app. D's automated
+checks verified, one real WCAG AA failure found and fixed. E: a real Windows build now
+succeeds in CI and produces an unsigned installer with OCR included (see Gate E for the
+artifact link) — signing, release manifest and rollback package are still outstanding.
+F remains fully blocked — see that gate for what's missing.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -39,7 +42,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — in progress
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -69,17 +72,28 @@ DLLs directly at the extraction root, and the poppler zip's internal
 `pdftotext.exe` and `pdftoppm.exe` exactly where the script's directory search expects
 them — checked ahead of the next CI run instead of guessed again.
 
-Remaining to actually close this gate:
-1. Confirm the `7z`-based run succeeds end-to-end on a real Windows runner (in progress
-   as of this writing — run #6).
-2. Confirm the OCR runtime files actually land inside the Tauri release bundle output,
-   not just in `src-tauri/resources/ocr/` pre-build (Gate C's "verify final Tauri bundle
-   contains all required runtime files" — the workflow reports this but doesn't yet hard
-   -fail on it, since the exact Tauri v2 resource-staging path wasn't confirmed ahead of
-   time).
-3. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
-   packaged app actually running, which this session cannot do.
-4. A human should sanity-check the distribution choices above (UB-Mannheim and
+**Confirmed working (2026-08-25, run #6):** `7z`-based extraction, the whole vendoring
+step, and the full `desktop:build` all succeeded on a real `windows-2025` runner
+([run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367), commit
+`e92a148`). The "Report where OCR runtime files landed" step's log confirms all 6 files
+landed exactly where the app expects them at runtime:
+```
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\ara.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\eng.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\tessdata\heb.traineddata
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftoppm.exe
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\poppler\pdftotext.exe
+D:\a\-2\-2\src-tauri\target\release\resources\ocr\vendor\tesseract\tesseract.exe
+```
+Gate C's "verify final Tauri bundle contains all required runtime files" is satisfied —
+the resulting installer artifact (`tahrir-windows-installer-unsigned`, this run) is
+61.4MB, up from 5.4MB before OCR vendoring existed, consistent with the OCR runtime
+actually being embedded.
+
+Still remaining:
+1. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
+   packaged app actually running on a real machine, which this session cannot do.
+2. A human should sanity-check the distribution choices above (UB-Mannheim and
    oschwartz10612 are widely-used, reputable community builds referenced by the
    tesseract-ocr project itself, but this session picked them unilaterally under
    "continue with OCR" — flag here if a different distribution is preferred).
@@ -112,7 +126,10 @@ including SQLCipher/OpenSSL, compiles from source every run).
 - Rust locked compile (`cargo check --locked`) ✅
 - Rust locked tests (`cargo test --locked`, 4/4) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
-  Actions artifact (5.4MB, expires 14 days after the run)
+  Actions artifact. First produced without OCR at 5.4MB (run #3); as of
+  [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
+  full OCR runtime (see Gate C) at 61.4MB. Each run's artifact expires 14 days after
+  that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
 - release SHA256 / release manifest / rollback package — ❌ not done. These are
