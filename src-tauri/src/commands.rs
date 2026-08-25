@@ -1452,7 +1452,7 @@ pub fn review_legal_rule_test_case(state: State<'_, AppState>, payload: Value) -
     let test_case_id=required_string(&payload,"testCaseId")?;
     let approved=payload.get("approved").and_then(Value::as_bool)
         .ok_or_else(||AppError::Validation("approved required".into()))?;
-    let reviewed_by=payload.get("reviewedBy").and_then(Value::as_str);
+    let reviewed_by=required_string(&payload,"reviewedBy")?;
     legal_rules::review_test_case(&state.db,ruleset_id,test_case_id,approved,reviewed_by)?;
     Ok(json!({"ok":true}))
 }
@@ -1476,7 +1476,7 @@ pub fn submit_legal_ruleset_for_review(state: State<'_, AppState>, payload: Valu
 #[tauri::command]
 pub fn approve_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let ruleset_id=required_string(&payload,"rulesetId")?;
-    let approved_by=payload.get("approvedBy").and_then(Value::as_str);
+    let approved_by=required_string(&payload,"approvedBy")?;
     let integrity_sha256=legal_rules::approve_ruleset(&state.db,ruleset_id,approved_by)?;
     Ok(json!({"integritySha256":integrity_sha256}))
 }
@@ -1504,9 +1504,8 @@ pub fn preview_legal_engine_run(state: State<'_, AppState>, payload: Value) -> A
 #[tauri::command]
 pub fn commit_legal_engine_run(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
-    let engine_kind=required_string(&payload,"engineKind")?;
     let ruleset_id=required_string(&payload,"rulesetId")?;
     let context_json=required_json_string(&payload,"context")?;
-    let id=legal_rules::commit_engine_run(&state.db,matter_id,engine_kind,ruleset_id,&context_json)?;
+    let id=legal_rules::commit_engine_run(&state.db,matter_id,ruleset_id,&context_json)?;
     Ok(json!({"id":id}))
 }

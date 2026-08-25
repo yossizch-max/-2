@@ -2,7 +2,7 @@
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "tested_at": "2026-08-25",
   "regenerated_note": "This file was stale from the 2026-08-24 initial import (61 commands, 31 tables, 25 wired/36 stub) through many subsequent commits before being regenerated here against actually-current, actually-run checks. Treat any future drift the same way this drift was found: by an independent check against the real source, not by trusting this file.",
-  "regenerated_against_parent_commit": "97b2e6de3490d723d41a29865fc32c23d81a96e5",
+  "regenerated_against_parent_commit": "4391f3caf272853f471b3ce38145e83b029879b4",
   "reconstruction_not_byte_for_byte": true,
   "frontend_backend_contract": {
     "frontend_invokes": 86,
@@ -50,6 +50,9 @@
     "cross_matter_fact_source_blocked": true,
     "approved_ruleset_mutation_blocked": true,
     "engine_run_snapshot_immutable": true,
+    "superseded_ruleset_mutation_blocked": true,
+    "superseded_to_approved_reversal_blocked": true,
+    "engine_run_status_reversal_blocked": true,
     "note": "38 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13)"
   },
   "reconstructed_commands": {
@@ -60,14 +63,14 @@
   },
   "rust_compile": {
     "cargo_check_locked": "PASS",
-    "cargo_test_locked": "PASS (44/44)"
+    "cargo_test_locked": "PASS (58/58)"
   },
   "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
   "windows_tauri_build": {
     "status": "PASS on a real windows-2025 GitHub Actions runner",
     "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32877320049",
     "most_recent_verified_commit": "64b70661254867e857a39c1c86c5e883055f7c8f",
-    "note": "this run includes the legal-rules infrastructure (44/44 tests passed on the real runner) - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds, since any commit after this one needs its own fresh run"
+    "note": "this run includes the legal-rules infrastructure (44/44 tests passed on the real runner) but PREDATES the 2026-08-25 Phase A hardening pass (now 58/58 tests locally) - that hardening commit has NOT yet been separately confirmed on a real Windows CI runner; see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
   },
   "ocr_third_party_runtime": {
     "status": "BUNDLED_AND_VERIFIED",
@@ -76,6 +79,11 @@
   "legal_rules_infrastructure": {
     "status": "PHASE_A_COMPLETE_NO_ISRAELI_LAW_CONTENT",
     "detail": "Governed Ruleset/Rule/Source/TestCase/EngineRun schema and lifecycle (src-tauri/src/legal_rules.rs), a constrained-DSL rule interpreter (10 safe operators, no code eval/network/filesystem), and a Settings UI for authoring/testing/approving rulesets. Contains zero Israeli substantive law - a ruleset is only usable once a lawyer has sourced, tested and approved it. Phase B (Medical/Wage/Liability evidence ledgers) and Phase C (the first real lawyer-approved legal module) are deliberately not attempted."
+  },
+  "legal_rules_infrastructure_hardening": {
+    "status": "PHASE_A_HARDENING_COMPLETE_LOCALLY_NOT_YET_CI_CONFIRMED",
+    "source_audit": "TAHRIR_LEGAL_RULES_PHASE_A_DEEP_CONTROL_20260825.md",
+    "detail": "All 6 P0 findings and 5 of 6 P1 findings from the 2026-08-25 independent audit fixed and covered by new regression tests: terminal-state immutability (approved/superseded/revoked, not just approved), required non-empty reviewer identity on approve/review, page-level (not version-level) source grounding for approval, engine_kind always read from the ruleset itself, effective-period validation and enforcement, deterministic priority/rule_key tie-breaking, atomic single-transaction approval, forward-only engine-run status, exact integer arithmetic for cent-valued comparisons, and rejection of meaningless (assertion-free) test cases. P1-6 (linking legal_engine_runs to legal_deadlines/damage_calculations via FK) is deliberately deferred until real integration work begins, per the audit's own recommendation. cargo test --locked: 58/58 passing locally; this commit has not yet had its own Windows CI run - see docs/RELEASE_GATES.md for current status before treating it as CI-confirmed."
   },
   "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE",
   "release_verdict_detail": "See docs/RELEASE_GATES.md for the authoritative, actively-maintained gate-by-gate status. This file is a point-in-time snapshot, not a live source of truth."

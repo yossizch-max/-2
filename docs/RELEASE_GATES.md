@@ -31,11 +31,15 @@ Verified Authority not requiring an approved passage — were then also fixed (s
 "Follow-up fixes" section below), confirmed on real Windows CI at run #12, commit
 `d0cdb3e` (2026-08-25). A fourth document then specified governed infrastructure for
 deterministic legal rules; Phase A (schema, DSL interpreter, ruleset lifecycle, engine
-runs, Settings UI — deliberately zero Israeli substantive law) is now built, tested, and
-confirmed on real Windows CI at run #13, commit `64b7066` (2026-08-25) — the latest
-commit on `main`, and current as of this pass (see "Legal rules infrastructure, Phase A"
-below). What's left needs a human on a real Windows machine with a fresh installer: real
-OCR, real AI
+runs, Settings UI — deliberately zero Israeli substantive law) was then confirmed on
+real Windows CI at run #13, commit `64b7066`. A fifth document then audited that Phase A
+implementation and returned six P0 governance/integrity gaps (superseded-ruleset
+mutability, missing reviewer identity, citation-only sources satisfying approval,
+caller-controlled engine_kind, unenforced effective dates, non-deterministic priority
+ties) plus five P1s — all fixed in one hardening pass (see "Legal rules infrastructure,
+Phase A hardening" below), **but not yet reconfirmed on Windows CI** — that run is still
+needed before Gate C/E can be called current again. What's left needs a human on a real
+Windows machine with a fresh installer: real OCR, real AI
 provider calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
@@ -372,6 +376,99 @@ a CI failure. Confirmed on real Windows CI at
 [run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049), commit
 `64b7066`, 2026-08-25 — see the updated Gate C/E entries below.
 
+## Legal rules infrastructure, Phase A hardening (2026-08-25)
+
+An independent audit of Phase A (`TAHRIR_LEGAL_RULES_PHASE_A_DEEP_CONTROL_20260825.md`)
+returned a **strong foundation, not yet safe to connect to real substantive rules** -
+six P0 governance/integrity gaps and five P1 hardening items. Every P0 was
+independently re-verified before being fixed - the trigger-level findings against
+actual SQLite behavior (not just read), the code-level findings by direct inspection.
+All six P0s and five of six P1s are now closed in one focused hardening pass, per the
+audit's own recommended order; P1-6 remains deliberately deferred (explained below).
+
+- **P0-1, superseded rulesets were mutable and re-approvable.** The original trigger
+  only guarded `OLD.status='approved'`, so once a ruleset became `superseded` its
+  title, sources, rules and test cases could all still be edited directly, and its
+  status could be flipped straight back to `'approved'` - verified live against real
+  SQLite before fixing. Fixed: `approved`/`superseded`/`revoked` are now all terminal
+  states; the *only* permitted mutation is the exact `approved -> superseded`
+  transition, changing solely `status`/`superseded_by` (every other column checked
+  byte-for-byte unchanged via null-safe `IS` comparisons) - and only from `approved`,
+  never from an already-terminal state. Old trigger names dropped explicitly so an
+  already-migrated database doesn't keep the buggy ones alongside the new ones.
+- **P0-2, "lawyer approved" identity wasn't actually required.** `approved_by`/
+  `reviewed_by` were optional, and the UI never collected them - a ruleset could reach
+  `approved` with a null approver. Fixed: both are now required, non-empty strings,
+  rejected at the Rust layer before touching the database; `LegalRulesPage` gained a
+  reviewer-name field gating the approve/test-case-approve actions.
+- **P0-3, a citation-only source could satisfy approval with no real source text.**
+  `add_source`'s citation-only path hashed the citation *text itself*, not any actual
+  legal source, and still counted as "verified" once `verified_by` was set - so a
+  Ruleset could be approved with zero stored source text. Fixed: a document-backed
+  source must now name an exact page (not just a document version), hashed from that
+  page's own `text_sha256`; the approval gate only counts sources bound to a real,
+  currently non-stale page. Citation-only sources can still be added for reference but
+  can never satisfy approval, regardless of `verified_by`. `LegalRulesPage` gained a
+  real matter/document/page picker for this (it previously exposed no document picker
+  at all, matching the audit's UI finding).
+- **P0-4, `engine_kind` was caller-controlled, not bound to the ruleset.**
+  `commit_engine_run` accepted `engine_kind` as a parameter with no check it matched
+  the ruleset's own - a deadline ruleset could be committed as a `damage` run. Fixed:
+  the parameter is gone entirely; `engine_kind` is always read from `legal_rulesets`
+  and stored as-is.
+- **P0-5, `effective_from`/`effective_to` existed in the schema but were never
+  enforced.** Fixed: validated (real ISO dates, `from <= to`) at create/update time;
+  checked against the server clock at preview/commit time, rejecting a ruleset outside
+  its own declared period; the applicability date is recorded in the engine-run trace.
+- **P0-6, rule priority ties resolved non-deterministically.** `ORDER BY priority ASC`
+  alone gives SQLite no guaranteed tie-break order. Fixed: `ORDER BY priority ASC,
+  rule_key ASC` everywhere rules are matched (engine run and test runner alike) -
+  verified deterministic across five repeated runs in a dedicated test, not just once.
+
+Also fixed (P1, five of six):
+- **P1-1, approval wasn't atomic.** The original flow checked invariants, released the
+  writer lock, ran the test suite through a separate connection, then reacquired the
+  lock and only rechecked `status` - a window a concurrent command could exploit.
+  Fixed: everything now runs inside one `db.write` call on one connection
+  (`run_tests_against_conn`, shared with the public `run_tests`), holding the writer
+  lock for the whole operation.
+- **P1-2, the integrity hash omitted legally meaningful fields.** `canonical_content`
+  now binds effective period, each rule's `explanation_template`, each source's
+  `source_kind`/`document_version_id`/`document_page_id`, each test case's
+  `reviewed_by`, and the approver's identity - not just bodies and keys.
+- **P1-3, engine-run status could move backward.** A direct SQL test confirmed
+  `locked -> proposed` succeeded before the fix. Fixed: a trigger now ranks
+  `proposed(1) < reviewed(2) < committed(3) < locked(4)` and blocks any update where
+  the new rank is lower than the old.
+- **P1-4, an empty test expectation was trivially meaningless.**
+  `expected_output_json: {}` passed regardless of whether a rule matched. Fixed: a
+  no-match expectation must now be explicit (`"expectNoMatch": true`); a test whose
+  rule matches must assert at least one real outcome, or it fails as meaningless
+  rather than trivially passing.
+- **P1-5, the DSL used floating point in comparison/cap/floor.** For a money engine,
+  `f64` risks precision loss on large cent values. Fixed: `compare`/`cap`/`floor` now
+  use exact `i64` arithmetic whenever both operands are integers, falling back to
+  `f64` only for genuinely non-integer numbers - covered by a test using values beyond
+  `f64`'s exact-integer range (2^53).
+
+Also fixed the audit's UI finding: the rule-authoring form's `operation` textarea had
+a prefilled `add_days ... days:30` sample value that "visually resembles a legal rule"
+even as a placeholder. Replaced with an empty value and a genuinely generic
+placeholder attribute (`days:N`).
+
+**Deliberately deferred: P1-6**, linking `legal_engine_runs` to `legal_deadlines`/
+`damage_calculations` via an `engine_run_id` FK - the audit itself frames this as
+"before wiring Phase C," and that integration (the spec's own "Integration with
+current TAHRIR" section) hasn't been started yet; adding the FK now would be
+speculative against an interface that doesn't exist. The broader UI polish the audit
+also noted (structured form controls instead of raw JSON, an "advanced" toggle) is
+explicitly framed as prep for a lawyer authoring real rules, i.e. Phase C work, not
+required for Phase A's own correctness.
+
+13 new backend tests (one per P0/P1 item with dedicated DB or DSL coverage) - 58/58
+total. `cargo check/test --locked`, `npm run build`, `contract:check` (86/86, no
+drift), `qa:static` all pass.
+
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
   `VerifiedSourceSnapshot::create` before any parsing. ✅
@@ -394,7 +491,7 @@ that live check belongs to Gate F.
 - `package-lock.json` and `src-tauri/Cargo.lock` are committed and reviewed. ✅
 - `npm ci` — clean install, 0 vulnerabilities from `npm audit --audit-level=high`. ✅
 - `cargo check --locked` — passes. ✅
-- `cargo test --locked -- --test-threads=1` — 44/44 tests pass (grown from the original
+- `cargo test --locked -- --test-threads=1` — 58/58 tests pass (grown from the original
   4 as Gates F and the external-audit response added real coverage). ✅
 - Build does not modify either lockfile — verified by hashing both files before and
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;

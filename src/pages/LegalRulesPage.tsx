@@ -2,7 +2,7 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
-import type { LegalRuleset, LegalRulesetDetail } from "../types";
+import type { DocumentPage, DocumentRow, LegalRuleset, LegalRulesetDetail, Matter } from "../types";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "טיוטה", under_review: "בבדיקה", approved: "מאושר", superseded: "הוחלף", revoked: "בוטל",
@@ -20,6 +20,8 @@ function RulesetList({ onOpen }: { onOpen: (id: string) => void }) {
   const [jurisdiction, setJurisdiction] = useState("IL");
   const [title, setTitle] = useState("");
   const [version, setVersion] = useState("1");
+  const [effectiveFrom, setEffectiveFrom] = useState("");
+  const [effectiveTo, setEffectiveTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -27,7 +29,10 @@ function RulesetList({ onOpen }: { onOpen: (id: string) => void }) {
     if (!title.trim()) return;
     setBusy(true); setFormError(null);
     try {
-      const res = await commands.create_legal_ruleset({ engineKind, jurisdiction, title, version }) as { id: string };
+      const res = await commands.create_legal_ruleset({
+        engineKind, jurisdiction, title, version,
+        effectiveFrom: effectiveFrom || undefined, effectiveTo: effectiveTo || undefined,
+      }) as { id: string };
       setCreating(false); setTitle("");
       reload();
       onOpen(res.id);
@@ -62,6 +67,8 @@ function RulesetList({ onOpen }: { onOpen: (id: string) => void }) {
         <label>תחום שיפוט<input value={jurisdiction} onChange={e => setJurisdiction(e.target.value)} /></label>
         <label>כותרת<input autoFocus value={title} onChange={e => setTitle(e.target.value)} /></label>
         <label>גרסה<input value={version} onChange={e => setVersion(e.target.value)} /></label>
+        <label>בתוקף מתאריך<input type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} /></label>
+        <label>בתוקף עד תאריך<input type="date" value={effectiveTo} onChange={e => setEffectiveTo(e.target.value)} /></label>
         <div className="header-actions">
           <button className="btn secondary" onClick={() => setCreating(false)} disabled={busy}>ביטול</button>
           <button className="btn primary" onClick={create} disabled={busy || !title.trim()}>{busy ? "יוצר..." : "צור"}</button>
@@ -79,19 +86,38 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reviewerName, setReviewerName] = useState("");
 
   const [sourceKind, setSourceKind] = useState("legislation");
   const [citation, setCitation] = useState("");
   const [pinpoint, setPinpoint] = useState("");
   const [verifiedBy, setVerifiedBy] = useState("");
+  const [citationOnly, setCitationOnly] = useState(false);
+  const [sourceMatterId, setSourceMatterId] = useState("");
+  const [sourceDocumentVersionId, setSourceDocumentVersionId] = useState("");
+  const [sourcePageId, setSourcePageId] = useState("");
+  const { data: allMatters } = useCommand(() => commands.list_matters({}) as Promise<Matter[]>, []);
+  const { data: sourceDocuments } = useCommand(
+    () => sourceMatterId ? commands.list_documents({ matterId: sourceMatterId }) as Promise<DocumentRow[]> : Promise.resolve([]),
+    [sourceMatterId]
+  );
+  const { data: sourcePages } = useCommand(
+    () => sourceDocumentVersionId ? commands.get_document_pages({ documentVersionId: sourceDocumentVersionId }) as Promise<DocumentPage[]> : Promise.resolve([]),
+    [sourceDocumentVersionId]
+  );
+  const selectedSourcePage = sourcePages?.find(p => p.id === sourcePageId);
   const addSource = async () => {
     if (!citation.trim()) return;
+    if (!citationOnly && !sourcePageId) return;
     setBusy("source"); setActionError(null);
     try {
       await commands.add_legal_ruleset_source({
-        rulesetId, sourceKind, citation, pinpoint: pinpoint || undefined, verifiedBy: verifiedBy || undefined
+        rulesetId, sourceKind, citation, pinpoint: pinpoint || undefined,
+        documentVersionId: citationOnly ? undefined : sourceDocumentVersionId,
+        documentPageId: citationOnly ? undefined : sourcePageId,
+        verifiedBy: verifiedBy || undefined,
       });
-      setCitation(""); setPinpoint(""); setVerifiedBy("");
+      setCitation(""); setPinpoint(""); setVerifiedBy(""); setSourcePageId("");
       reload();
     } catch (e) { setActionError(String(e)); }
     finally { setBusy(null); }
@@ -100,7 +126,11 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
   const [ruleKey, setRuleKey] = useState("");
   const [priority, setPriority] = useState("0");
   const [conditionsText, setConditionsText] = useState('[{"field":"","op":"eq","value":""}]');
-  const [operationText, setOperationText] = useState('[{"op":"add_days","from":{"reg":"trigger_date"},"days":30,"into":"result"}]');
+  // Deliberately no prefilled sample value here (Deep Control on Phase A, 2026-08-25):
+  // a concrete-looking default like "add 30 days" visually resembles a real legal
+  // rule even as a placeholder, in a form meant to hold zero legal content until a
+  // lawyer authors real, sourced rules.
+  const [operationText, setOperationText] = useState("");
   const [explanationTemplate, setExplanationTemplate] = useState("");
   const [ruleSourceId, setRuleSourceId] = useState("");
   const addRule = async () => {
@@ -136,8 +166,9 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
   };
 
   const reviewTestCase = async (testCaseId: string, approved: boolean) => {
+    if (!reviewerName.trim()) return;
     setBusy(testCaseId); setActionError(null);
-    try { await commands.review_legal_rule_test_case({ rulesetId, testCaseId, approved }); reload(); }
+    try { await commands.review_legal_rule_test_case({ rulesetId, testCaseId, approved, reviewedBy: reviewerName }); reload(); }
     catch (e) { setActionError(String(e)); }
     finally { setBusy(null); }
   };
@@ -157,8 +188,9 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
     finally { setBusy(null); }
   };
   const approve = async () => {
+    if (!reviewerName.trim()) return;
     setBusy("approve"); setActionError(null);
-    try { await commands.approve_legal_ruleset({ rulesetId }); reload(); }
+    try { await commands.approve_legal_ruleset({ rulesetId, approvedBy: reviewerName }); reload(); }
     catch (e) { setActionError(String(e)); }
     finally { setBusy(null); }
   };
@@ -184,12 +216,16 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
       <h1>{rs.title} <small>v{rs.version}</small></h1>
       <div className="meta-chips">
         <span>{rs.engineKind}</span><span>{rs.jurisdiction}</span>
+        <span>תוקף: {rs.effectiveFrom ?? "ללא הגבלה"} — {rs.effectiveTo ?? "ללא הגבלה"}</span>
         <StatusBadge tone={STATUS_TONE[rs.status]}>{STATUS_LABEL[rs.status]}</StatusBadge>
       </div>
+      {(isDraft || rs.status === "under_review") && <label style={{ maxWidth: 260 }}>שם המאשר/בודק (נדרש לאישור Ruleset ומקרי בדיקה)
+        <input value={reviewerName} onChange={e => setReviewerName(e.target.value)} placeholder="שם עורך הדין" />
+      </label>}
       <div className="header-actions">
         {isDraft && <button className="btn secondary" onClick={submit} disabled={busy === "submit"}>{busy === "submit" ? "שולח..." : "שלח לבדיקה"}</button>}
         {(rs.status === "draft" || rs.status === "under_review") &&
-          <button className="btn primary" onClick={approve} disabled={busy === "approve"}>{busy === "approve" ? "מאשר..." : "אשר Ruleset"}</button>}
+          <button className="btn primary" onClick={approve} disabled={busy === "approve" || !reviewerName.trim()}>{busy === "approve" ? "מאשר..." : "אשר Ruleset"}</button>}
       </div>
     </div>
     {actionError && <p className="quiet">שגיאה: {actionError}</p>}
@@ -197,10 +233,11 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
     <div className="grid-2">
       <section className="workspace-card">
         <h2>מקורות משפטיים</h2>
+        <p className="quiet">רק מקור שמצביע על עמוד מסוים במסמך שמור בתיק נספר לצורך אישור Ruleset. מקור ציטוט-בלבד ניתן להוספה כהפניה, אך לעולם לא יספיק לאישור.</p>
         {rs.sources.length === 0 && <p className="quiet">אין עדיין מקורות.</p>}
         {rs.sources.map(s => <div className="authority-row" key={s.id}>
-          <div><strong>{s.citation}</strong><small>{s.pinpoint ?? ""}{s.documentVersionId ? " · מסמך בתיק" : " · ציטוט חיצוני"}</small></div>
-          <StatusBadge tone={s.verifiedAt ? "ok" : "warn"}>{s.verifiedAt ? "מאומת" : "לא מאומת"}</StatusBadge>
+          <div><strong>{s.citation}</strong><small>{s.pinpoint ?? ""}{s.documentPageId ? " · עמוד במסמך בתיק" : " · ציטוט חיצוני (לא נספר לאישור)"}</small></div>
+          <StatusBadge tone={s.documentPageId ? "ok" : "warn"}>{s.documentPageId ? "מאומת ונספר לאישור" : (s.verifiedAt ? "צוטט ואומת, לא נספר לאישור" : "לא מאומת")}</StatusBadge>
         </div>)}
         {isDraft && <div style={{ marginTop: 12 }}>
           <label>סוג מקור<select value={sourceKind} onChange={e => setSourceKind(e.target.value)}>
@@ -210,8 +247,29 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
           </select></label>
           <label>ציטוט<input value={citation} onChange={e => setCitation(e.target.value)} placeholder="חוק / תקנה / פסק דין" /></label>
           <label>מיקום מדויק (Pinpoint)<input value={pinpoint} onChange={e => setPinpoint(e.target.value)} /></label>
-          <label>מאומת ע"י (לציטוט חיצוני בלבד)<input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="שם עורך הדין" /></label>
-          <button className="btn secondary" onClick={addSource} disabled={busy === "source" || !citation.trim()}>הוסף מקור</button>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, flexDirection: "row" }}>
+            <input type="checkbox" checked={citationOnly} onChange={e => setCitationOnly(e.target.checked)} />
+            מקור ציטוט-בלבד, ללא מסמך שמור בתיק (לא ייספר לצורך אישור)
+          </label>
+          {citationOnly
+            ? <label>מאומת ע"י<input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="שם עורך הדין" /></label>
+            : <>
+              <label>תיק<select value={sourceMatterId} onChange={e => { setSourceMatterId(e.target.value); setSourceDocumentVersionId(""); setSourcePageId(""); }}>
+                <option value="">בחר תיק...</option>
+                {allMatters?.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
+              </select></label>
+              {sourceMatterId && <label>מסמך<select value={sourceDocumentVersionId} onChange={e => { setSourceDocumentVersionId(e.target.value); setSourcePageId(""); }}>
+                <option value="">בחר מסמך...</option>
+                {sourceDocuments?.filter(d => d.currentVersionId).map(d => <option key={d.id} value={d.currentVersionId!}>{d.fileName}</option>)}
+              </select></label>}
+              {sourceDocumentVersionId && <label>עמוד<select value={sourcePageId} onChange={e => setSourcePageId(e.target.value)}>
+                <option value="">בחר עמוד...</option>
+                {sourcePages?.map(p => <option key={p.id} value={p.id}>{p.pageNumber ? `עמוד ${p.pageNumber}` : p.id}</option>)}
+              </select></label>}
+              {selectedSourcePage && <blockquote className="source-excerpt"><p>{selectedSourcePage.text}</p></blockquote>}
+            </>}
+          <button className="btn secondary" onClick={addSource}
+            disabled={busy === "source" || !citation.trim() || (!citationOnly && !sourcePageId)}>הוסף מקור</button>
         </div>}
       </section>
 
@@ -227,7 +285,8 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
           <label>מפתח כלל<input value={ruleKey} onChange={e => setRuleKey(e.target.value)} /></label>
           <label>עדיפות<input value={priority} onChange={e => setPriority(e.target.value)} /></label>
           <label>תנאים (JSON)<textarea rows={3} value={conditionsText} onChange={e => setConditionsText(e.target.value)} /></label>
-          <label>פעולות (JSON)<textarea rows={3} value={operationText} onChange={e => setOperationText(e.target.value)} /></label>
+          <label>פעולות (JSON)<textarea rows={3} value={operationText} onChange={e => setOperationText(e.target.value)}
+            placeholder='[{"op":"add_days","from":{"reg":"trigger_date"},"days":N,"into":"result"}]' /></label>
           <label>תבנית הסבר<input value={explanationTemplate} onChange={e => setExplanationTemplate(e.target.value)} placeholder="המועד נקבע ל-{result}" /></label>
           <label>מקור<select value={ruleSourceId} onChange={e => setRuleSourceId(e.target.value)}>
             <option value="">ללא</option>
@@ -252,7 +311,7 @@ function RulesetEditor({ rulesetId, onBack }: { rulesetId: string; onBack: () =>
             <StatusBadge tone={tc.reviewStatus === "approved" ? "ok" : tc.reviewStatus === "rejected" ? "risk" : "neutral"}>{tc.reviewStatus}</StatusBadge>
             {result && <StatusBadge tone={result.passed ? "ok" : "risk"}>{result.passed ? "עבר" : "נכשל"}: {result.detail}</StatusBadge>}
             {isDraft && tc.reviewStatus !== "approved" &&
-              <button disabled={busy === tc.id} onClick={() => reviewTestCase(tc.id, true)}>אשר מקרה בדיקה</button>}
+              <button disabled={busy === tc.id || !reviewerName.trim()} onClick={() => reviewTestCase(tc.id, true)}>אשר מקרה בדיקה</button>}
           </div>
         </div>;
       })}

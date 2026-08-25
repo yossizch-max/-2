@@ -61,55 +61,87 @@ CREATE INDEX IF NOT EXISTS idx_rules_ruleset ON legal_rules(ruleset_id,priority)
 CREATE INDEX IF NOT EXISTS idx_rule_test_cases_ruleset ON legal_rule_test_cases(ruleset_id);
 CREATE INDEX IF NOT EXISTS idx_engine_runs_matter ON legal_engine_runs(matter_id,engine_kind,created_at);
 
+-- The v1 versions of these triggers only guarded OLD.status='approved' and are
+-- superseded by the terminal-state versions below - drop them by their old names so a
+-- database that already ran the earlier version of this file doesn't keep the buggy
+-- ones alongside the new ones.
+DROP TRIGGER IF EXISTS trg_approved_ruleset_no_update;
+DROP TRIGGER IF EXISTS trg_approved_ruleset_no_delete;
+DROP TRIGGER IF EXISTS trg_approved_ruleset_sources_no_insert;
+DROP TRIGGER IF EXISTS trg_approved_ruleset_sources_no_update;
+DROP TRIGGER IF EXISTS trg_approved_ruleset_sources_no_delete;
+DROP TRIGGER IF EXISTS trg_approved_rules_no_insert;
+DROP TRIGGER IF EXISTS trg_approved_rules_no_update;
+DROP TRIGGER IF EXISTS trg_approved_rules_no_delete;
+DROP TRIGGER IF EXISTS trg_approved_rule_test_cases_no_insert;
+DROP TRIGGER IF EXISTS trg_approved_rule_test_cases_no_update;
+DROP TRIGGER IF EXISTS trg_approved_rule_test_cases_no_delete;
+
 -- An approved ruleset (and everything that composes it) is immutable at the DB level,
 -- mirroring the existing legal_document_* / legal_authorities immutability pattern.
--- Superseding a ruleset creates a NEW row and points the old one's superseded_by at it
--- (still an UPDATE on the old, already-approved row) - so that one specific transition
--- is allowed even while approved, everything else is not.
-CREATE TRIGGER IF NOT EXISTS trg_approved_ruleset_no_update BEFORE UPDATE ON legal_rulesets
-WHEN OLD.status='approved' AND NOT (
- NEW.status='superseded' AND NEW.superseded_by IS NOT NULL AND
+-- approved/superseded/revoked are ALL terminal content states, not just 'approved' -
+-- an external audit (2026-08-25) found the original version of this trigger only
+-- guarded OLD.status='approved', so a ruleset could be freely edited (including
+-- flipped straight back to 'approved') the moment it became 'superseded'. Superseding
+-- creates a NEW row and points the old one's superseded_by at it (still an UPDATE on
+-- the old, already-approved row) - that one specific transition, FROM 'approved' only,
+-- changing ONLY status+superseded_by, is the sole exception; every other column and
+-- every other starting state is blocked.
+CREATE TRIGGER IF NOT EXISTS trg_terminal_ruleset_no_update BEFORE UPDATE ON legal_rulesets
+WHEN OLD.status IN ('approved','superseded','revoked') AND NOT (
+ OLD.status='approved' AND NEW.status='superseded' AND NEW.superseded_by IS NOT NULL AND
  NEW.id IS OLD.id AND NEW.engine_kind IS OLD.engine_kind AND NEW.jurisdiction IS OLD.jurisdiction AND
- NEW.title IS OLD.title AND NEW.version IS OLD.version AND NEW.integrity_sha256 IS OLD.integrity_sha256
+ NEW.title IS OLD.title AND NEW.version IS OLD.version AND NEW.integrity_sha256 IS OLD.integrity_sha256 AND
+ NEW.effective_from IS OLD.effective_from AND NEW.effective_to IS OLD.effective_to AND
+ NEW.description IS OLD.description AND NEW.created_at IS OLD.created_at AND NEW.created_by IS OLD.created_by AND
+ NEW.submitted_for_review_at IS OLD.submitted_for_review_at AND NEW.approved_at IS OLD.approved_at AND
+ NEW.approved_by IS OLD.approved_by
 )
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_ruleset_no_delete BEFORE DELETE ON legal_rulesets
-WHEN OLD.status IN ('approved','superseded') BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_terminal_ruleset_no_delete BEFORE DELETE ON legal_rulesets
+WHEN OLD.status IN ('approved','superseded','revoked') BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
 
-CREATE TRIGGER IF NOT EXISTS trg_approved_ruleset_sources_no_insert BEFORE INSERT ON legal_ruleset_sources
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_ruleset_sources_no_insert BEFORE INSERT ON legal_ruleset_sources
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_ruleset_sources_no_update BEFORE UPDATE ON legal_ruleset_sources
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_ruleset_sources_no_update BEFORE UPDATE ON legal_ruleset_sources
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_ruleset_sources_no_delete BEFORE DELETE ON legal_ruleset_sources
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
-BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-
-CREATE TRIGGER IF NOT EXISTS trg_approved_rules_no_insert BEFORE INSERT ON legal_rules
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status='approved')
-BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_rules_no_update BEFORE UPDATE ON legal_rules
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
-BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_rules_no_delete BEFORE DELETE ON legal_rules
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_ruleset_sources_no_delete BEFORE DELETE ON legal_ruleset_sources
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
 
-CREATE TRIGGER IF NOT EXISTS trg_approved_rule_test_cases_no_insert BEFORE INSERT ON legal_rule_test_cases
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rules_no_insert BEFORE INSERT ON legal_rules
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_rule_test_cases_no_update BEFORE UPDATE ON legal_rule_test_cases
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rules_no_update BEFORE UPDATE ON legal_rules
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
-CREATE TRIGGER IF NOT EXISTS trg_approved_rule_test_cases_no_delete BEFORE DELETE ON legal_rule_test_cases
-WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status='approved')
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rules_no_delete BEFORE DELETE ON legal_rules
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
+BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rule_test_cases_no_insert BEFORE INSERT ON legal_rule_test_cases
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=NEW.ruleset_id AND r.status IN ('approved','superseded','revoked'))
+BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rule_test_cases_no_update BEFORE UPDATE ON legal_rule_test_cases
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
+BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_terminal_rule_test_cases_no_delete BEFORE DELETE ON legal_rule_test_cases
+WHEN EXISTS(SELECT 1 FROM legal_rulesets r WHERE r.id=OLD.ruleset_id AND r.status IN ('approved','superseded','revoked'))
 BEGIN SELECT RAISE(ABORT,'APPROVED_RULESET_IMMUTABLE'); END;
 
 -- legal_engine_runs is an immutable calculation trace once written: its snapshot,
 -- result, trace and the ruleset hash it ran against may never change. status may still
 -- progress forward (proposed -> reviewed -> committed -> locked) plus reviewed_at/
 -- review_note, so only those columns are allowed to differ from OLD.
+-- P1-3 (Deep Control on Phase A, 2026-08-25): the original version of this trigger
+-- guarded the snapshot fields but let `status` move freely, including backwards
+-- (a direct SQL test moved a 'locked' run back to 'proposed'). Status may now only
+-- move forward through proposed(1) -> reviewed(2) -> committed(3) -> locked(4), never
+-- backward and never to an unrecognized value (CASE ... ELSE 0 makes anything outside
+-- the four known statuses rank below everything, so it can never be moved *to*).
+DROP TRIGGER IF EXISTS trg_engine_run_no_update;
 CREATE TRIGGER IF NOT EXISTS trg_engine_run_no_update BEFORE UPDATE ON legal_engine_runs
 WHEN NEW.input_snapshot_json IS NOT OLD.input_snapshot_json
  OR NEW.result_json IS NOT OLD.result_json
@@ -119,6 +151,11 @@ WHEN NEW.input_snapshot_json IS NOT OLD.input_snapshot_json
  OR NEW.ruleset_version IS NOT OLD.ruleset_version
  OR NEW.matter_id IS NOT OLD.matter_id
  OR NEW.engine_kind IS NOT OLD.engine_kind
+ OR (
+   CASE NEW.status WHEN 'proposed' THEN 1 WHEN 'reviewed' THEN 2 WHEN 'committed' THEN 3 WHEN 'locked' THEN 4 ELSE 0 END
+   <
+   CASE OLD.status WHEN 'proposed' THEN 1 WHEN 'reviewed' THEN 2 WHEN 'committed' THEN 3 WHEN 'locked' THEN 4 ELSE 0 END
+ )
 BEGIN SELECT RAISE(ABORT,'ENGINE_RUN_SNAPSHOT_IMMUTABLE'); END;
 CREATE TRIGGER IF NOT EXISTS trg_engine_run_no_delete BEFORE DELETE ON legal_engine_runs
 BEGIN SELECT RAISE(ABORT,'ENGINE_RUN_SNAPSHOT_IMMUTABLE'); END;

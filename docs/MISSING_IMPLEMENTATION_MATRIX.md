@@ -188,3 +188,27 @@ before it may drive a committed result — with zero legal content encoded by th
 Phase B (evidence ledgers) and Phase C (the first real lawyer-approved legal module)
 remain deliberately unattempted, consistent with the position taken on the third
 report's Tier 3 above.
+
+## Legal rules infrastructure, Phase A hardening (2026-08-25)
+
+A fifth external document audited that Phase A implementation and returned six P0
+governance/integrity gaps and five P1 hardening items — see `docs/RELEASE_GATES.md`'s
+"Legal rules infrastructure, Phase A hardening" section for the full per-finding
+writeup. Every P0 was independently re-verified (live against SQLite for the trigger
+findings, by direct code inspection for the rest) before being fixed. Closed in one
+pass: superseded rulesets could still be mutated and re-approved (terminal-state
+triggers now cover approved/superseded/revoked); ruleset and test-case approval didn't
+actually require a reviewer identity (now required, non-empty); a citation-only source
+could satisfy approval with no real source text (now requires an exact document page,
+hashed from that page's own content); `engine_kind` was a trusted caller input, not
+bound to the ruleset (parameter removed entirely); `effective_from`/`effective_to`
+existed but were never enforced (now validated and checked against the server clock);
+rule priority ties resolved non-deterministically (now `priority, rule_key` ordering
+everywhere). Also: approval is now atomic (one transaction, not a check-release-
+recheck sequence); the integrity hash binds effective period, explanation templates,
+source kind/document/page, and reviewer identity; engine-run status can only move
+forward; an empty test expectation no longer passes trivially; the DSL uses exact
+integer arithmetic for comparisons/cap/floor instead of `f64`; and a legal-rule-shaped
+sample value was removed from the rule-authoring form. P1-6 (linking engine runs to
+`legal_deadlines`/`damage_calculations`) is deliberately deferred until that
+integration itself is built, per the audit's own framing.

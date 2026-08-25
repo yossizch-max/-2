@@ -1,7 +1,7 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-25",
-  "regenerated_against_commit": "64b70661254867e857a39c1c86c5e883055f7c8f",
+  "regenerated_against_commit": "4391f3caf272853f471b3ce38145e83b029879b4",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 4688,
-      "sha256": "5e06949d58417bf1dbbfe58c8c9b2ccf3856eb1b5822b4b8dd245e374a59d186"
+      "size": 6152,
+      "sha256": "3d92245f214572c1f513c4ba159d7d64ccbcc76026eaaddb6bdfec9e805aff70"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 697,
-      "sha256": "ee62578df0b80c3bd975ce3e1222128162cf86250f44349585186b9899ac4dfe"
+      "size": 841,
+      "sha256": "c189c01424bf5ff0323a1b2e7c372b813d505823a304545b79ae936e315f823a"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "b5b9a1f18c6b2bb9ff8e37f402b980007a6ec67b9daba8b16cce95a67dc759d6"
+      "sha256": "116d69d15c7cbd2ef2794afeccabbbcf2ead82ed14c15abd643d1a4b129b890d"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 13522,
-      "sha256": "78d99cb8b1da855a7df872df541107a985404783950d1148fea20039f3cc0c40"
+      "size": 15321,
+      "sha256": "c046e43d0816c63c5498b761329468a6aaacbb23ccb3e70c9ac17c20f6f326b2"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 47253,
-      "sha256": "a63b5e1d4bc70200d459e9e5c3b1c879baff42f49063db3284834b97086366cb"
+      "size": 54245,
+      "sha256": "cf3cb3427d0610b3662a594508b16acd5895ac4834dd78dae2b75b4ea35a5d6f"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -179,8 +179,8 @@
     },
     {
       "path": "src-tauri/migrations/002_legal_rules_infrastructure_v13.sql",
-      "size": 7977,
-      "sha256": "af63b7389955e47395c94f9509eecb1a8c7d6a73c7658f8859f465b233ffce91"
+      "size": 10781,
+      "sha256": "f58689553183141156573869b7bf1cb4241f02b23949746c412ac6f4a5b858fb"
     },
     {
       "path": "src-tauri/resources/ocr/README.md",
@@ -214,8 +214,8 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "size": 73564,
-      "sha256": "f0db1e19f0a4959b762853954de18c8cd5186165bf096c4e6376fb85f49dfbfa"
+      "size": 73471,
+      "sha256": "45111f29e4a8d49df9c2d2e12a037de74e2df6d3dfd583623b36b640f1762e69"
     },
     {
       "path": "src-tauri/src/damage.rs",
@@ -244,8 +244,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 52979,
-      "sha256": "9579734730386550d2ea8e0f457a3a04d671580014cdeea4b2961dfaf1861edb"
+      "size": 66066,
+      "sha256": "4bda5cf1dbc65dfec1b9fcc637f534b95163ca722c46ac9d3c641f364fc6da3e"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
@@ -254,8 +254,8 @@
     },
     {
       "path": "src-tauri/src/legal_rules.rs",
-      "size": 47567,
-      "sha256": "1a417ee4de7b3e30e83669149a47877d28ca22959f4ea5310d36161c7bfa4eb8"
+      "size": 59248,
+      "sha256": "dbd1e8c63bd83c0962a0ef02d4749fddc3bbc2b7f5a2cd7bc9d6dd3397bd8e55"
     },
     {
       "path": "src-tauri/src/lib.rs",
@@ -394,8 +394,8 @@
     },
     {
       "path": "src/pages/LegalRulesPage.tsx",
-      "size": 16444,
-      "sha256": "18df1486158f58e68d7f927e498a2daf06745e807c7458b37c52ec34257f4c5b"
+      "size": 21113,
+      "sha256": "227201820d84453fc0f672d51f6a47f2167cffe40f10274a3b1b9b18847d3682"
     },
     {
       "path": "src/pages/MatterWorkspace.tsx",
