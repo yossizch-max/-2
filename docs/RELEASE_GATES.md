@@ -40,11 +40,16 @@ ties) plus five P1s — all fixed in one hardening pass (see "Legal rules infras
 Phase A hardening" below), confirmed on real Windows CI at run #14, commit `d7b3ae6`.
 Three further reports (market/product research plus ledger-lifecycle and AI-pipeline
 deep dives) then laid out a Phase B roadmap; its first milestone, B1 (Matter Profile —
-case type, event/court/BTL fields, party contacts), is implemented (see "Phase B,
-milestone B1" below), **but not yet reconfirmed on Windows CI** — that run is still
-needed before Gate C/E can be called current again. What's left needs a human on a real
-Windows machine with a fresh installer: real OCR, real AI
-provider calls, and DOCX export, which doesn't exist in this reconstruction yet.**
+case type, event/court/BTL fields, party contacts), was confirmed on real Windows CI at
+run #15, commit `16a31b3` — then a design review of that same milestone (before any
+client ever depended on its shape) prompted renaming two fields for room to grow
+(`primary_event_date`/`primary_court_name`), replacing a single contact-details blob
+with structured party fields, and widening/relabeling the case-type taxonomy (see
+"Phase B, milestone B1" below for the full writeup). **That review-fix commit is not
+yet reconfirmed on Windows CI** — that run is still needed before Gate C/E can be
+called current again. What's left needs a human on a real Windows machine with a fresh
+installer: real OCR, real AI provider calls, and DOCX export, which doesn't exist in
+this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -514,8 +519,54 @@ tests for the allowlists) - 65/65 total. `cargo check/test --locked`, `npm run b
 `twoTablesInMatterProfile`) all pass. Migration re-verified idempotent (applied 3x: 40
 tables, 27 indexes, 37 triggers, `user_version=14`, integrity ok, `fk_check` clean).
 
-**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
-can be called current on Gate C/E.
+**Review fixes (2026-08-25), applied before any Windows CI run confirmed the original
+shape** - `003_matter_profile_v14.sql` was edited in place (not superseded by a new
+migration file, mirroring the precedent set by the Phase A hardening pass rewriting
+002 in place):
+- `event_date`/`court_name` renamed to `primary_event_date`/`primary_court_name` - a
+  tort matter accumulates many dates and can outgrow a single court/proceeding; the
+  unqualified names implied there could only ever be one of each. A future
+  `matter_events`/Chronology feature and multi-proceeding tracking are the real home
+  for the rest.
+- `btl_claim_number` stays as a convenience/display field only, explicitly not a BTL/
+  insurer model - a matter can have several BTL or insurer claim numbers in practice. A
+  proper `matter_external_references` (kind/value/label) table is deferred to the
+  roadmap's B7 (Negotiation + Insurance/BTL).
+- `matter_parties.contact_details` (one free-text blob) replaced with structured
+  `display_name`/`entity_kind`/`identifier`/`phone`/`email`/`address`, since a real
+  Contacts feature is already on the roadmap and a blob would just get parsed back
+  apart later. `role` lost its DB `CHECK` constraint - validated in `matter_profile.rs`
+  only now, matching how most enum-shaped columns elsewhere in this schema already work
+  (`matters.status`, `documents.category`), so the role/entity_kind taxonomy can evolve
+  without a schema migration.
+- Case-type taxonomy renamed/expanded to `traffic_accident`/`work_accident`/
+  `general_negligence`/`medical_malpractice`/`civil_commercial`/`generic_civil`/`other`
+  - `generic_civil` (the pre-existing `matters.matter_type` default) is deliberately
+  kept in the allowlist for backward compatibility, with `other` as a separate
+  catch-all.
+
+Also captured for when B2+ actually get planned (not applied here): B2 needs a
+`reconcile_default_workstreams(matter_id, new_case_type)` that only adds missing
+default workstreams when a matter's case type changes, never deletes or overwrites
+ones already in use; B3's per-case-type requirement lists should read as
+recommended/office-policy/optional (`Matter Pack Requirements`), never phrased as
+statutory "the law requires," until a source is an Approved Legal Ruleset; B4's ledger
+items should follow a `draft → verified → superseded/stale` lifecycle where `verified`
+is immutable and a correction creates a supersession, not a silent edit; B5 should
+split into B5a (a focused metadata/FTS/neighbor-expansion retrieval pipeline replacing
+`plan_context`'s current up-to-80-pages-unfiltered approach) before B5b (AI → ledger
+proposals), so the three new ledgers aren't fed unfiltered context.
+
+7 new backend tests updated in place for the renamed/restructured fields; 66/66 total
+after the review fixes (one added for entity-kind validation). Re-verified: `cargo
+test --locked`, `npm run build`, `contract:check` (92/92), `qa:static`, and the
+migration's idempotency (still 40 tables/27 indexes/37 triggers/`user_version=14`).
+
+The original B1 commit (`16a31b3`, before this review pass) was confirmed on real
+Windows CI at [run #15](https://github.com/yossizch-max/-2/actions/runs/32892388064) -
+65/65 tests passed on the real runner. **The review-fix commit above is not yet
+reconfirmed on Windows CI** - that run is still needed before this milestone can be
+called current on Gate C/E.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -545,7 +596,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #14)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #15)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -669,27 +720,31 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747), commit
-`d7b3ae6`, 2026-08-25 (rounds 2/3, the follow-up fixes, and Phase A were separately
-confirmed at [run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829)
-commit `7a3ec11`, [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830)
-commit `721cc03`, [run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285)
-commit `d0cdb3e`, and [run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049)
-commit `64b7066`, all same day). Build took ~33 minutes total (no cross-run cache:
-everything, including SQLCipher/OpenSSL, compiles from source every run). Phase B
-milestone B1 (Matter Profile) has not had its own run yet.
+[run #15](https://github.com/yossizch-max/-2/actions/runs/32892388064), commit
+`16a31b3`, 2026-08-25 (rounds 2/3, the follow-up fixes, Phase A, and its hardening pass
+were separately confirmed at
+[run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829) commit `7a3ec11`,
+[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830) commit `721cc03`,
+[run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285) commit `d0cdb3e`,
+[run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049) commit `64b7066`,
+and [run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747) commit
+`d7b3ae6`, all same day). Build took ~33 minutes total (no cross-run cache: everything,
+including SQLCipher/OpenSSL, compiles from source every run). Run #15 confirmed the
+*original* B1 column shape (`event_date`/`court_name`/a single `contact_details` blob);
+the design-review follow-up commit that renames/restructures those fields (see "Phase
+B, milestone B1") has not had its own run yet.
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 58/58 as of run #14, up from 44 at run #13 as
-  the Phase A hardening regression tests were added) ✅
+- Rust locked tests (`cargo test --locked`, 65/65 as of run #15, up from 58 at run #14 as
+  the Phase B milestone B1 regression tests were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #14]
-  (https://github.com/yossizch-max/-2/actions/runs/32885155747) reconfirms the artifact
+  full OCR runtime (see Gate C) at 61.4MB, and [run #15]
+  (https://github.com/yossizch-max/-2/actions/runs/32892388064) reconfirms the artifact
   on the current source. Each run's artifact expires 14 days after that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.

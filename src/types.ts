@@ -155,12 +155,13 @@ export type DocumentPage = {
 };
 
 export const CASE_TYPES: Array<{value: string; label: string}> = [
-  {value: "motor_vehicle_accident", label: "תאונת דרכים"},
-  {value: "workplace_accident", label: "תאונת עבודה"},
+  {value: "traffic_accident", label: "תאונת דרכים"},
+  {value: "work_accident", label: "תאונת עבודה"},
   {value: "general_negligence", label: "רשלנות כללית"},
-  {value: "medical_negligence", label: "רשלנות רפואית"},
-  {value: "civil_commercial_dispute", label: "סכסוך אזרחי/מסחרי"},
-  {value: "generic_civil", label: "אחר"},
+  {value: "medical_malpractice", label: "רשלנות רפואית"},
+  {value: "civil_commercial", label: "סכסוך אזרחי/מסחרי"},
+  {value: "generic_civil", label: "אזרחי כללי"},
+  {value: "other", label: "אחר"},
 ];
 
 export const PARTY_ROLES: Array<{value: string; label: string}> = [
@@ -169,19 +170,25 @@ export const PARTY_ROLES: Array<{value: string; label: string}> = [
   {value: "witness", label: "עד"},
   {value: "employer", label: "מעסיק"},
   {value: "insurer", label: "מבטחת"},
-  {value: "medical_institution", label: "מוסד רפואי"},
+  {value: "medical_provider", label: "מוסד רפואי"},
   {value: "expert", label: "מומחה"},
   {value: "opposing_counsel", label: "עו\"ד צד שכנגד"},
   {value: "court", label: "בית משפט"},
 ];
 
+export const ENTITY_KINDS: Array<{value: string; label: string}> = [
+  {value: "unknown", label: "לא ידוע"},
+  {value: "person", label: "אדם פרטי"},
+  {value: "organization", label: "גוף/חברה"},
+];
+
 export type MatterProfile = {
-  matterId: string; eventDate?: string | null; courtName?: string | null;
+  matterId: string; primaryEventDate?: string | null; primaryCourtName?: string | null;
   btlClaimNumber?: string | null; caseSummary?: string | null; updatedAt: string;
 };
 
 export type MatterParty = {
-  id: string; matterId: string; role: string; name: string;
-  contactDetails?: string | null; notes?: string | null;
-  createdAt: string; updatedAt: string;
+  id: string; matterId: string; role: string; displayName: string; entityKind: string;
+  identifier?: string | null; phone?: string | null; email?: string | null; address?: string | null;
+  notes?: string | null; createdAt: string; updatedAt: string;
 };

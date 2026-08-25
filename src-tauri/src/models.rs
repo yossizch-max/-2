@@ -39,14 +39,15 @@ pub struct DamageResult {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MatterProfile {
-    pub matter_id: String, pub event_date: Option<String>, pub court_name: Option<String>,
+    pub matter_id: String, pub primary_event_date: Option<String>, pub primary_court_name: Option<String>,
     pub btl_claim_number: Option<String>, pub case_summary: Option<String>, pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MatterParty {
-    pub id: String, pub matter_id: String, pub role: String, pub name: String,
-    pub contact_details: Option<String>, pub notes: Option<String>,
+    pub id: String, pub matter_id: String, pub role: String, pub display_name: String,
+    pub entity_kind: String, pub identifier: Option<String>, pub phone: Option<String>,
+    pub email: Option<String>, pub address: Option<String>, pub notes: Option<String>,
     pub created_at: String, pub updated_at: String,
 }

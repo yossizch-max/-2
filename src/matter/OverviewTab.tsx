@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
-import { PARTY_ROLES, type Matter, type DocumentRow, type Task, type Deadline, type MatterProfile, type MatterParty } from "../types";
+import { PARTY_ROLES, ENTITY_KINDS, type Matter, type DocumentRow, type Task, type Deadline, type MatterProfile, type MatterParty } from "../types";
 
 export function OverviewTab({matter}:{matter:Matter}) {
   const {data:documents}=useCommand(
@@ -23,16 +23,16 @@ export function OverviewTab({matter}:{matter:Matter}) {
   const nextDeadline=deadlines?.filter(d=>d.state==="committed")[0];
 
   const [editingProfile,setEditingProfile]=useState(false);
-  const [eventDate,setEventDate]=useState("");
-  const [courtName,setCourtName]=useState("");
+  const [primaryEventDate,setPrimaryEventDate]=useState("");
+  const [primaryCourtName,setPrimaryCourtName]=useState("");
   const [btlClaimNumber,setBtlClaimNumber]=useState("");
   const [caseSummary,setCaseSummary]=useState("");
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileError,setProfileError]=useState<string|null>(null);
 
   const openProfileEditor=()=>{
-    setEventDate(profile?.eventDate??"");
-    setCourtName(profile?.courtName??"");
+    setPrimaryEventDate(profile?.primaryEventDate??"");
+    setPrimaryCourtName(profile?.primaryCourtName??"");
     setBtlClaimNumber(profile?.btlClaimNumber??"");
     setCaseSummary(profile?.caseSummary??"");
     setProfileError(null);
@@ -43,7 +43,7 @@ export function OverviewTab({matter}:{matter:Matter}) {
     try{
       await commands.save_matter_profile({
         matterId:matter.id,
-        eventDate:eventDate||undefined, courtName:courtName||undefined,
+        primaryEventDate:primaryEventDate||undefined, primaryCourtName:primaryCourtName||undefined,
         btlClaimNumber:btlClaimNumber||undefined, caseSummary:caseSummary||undefined,
       });
       setEditingProfile(false);
@@ -54,34 +54,40 @@ export function OverviewTab({matter}:{matter:Matter}) {
 
   const [editingParty,setEditingParty]=useState<MatterParty|null|"new">(null);
   const [partyRole,setPartyRole]=useState("client");
-  const [partyName,setPartyName]=useState("");
-  const [partyContact,setPartyContact]=useState("");
+  const [partyDisplayName,setPartyDisplayName]=useState("");
+  const [partyEntityKind,setPartyEntityKind]=useState("unknown");
+  const [partyIdentifier,setPartyIdentifier]=useState("");
+  const [partyPhone,setPartyPhone]=useState("");
+  const [partyEmail,setPartyEmail]=useState("");
+  const [partyAddress,setPartyAddress]=useState("");
   const [partyNotes,setPartyNotes]=useState("");
   const [partyBusy,setPartyBusy]=useState(false);
   const [partyError,setPartyError]=useState<string|null>(null);
 
   const openNewParty=()=>{
-    setPartyRole("client");setPartyName("");setPartyContact("");setPartyNotes("");
+    setPartyRole("client");setPartyDisplayName("");setPartyEntityKind("unknown");
+    setPartyIdentifier("");setPartyPhone("");setPartyEmail("");setPartyAddress("");setPartyNotes("");
     setPartyError(null);setEditingParty("new");
   };
   const openEditParty=(p:MatterParty)=>{
-    setPartyRole(p.role);setPartyName(p.name);setPartyContact(p.contactDetails??"");setPartyNotes(p.notes??"");
+    setPartyRole(p.role);setPartyDisplayName(p.displayName);setPartyEntityKind(p.entityKind);
+    setPartyIdentifier(p.identifier??"");setPartyPhone(p.phone??"");setPartyEmail(p.email??"");
+    setPartyAddress(p.address??"");setPartyNotes(p.notes??"");
     setPartyError(null);setEditingParty(p);
   };
   const saveParty=async()=>{
-    if(!partyName.trim())return;
+    if(!partyDisplayName.trim())return;
     setPartyBusy(true);setPartyError(null);
     try{
+      const fields={
+        role:partyRole, displayName:partyDisplayName, entityKind:partyEntityKind,
+        identifier:partyIdentifier||undefined, phone:partyPhone||undefined,
+        email:partyEmail||undefined, address:partyAddress||undefined, notes:partyNotes||undefined,
+      };
       if(editingParty==="new"){
-        await commands.add_matter_party({
-          matterId:matter.id, role:partyRole, name:partyName,
-          contactDetails:partyContact||undefined, notes:partyNotes||undefined,
-        });
+        await commands.add_matter_party({matterId:matter.id, ...fields});
       }else if(editingParty){
-        await commands.update_matter_party({
-          partyId:editingParty.id, matterId:matter.id, role:partyRole, name:partyName,
-          contactDetails:partyContact||undefined, notes:partyNotes||undefined,
-        });
+        await commands.update_matter_party({partyId:editingParty.id, matterId:matter.id, ...fields});
       }
       setEditingParty(null);
       reloadParties();
@@ -124,8 +130,8 @@ export function OverviewTab({matter}:{matter:Matter}) {
         <div className="header-actions" style={{justifyContent:"space-between"}}><h2>פרופיל תיק</h2><button className="btn secondary" onClick={openProfileEditor}>ערוך</button></div>
         {profile?.updatedAt
           ? <dl className="profile-fields">
-              <div><dt>תאריך אירוע</dt><dd>{profile.eventDate??"—"}</dd></div>
-              <div><dt>בית משפט</dt><dd>{profile.courtName??"—"}</dd></div>
+              <div><dt>תאריך אירוע יסודי</dt><dd>{profile.primaryEventDate??"—"}</dd></div>
+              <div><dt>בית משפט עיקרי</dt><dd>{profile.primaryCourtName??"—"}</dd></div>
               <div><dt>מספר תביעה במל"ל</dt><dd>{profile.btlClaimNumber??"—"}</dd></div>
               <div><dt>תקציר תיק</dt><dd>{profile.caseSummary??"—"}</dd></div>
             </dl>
@@ -135,7 +141,7 @@ export function OverviewTab({matter}:{matter:Matter}) {
         <div className="header-actions" style={{justifyContent:"space-between"}}><h2>צדדים</h2><button className="btn secondary" onClick={openNewParty}>הוסף צד</button></div>
         {parties?.length
           ? parties.map(p=><button className="mini-row" key={p.id} onClick={()=>openEditParty(p)}>
-              <span>{p.name}</span><small>{roleLabel(p.role)}{p.contactDetails?` · ${p.contactDetails}`:""}</small>
+              <span>{p.displayName}</span><small>{roleLabel(p.role)}{p.phone?` · ${p.phone}`:""}{p.email?` · ${p.email}`:""}</small>
             </button>)
           : <p className="quiet">אין עדיין צדדים רשומים בתיק.</p>}
       </section>
@@ -143,8 +149,8 @@ export function OverviewTab({matter}:{matter:Matter}) {
     {editingProfile && <div className="modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setEditingProfile(false);}}>
       <div className="workspace-card" style={{width:"min(480px,90vw)"}}>
         <h2>עריכת פרופיל תיק</h2>
-        <label>תאריך אירוע<input type="date" value={eventDate} onChange={e=>setEventDate(e.target.value)}/></label>
-        <label>בית משפט<input value={courtName} onChange={e=>setCourtName(e.target.value)}/></label>
+        <label>תאריך אירוע יסודי<input type="date" value={primaryEventDate} onChange={e=>setPrimaryEventDate(e.target.value)}/></label>
+        <label>בית משפט עיקרי<input value={primaryCourtName} onChange={e=>setPrimaryCourtName(e.target.value)}/></label>
         <label>מספר תביעה במל"ל<input value={btlClaimNumber} onChange={e=>setBtlClaimNumber(e.target.value)}/></label>
         <label>תקציר תיק<textarea value={caseSummary} onChange={e=>setCaseSummary(e.target.value)} rows={4}/></label>
         {profileError && <p className="quiet">{profileError}</p>}
@@ -160,14 +166,20 @@ export function OverviewTab({matter}:{matter:Matter}) {
         <label>תפקיד<select value={partyRole} onChange={e=>setPartyRole(e.target.value)}>
           {PARTY_ROLES.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
         </select></label>
-        <label>שם<input autoFocus value={partyName} onChange={e=>setPartyName(e.target.value)}/></label>
-        <label>פרטי קשר<input value={partyContact} onChange={e=>setPartyContact(e.target.value)}/></label>
+        <label>שם תצוגה<input autoFocus value={partyDisplayName} onChange={e=>setPartyDisplayName(e.target.value)}/></label>
+        <label>סוג ישות<select value={partyEntityKind} onChange={e=>setPartyEntityKind(e.target.value)}>
+          {ENTITY_KINDS.map(k=><option key={k.value} value={k.value}>{k.label}</option>)}
+        </select></label>
+        <label>מספר זהות/ח.פ (אופציונלי)<input value={partyIdentifier} onChange={e=>setPartyIdentifier(e.target.value)}/></label>
+        <label>טלפון<input value={partyPhone} onChange={e=>setPartyPhone(e.target.value)}/></label>
+        <label>אימייל<input value={partyEmail} onChange={e=>setPartyEmail(e.target.value)}/></label>
+        <label>כתובת<input value={partyAddress} onChange={e=>setPartyAddress(e.target.value)}/></label>
         <label>הערות<textarea value={partyNotes} onChange={e=>setPartyNotes(e.target.value)} rows={3}/></label>
         {partyError && <p className="quiet">{partyError}</p>}
         <div className="header-actions">
           {editingParty!=="new" && <button className="btn secondary" onClick={deleteParty} disabled={partyBusy}>מחק</button>}
           <button className="btn secondary" onClick={()=>setEditingParty(null)} disabled={partyBusy}>ביטול</button>
-          <button className="btn primary" onClick={saveParty} disabled={partyBusy||!partyName.trim()}>{partyBusy?"שומר...":"שמור"}</button>
+          <button className="btn primary" onClick={saveParty} disabled={partyBusy||!partyDisplayName.trim()}>{partyBusy?"שומר...":"שמור"}</button>
         </div>
       </div>
     </div>}

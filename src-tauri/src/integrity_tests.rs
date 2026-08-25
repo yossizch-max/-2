@@ -1240,12 +1240,12 @@ fn matter_profile_upsert_is_idempotent_and_updates_in_place() {
     let matter_id = new_matter(&db, "B1 test: profile upsert");
 
     let empty = matter_profile::get_profile(&db, &matter_id).unwrap();
-    assert!(empty.event_date.is_none(), "a matter with no saved profile yet must read back as empty, not error");
+    assert!(empty.primary_event_date.is_none(), "a matter with no saved profile yet must read back as empty, not error");
 
     matter_profile::save_profile(&db, &matter_id, Some("2026-03-12"), Some("שלום"), None, Some("סיכום ראשוני")).unwrap();
     let first = matter_profile::get_profile(&db, &matter_id).unwrap();
-    assert_eq!(first.event_date.as_deref(), Some("2026-03-12"));
-    assert_eq!(first.court_name.as_deref(), Some("שלום"));
+    assert_eq!(first.primary_event_date.as_deref(), Some("2026-03-12"));
+    assert_eq!(first.primary_court_name.as_deref(), Some("שלום"));
 
     matter_profile::save_profile(&db, &matter_id, Some("2026-03-12"), Some("שלום"), Some("BTL-1"), Some("סיכום מעודכן")).unwrap();
     let second = matter_profile::get_profile(&db, &matter_id).unwrap();
@@ -1262,17 +1262,22 @@ fn matter_party_requires_a_known_role() {
     let db = DbState::open(dirs.db_path.clone()).unwrap();
     let matter_id = new_matter(&db, "B1 test: party role");
 
-    let rejected = matter_profile::add_party(&db, &matter_id, "made_up_role", "פלוני", None, None);
+    let rejected = matter_profile::add_party(&db, &matter_id, "made_up_role", "פלוני", None, None, None, None, None, None);
     assert!(rejected.is_err(), "an unknown party role must be rejected");
 
-    let id = matter_profile::add_party(&db, &matter_id, "insurer", "כלל חברה לביטוח", Some("03-1234567"), None).unwrap();
+    let bad_entity_kind = matter_profile::add_party(&db, &matter_id, "insurer", "כלל", Some("made_up_kind"), None, None, None, None, None);
+    assert!(bad_entity_kind.is_err(), "an unknown entity kind must be rejected");
+
+    let id = matter_profile::add_party(&db, &matter_id, "insurer", "כלל חברה לביטוח", Some("organization"), None, Some("03-1234567"), None, None, None).unwrap();
     let parties = matter_profile::list_parties(&db, &matter_id).unwrap();
     assert_eq!(parties.len(), 1);
     assert_eq!(parties[0].role, "insurer");
+    assert_eq!(parties[0].entity_kind, "organization");
 
-    matter_profile::update_party(&db, &id, &matter_id, Some("insurer"), None, Some("03-7654321"), Some("נציג: דנה")).unwrap();
+    matter_profile::update_party(&db, &id, &matter_id, Some("insurer"), None, None, None, Some("03-7654321"), None, None, Some("נציג: דנה")).unwrap();
     let updated = matter_profile::list_parties(&db, &matter_id).unwrap();
-    assert_eq!(updated[0].contact_details.as_deref(), Some("03-7654321"));
+    assert_eq!(updated[0].phone.as_deref(), Some("03-7654321"));
+    assert_eq!(updated[0].notes.as_deref(), Some("נציג: דנה"));
 
     matter_profile::delete_party(&db, &id, &matter_id).unwrap();
     let after_delete = matter_profile::list_parties(&db, &matter_id).unwrap();
@@ -1285,7 +1290,7 @@ fn deleting_a_matter_cascades_to_its_profile_and_parties() {
     let db = DbState::open(dirs.db_path.clone()).unwrap();
     let matter_id = new_matter(&db, "B1 test: cascade delete");
     matter_profile::save_profile(&db, &matter_id, Some("2026-01-01"), None, None, None).unwrap();
-    matter_profile::add_party(&db, &matter_id, "client", "התובע", None, None).unwrap();
+    matter_profile::add_party(&db, &matter_id, "client", "התובע", None, None, None, None, None, None).unwrap();
 
     db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db)).unwrap();
 

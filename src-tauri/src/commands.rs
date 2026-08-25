@@ -303,11 +303,11 @@ pub fn get_matter_profile(state: State<'_, AppState>, payload: Value) -> AppResu
 #[tauri::command]
 pub fn save_matter_profile(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
-    let event_date=payload.get("eventDate").and_then(Value::as_str);
-    let court_name=payload.get("courtName").and_then(Value::as_str);
+    let primary_event_date=payload.get("primaryEventDate").and_then(Value::as_str);
+    let primary_court_name=payload.get("primaryCourtName").and_then(Value::as_str);
     let btl_claim_number=payload.get("btlClaimNumber").and_then(Value::as_str);
     let case_summary=payload.get("caseSummary").and_then(Value::as_str);
-    matter_profile::save_profile(&state.db,matter_id,event_date,court_name,btl_claim_number,case_summary)?;
+    matter_profile::save_profile(&state.db,matter_id,primary_event_date,primary_court_name,btl_claim_number,case_summary)?;
     Ok(json!({"ok":true}))
 }
 
@@ -322,10 +322,14 @@ pub fn list_matter_parties(state: State<'_, AppState>, payload: Value) -> AppRes
 pub fn add_matter_party(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     let role=required_string(&payload,"role")?;
-    let name=required_string(&payload,"name")?;
-    let contact_details=payload.get("contactDetails").and_then(Value::as_str);
+    let display_name=required_string(&payload,"displayName")?;
+    let entity_kind=payload.get("entityKind").and_then(Value::as_str);
+    let identifier=payload.get("identifier").and_then(Value::as_str);
+    let phone=payload.get("phone").and_then(Value::as_str);
+    let email=payload.get("email").and_then(Value::as_str);
+    let address=payload.get("address").and_then(Value::as_str);
     let notes=payload.get("notes").and_then(Value::as_str);
-    let id=matter_profile::add_party(&state.db,matter_id,role,name,contact_details,notes)?;
+    let id=matter_profile::add_party(&state.db,matter_id,role,display_name,entity_kind,identifier,phone,email,address,notes)?;
     Ok(json!({"id":id}))
 }
 
@@ -334,10 +338,14 @@ pub fn update_matter_party(state: State<'_, AppState>, payload: Value) -> AppRes
     let party_id=required_string(&payload,"partyId")?;
     let matter_id=required_string(&payload,"matterId")?;
     let role=payload.get("role").and_then(Value::as_str);
-    let name=payload.get("name").and_then(Value::as_str);
-    let contact_details=payload.get("contactDetails").and_then(Value::as_str);
+    let display_name=payload.get("displayName").and_then(Value::as_str);
+    let entity_kind=payload.get("entityKind").and_then(Value::as_str);
+    let identifier=payload.get("identifier").and_then(Value::as_str);
+    let phone=payload.get("phone").and_then(Value::as_str);
+    let email=payload.get("email").and_then(Value::as_str);
+    let address=payload.get("address").and_then(Value::as_str);
     let notes=payload.get("notes").and_then(Value::as_str);
-    matter_profile::update_party(&state.db,party_id,matter_id,role,name,contact_details,notes)?;
+    matter_profile::update_party(&state.db,party_id,matter_id,role,display_name,entity_kind,identifier,phone,email,address,notes)?;
     Ok(json!({"ok":true}))
 }
 

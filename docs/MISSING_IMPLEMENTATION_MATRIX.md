@@ -230,3 +230,24 @@ writeup, including why `matters` itself is never `ALTER`ed. B2–B6 (Workstreams
 Evidence Matrix, Medical/Wage/Liability Ledgers, AI Pipeline, Case Health) are
 deliberately left as a roadmap only — each gets its own planning pass before
 implementation.
+
+A design review of this same milestone (before any client-use database depended on its
+shape) prompted fixes applied in place to `003_matter_profile_v14.sql` and
+`matter_profile.rs`: `event_date`/`court_name` renamed to `primary_event_date`/
+`primary_court_name` (a tort matter accumulates many dates and can outgrow one
+court/proceeding); `matter_parties.contact_details` (one free-text blob) replaced with
+structured `display_name`/`entity_kind`/`identifier`/`phone`/`email`/`address` fields,
+since a real Contacts feature is already on the roadmap; the case-type taxonomy renamed
+and widened to `traffic_accident`/`work_accident`/`general_negligence`/
+`medical_malpractice`/`civil_commercial`/`generic_civil`/`other` (keeping
+`generic_civil`, the pre-existing `matters.matter_type` default, for backward
+compatibility); and `matter_parties.role` lost its DB `CHECK` constraint in favor of
+Rust-only validation, matching how most enum-shaped columns elsewhere in this schema
+already work. The review also refined the roadmap for B2–B6 without changing any
+code: B2 needs a `reconcile_default_workstreams` that only adds missing defaults on a
+case-type change, never deletes ones in use; B3's requirement lists should read as
+office-policy recommendations, not "the law requires," until a source is an Approved
+Legal Ruleset; B4's ledger items should follow a `draft → verified → superseded/stale`
+lifecycle where a correction supersedes rather than silently edits; B5 splits into
+B5a (a focused metadata/FTS/neighbor-expansion retrieval pipeline) before B5b (AI →
+ledger proposals), instead of reusing the existing wide `plan_context` unchanged.

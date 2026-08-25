@@ -16,6 +16,6 @@
   "engine_run_status_reversal_blocked": true,
   "matter_profile_and_parties_cascade_delete_with_matter": true,
   "regenerated_at": "2026-08-25",
-  "regenerated_against_parent_commit": "d7b3ae6d3efa4fe4336b10594f9669dd0b15b8b5",
+  "regenerated_against_parent_commit": "16a31b31a97b1df491c10266650c51c49b77bde8",
   "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql, all applied in order (real, not estimated)"
 }
