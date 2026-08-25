@@ -16,7 +16,6 @@ export function DamageTab({matterId}:{matterId:string}) {
   const [amounts,setAmounts]=useState<Record<string,string>>({});
   const [busy,setBusy]=useState(false);
   const [formError,setFormError]=useState<string|null>(null);
-  const [lastSaved,setLastSaved]=useState<{id:string;inputs:{key:string;cents:number;source:string}[]}|null>(null);
 
   const c=calculations?.[0];
 
@@ -26,8 +25,7 @@ export function DamageTab({matterId}:{matterId:string}) {
       const inputs=INPUT_LABELS
         .map(([key])=>({key,cents:Math.round(Number(amounts[key]||0)*100),source:"manual"}))
         .filter(i=>i.cents>0);
-      const res=await commands.save_damage_calculation({matterId,regime,lifeState,inputs}) as {id:string};
-      setLastSaved({id:res.id,inputs});
+      await commands.save_damage_calculation({matterId,regime,lifeState,inputs});
       setCreating(false);setAmounts({});
       reload();
     }catch(e){setFormError(String(e));}
@@ -35,12 +33,11 @@ export function DamageTab({matterId}:{matterId:string}) {
   };
 
   const lock=async()=>{
-    if(!lastSaved)return;
-    setBusy(true);
+    if(!c||c.status!=="draft")return;
+    setBusy(true);setFormError(null);
     try{
-      const calc=await commands.calculate_damage({regime,lifeState,inputs:lastSaved.inputs}) as {integritySha256:string};
-      await commands.lock_damage_calculation({calculationId:lastSaved.id,integritySha256:calc.integritySha256});
-      setLastSaved(null);
+      const calc=await commands.calculate_damage({regime:c.regime,lifeState:c.lifeState,inputs:c.inputs??[]}) as {integritySha256:string};
+      await commands.lock_damage_calculation({calculationId:c.id,integritySha256:calc.integritySha256});
       reload();
     }catch(e){setFormError(String(e));}
     finally{setBusy(false);}
@@ -60,7 +57,8 @@ export function DamageTab({matterId}:{matterId:string}) {
         <div><span>ניכויים</span><strong>{money(c.deductionsCents)}</strong></div>
         <div className="net"><span>נטו</span><strong>{money(c.netCents)}</strong></div>
       </div>}
-      {lastSaved && lastSaved.id===c?.id && c?.status==="draft" &&
+      {formError && <p className="quiet">{formError}</p>}
+      {c?.status==="draft" &&
         <button className="btn primary" onClick={lock} disabled={busy}>{busy?"נועל...":"נעל תחשיב (בלתי הפיך)"}</button>}
       <div className="legal-note"><strong>כלל</strong><span>כסף נשמר באגורות. AI רשאי להציע inputs, אך אינו משנה נוסחה או Ruleset.</span></div>
     </section>
@@ -82,7 +80,12 @@ export function DamageTab({matterId}:{matterId:string}) {
     </div>}
 
     <section className="workspace-card"><h2>מקורות קלט</h2>
-      <p className="quiet">פירוט ראשי הנזק לפי מקור יוצג כאן בהמשך.</p>
+      {c?.inputs && c.inputs.length>0
+        ? <div className="table">
+            <div className="tr th"><span>ראש נזק</span><span>ערך</span><span>מקור</span></div>
+            {c.inputs.map((i,idx)=><div className="tr" key={idx}><span>{i.key}</span><span>{money(i.cents)}</span><span>{i.source}</span></div>)}
+          </div>
+        : <p className="quiet">אין עדיין קלטים.</p>}
     </section>
   </div>;
 }

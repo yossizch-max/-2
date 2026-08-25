@@ -20,15 +20,22 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
     ()=>commands.list_calendar_items({matterId}) as Promise<CalendarEvent[]>, [matterId]
   );
 
+  const [actionError,setActionError]=useState<string|null>(null);
+
   const [title,setTitle]=useState("");
   const [busy,setBusy]=useState(false);
   const addTask=async()=>{
     if(!title.trim())return;
-    setBusy(true);
+    setBusy(true);setActionError(null);
     try{ await commands.create_task({matterId,title}); setTitle(""); reloadTasks(); }
+    catch(e){setActionError(String(e));}
     finally{ setBusy(false); }
   };
-  const complete=async(taskId:string)=>{ await commands.complete_task({taskId}); reloadTasks(); };
+  const complete=async(taskId:string)=>{
+    setActionError(null);
+    try{ await commands.complete_task({taskId}); reloadTasks(); }
+    catch(e){setActionError(String(e));}
+  };
 
   const [action,setAction]=useState("");
   const [dueAt,setDueAt]=useState("");
@@ -36,24 +43,31 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
   const [deadlineBusy,setDeadlineBusy]=useState(false);
   const addDeadline=async()=>{
     if(!action.trim()||!dueAt||!sourceRef.trim())return;
-    setDeadlineBusy(true);
+    setDeadlineBusy(true);setActionError(null);
     try{ await commands.save_manual_deadline({matterId,action,dueAt,triggerSourceRef:sourceRef}); setAction("");setDueAt("");setSourceRef(""); reloadDeadlines(); }
+    catch(e){setActionError(String(e));}
     finally{ setDeadlineBusy(false); }
   };
-  const commit=async(deadlineId:string)=>{ await commands.commit_deadline({deadlineId}); reloadDeadlines(); };
+  const commit=async(deadlineId:string)=>{
+    setActionError(null);
+    try{ await commands.commit_deadline({deadlineId}); reloadDeadlines(); }
+    catch(e){setActionError(String(e));}
+  };
 
   const [partyLabel,setPartyLabel]=useState("");
   const [itemLabel,setItemLabel]=useState("");
   const [waitingBusy,setWaitingBusy]=useState<string|null>(null);
   const addWaiting=async()=>{
     if(!partyLabel.trim()||!itemLabel.trim())return;
-    setWaitingBusy("new");
+    setWaitingBusy("new");setActionError(null);
     try{ await commands.save_waiting_for({matterId,partyLabel,itemLabel}); setPartyLabel("");setItemLabel(""); reloadWaiting(); }
+    catch(e){setActionError(String(e));}
     finally{ setWaitingBusy(null); }
   };
   const closeWaiting=async(id:string)=>{
-    setWaitingBusy(id);
+    setWaitingBusy(id);setActionError(null);
     try{ await commands.close_waiting_for({waitingForId:id}); reloadWaiting(); }
+    catch(e){setActionError(String(e));}
     finally{ setWaitingBusy(null); }
   };
 
@@ -62,12 +76,14 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
   const [eventBusy,setEventBusy]=useState(false);
   const addEvent=async()=>{
     if(!eventTitle.trim()||!startsAt)return;
-    setEventBusy(true);
+    setEventBusy(true);setActionError(null);
     try{ await commands.create_calendar_item({matterId,title:eventTitle,startsAt}); setEventTitle("");setStartsAt(""); reloadEvents(); }
+    catch(e){setActionError(String(e));}
     finally{ setEventBusy(false); }
   };
 
   return <div>
+    {actionError && <p className="quiet">{actionError}</p>}
     <div className="grid-2">
       <section className="workspace-card">
         <h2>משימות</h2>

@@ -48,8 +48,9 @@ function ProviderCard({kind,label,defaultBaseUrl,profile,reload}:{
     {status && <p className="quiet">{status}</p>}
     <div className="header-actions">
       <button className="btn secondary" onClick={test} disabled={busy}>בדיקה סינתטית</button>
+      <button className="btn secondary" onClick={()=>save(profile?.enabled??false)} disabled={busy}>שמור</button>
       <button className="btn primary" onClick={()=>save(!(profile?.enabled))} disabled={busy}>
-        {profile?.enabled?"השבת":"הפעל ושמור"}
+        {profile?.enabled?"השבת":"הפעל"}
       </button>
     </div>
   </section>;

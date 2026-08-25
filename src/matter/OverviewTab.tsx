@@ -13,7 +13,7 @@ export function OverviewTab({matter}:{matter:Matter}) {
     ()=>commands.list_deadlines({matterId:matter.id}) as Promise<Deadline[]>, [matter.id]
   );
   const nextTask=tasks?.find(t=>t.status==="open");
-  const nextDeadline=deadlines?.[0];
+  const nextDeadline=deadlines?.filter(d=>d.state==="committed")[0];
 
   return <div className="matter-tab">
     <div className="kpi-grid">

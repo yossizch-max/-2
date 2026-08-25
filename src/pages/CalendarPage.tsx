@@ -12,7 +12,7 @@ async function loadCalendar(){
     return {deadlines,tasks:tasks.filter(t=>t.status==="open")};
   }));
   return {
-    deadlines:perMatter.flatMap(x=>x.deadlines).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)),
+    deadlines:perMatter.flatMap(x=>x.deadlines).filter(d=>d.state==="committed").sort((a,b)=>a.dueAt.localeCompare(b.dueAt)),
     tasks:perMatter.flatMap(x=>x.tasks).sort((a,b)=>(a.dueAt??"").localeCompare(b.dueAt??"")),
   };
 }

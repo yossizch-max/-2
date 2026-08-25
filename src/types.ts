@@ -58,6 +58,7 @@ export type DamageCalculation = {
   lifeState: "living" | "death"; status: "draft" | "locked";
   grossCents: number; deductionsCents: number; netCents: number;
   integritySha256?: string | null;
+  inputs?: Array<{key: string; cents: number; source: string}>;
 };
 
 export type LegalDocument = {

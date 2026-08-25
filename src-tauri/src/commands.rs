@@ -767,7 +767,7 @@ pub fn list_verified_facts(state: State<'_, AppState>, payload: Value) -> AppRes
         let mut stmt=conn.prepare(
             "SELECT f.id,f.matter_id,f.subject,f.predicate,f.value_text,f.status,f.stale,f.verified_at,
              coalesce((SELECT display_quote FROM verified_fact_sources s WHERE s.verified_fact_id=f.id LIMIT 1),'')
-             FROM verified_facts f WHERE f.matter_id=?1 ORDER BY f.verified_at DESC"
+             FROM verified_facts f WHERE f.matter_id=?1 AND f.status='valid' ORDER BY f.verified_at DESC"
         )?;
         let rows=stmt.query_map([matter_id],|r|Ok(json!({
             "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,"subject":r.get::<_,String>(2)?,
@@ -827,13 +827,29 @@ pub fn list_damage_calculations(state: State<'_, AppState>, payload: Value) -> A
             "SELECT id,matter_id,regime,life_state,status,gross_cents,deductions_cents,net_cents,integrity_sha256
              FROM damage_calculations WHERE matter_id=?1 ORDER BY updated_at DESC"
         )?;
-        let rows=stmt.query_map([matter_id],|r|Ok(json!({
-            "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,"regime":r.get::<_,String>(2)?,
-            "lifeState":r.get::<_,String>(3)?,"status":r.get::<_,String>(4)?,
-            "grossCents":r.get::<_,i64>(5)?,"deductionsCents":r.get::<_,i64>(6)?,"netCents":r.get::<_,i64>(7)?,
-            "integritySha256":r.get::<_,Option<String>>(8)?
-        })))?.collect::<Result<Vec<_>,_>>()?;
-        Ok(Value::Array(rows))
+        struct Calc{id:String,matter_id:String,regime:String,life_state:String,status:String,
+            gross:i64,deductions:i64,net:i64,integrity:Option<String>}
+        let calcs=stmt.query_map([matter_id],|r|Ok(Calc{
+            id:r.get(0)?,matter_id:r.get(1)?,regime:r.get(2)?,life_state:r.get(3)?,status:r.get(4)?,
+            gross:r.get(5)?,deductions:r.get(6)?,net:r.get(7)?,integrity:r.get(8)?
+        }))?.collect::<Result<Vec<_>,_>>()?;
+        let mut input_stmt=conn.prepare(
+            "SELECT input_key,value_text,source_kind FROM damage_inputs WHERE calculation_id=?1"
+        )?;
+        let mut out=Vec::with_capacity(calcs.len());
+        for c in calcs{
+            let inputs=input_stmt.query_map([&c.id],|r|Ok(json!({
+                "key":r.get::<_,String>(0)?,
+                "cents":r.get::<_,String>(1)?.parse::<i64>().unwrap_or(0),
+                "source":r.get::<_,String>(2)?
+            })))?.collect::<Result<Vec<_>,_>>()?;
+            out.push(json!({
+                "id":c.id,"matterId":c.matter_id,"regime":c.regime,"lifeState":c.life_state,"status":c.status,
+                "grossCents":c.gross,"deductionsCents":c.deductions,"netCents":c.net,
+                "integritySha256":c.integrity,"inputs":inputs
+            }));
+        }
+        Ok(Value::Array(out))
     })
 }
 
