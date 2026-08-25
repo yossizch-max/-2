@@ -15,12 +15,21 @@
 //! constructor outside a running app, same limitation already documented for
 //! export_legal_document's PDF guard in gate_f_partial.rs - verified by direct code
 //! reading instead.
+//!
+//! Also covers the P1-1 gap ("the lawyer cannot complete the AI -> proposal -> review
+//! -> Verified Fact workflow"): `review_ai_proposal`'s 'approved' path previously only
+//! flipped `ai_proposals.status` with no command anywhere that turned an approved
+//! proposal into an actual VerifiedFact. `ai::approve_proposal` is the fix, and is
+//! plain-Rust testable without a live provider (a real AI response is simulated by
+//! inserting a synthetic `ai_proposals` row directly, exactly like the run/proposal
+//! `run_capability` itself would have produced).
 
 #![cfg(test)]
 
-use crate::{damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
+use crate::{ai, damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
 use chrono::Utc;
 use rusqlite::params;
+use serde_json::json;
 use std::{fs, path::PathBuf};
 use uuid::Uuid;
 
@@ -395,4 +404,92 @@ fn damage_calculate_used_for_locking_is_deterministic_and_tamper_evident() {
     let b = damage::calculate("tort","living",&inputs).unwrap();
     assert_eq!(a.integrity_sha256, b.integrity_sha256, "the same inputs must always hash the same way");
     assert!(damage::verify_for_lock("tort","living",&inputs,a.gross_cents,a.deductions_cents,999_999).is_err());
+}
+
+// --- P1-1: approving an AI proposal must actually produce a grounded VerifiedFact ---
+
+#[test]
+fn approving_an_ai_proposal_creates_a_real_grounded_verified_fact() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P1-1 test");
+    let now = Utc::now().to_rfc3339();
+
+    let document_id = Uuid::new_v4().to_string();
+    let version_id = Uuid::new_v4().to_string();
+    let page_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at) VALUES(?1,?2,'מסמך',?3,?3)",
+            params![document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,created_at) VALUES(?1,?2,?3,'x',?4)",
+            params![version_id, document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES(?1,?2,?3,1,'page',0,'התובע נחבל ברגל שמאל.','התובע נחבל ברגל שמאל.','x','native_text',?4)",
+            params![page_id, matter_id, version_id, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
+    // simulates what ai::run_capability itself would have written for a real provider
+    // response - approve_proposal is tested against that same shape, not a mock of it.
+    let run_id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO ai_runs(id,matter_id,capability,status,context_manifest_sha256,started_at)
+         VALUES(?1,?2,'extract_facts','completed','x',?3)",
+        params![run_id, matter_id, now],
+    ).map_err(AppError::Db)).unwrap();
+
+    let proposal_id = Uuid::new_v4().to_string();
+    let structured = json!({
+        "sourceIds": [page_id], "subject": "התובע", "predicate": "נחבל", "value": "רגל שמאל"
+    }).to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO ai_proposals(id,ai_run_id,matter_id,proposal_kind,structured_json,source_manifest_json,status)
+         VALUES(?1,?2,?3,'extract_facts',?4,'[]','pending')",
+        params![proposal_id, run_id, matter_id, structured],
+    ).map_err(AppError::Db)).unwrap();
+
+    let fact_id = ai::approve_proposal(&db, &proposal_id, Some("looks right")).unwrap();
+
+    let (subject, created_from): (String, Option<String>) = db.read(|conn| conn.query_row(
+        "SELECT subject,created_from_proposal_id FROM verified_facts WHERE id=?1",
+        [&fact_id], |r| Ok((r.get(0)?, r.get(1)?))
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(subject, "התובע");
+    assert_eq!(created_from.as_deref(), Some(proposal_id.as_str()), "the fact must be traceable back to the proposal that produced it");
+
+    let (source_count, quote): (i64, String) = db.read(|conn| conn.query_row(
+        "SELECT count(*),max(display_quote) FROM verified_fact_sources WHERE verified_fact_id=?1",
+        [&fact_id], |r| Ok((r.get(0)?, r.get(1)?))
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(source_count, 1);
+    assert_eq!(quote, "התובע נחבל ברגל שמאל.", "the stored quote must come from the real document page, not the model's claim");
+
+    let proposal_status: String = db.read(|conn| conn.query_row(
+        "SELECT status FROM ai_proposals WHERE id=?1", [&proposal_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(proposal_status, "approved");
+
+    // approving an already-approved proposal must not succeed or duplicate the fact
+    assert!(ai::approve_proposal(&db, &proposal_id, None).is_err());
+
+    // a proposal citing a sourceId that isn't a real document_pages row must be rejected,
+    // not silently create an ungrounded fact
+    let bad_proposal_id = Uuid::new_v4().to_string();
+    let bad_structured = json!({
+        "sourceIds": ["not-a-real-page"], "subject": "x", "predicate": "y", "value": "z"
+    }).to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO ai_proposals(id,ai_run_id,matter_id,proposal_kind,structured_json,source_manifest_json,status)
+         VALUES(?1,?2,?3,'extract_facts',?4,'[]','pending')",
+        params![bad_proposal_id, run_id, matter_id, bad_structured],
+    ).map_err(AppError::Db)).unwrap();
+    assert!(ai::approve_proposal(&db, &bad_proposal_id, None).is_err());
 }

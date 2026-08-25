@@ -111,11 +111,19 @@ test covers. `src-tauri/src/gate_f_partial.rs`'s existing coverage is unaffected
 passing) since these are additive constraints, not behavior changes to the paths it
 already exercises.
 
-**Deliberately not addressed** (P1/P2 in the report, out of scope for this pass): the
-AI run/review/verify-fact UI is still not wired end-to-end; DOCX/PDF export still don't
-exist; the damage engine is still an additive prototype, not a versioned legal ruleset
-engine; there's no deterministic legal-deadline rules engine; OCR temp-directory cleanup
-isn't RAII-guarded against every early-exit path. None of these were claimed fixed.
+**Deliberately not addressed** (P1/P2 in the report, out of scope for this pass): DOCX/PDF
+export still don't exist; the damage engine is still an additive prototype, not a
+versioned legal ruleset engine; there's no deterministic legal-deadline rules engine;
+OCR temp-directory cleanup isn't RAII-guarded against every early-exit path. None of
+these were claimed fixed.
+
+**P1-1 (AI run/review/verify-fact UI not wired end-to-end) was subsequently fixed** in a
+follow-up pass — see `docs/MISSING_IMPLEMENTATION_MATRIX.md`'s "AI review workflow
+completion" section: `review_ai_proposal`'s approval path now actually creates a
+source-grounded `VerifiedFact` (it previously only flipped a status flag), the OpenAI
+client-data-authorization checkbox that was missing from the settings UI now exists, and
+`FactsAITab` has a real run/review flow. Covered by a new regression test; not covered
+against a live provider, since none is reachable from this environment.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls

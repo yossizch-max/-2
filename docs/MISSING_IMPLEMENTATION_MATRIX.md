@@ -105,3 +105,33 @@ properties added in response to the external audit (approved-content DB immutabi
 grounding requirements, stale/invalidated-fact revalidation at approval, tamper-resistant damage
 locking) are covered separately in `src-tauri/src/integrity_tests.rs` — see
 `docs/RELEASE_GATES.md` for the full writeup.
+
+## AI review workflow completion (P1-1 from the external audit)
+
+The audit's P1-1 finding: "AI architecture exists, but the lawyer cannot complete the intended
+AI → proposal → review → Verified Fact workflow from the UI." Checked directly and confirmed
+true in two places, both now fixed:
+
+- `review_ai_proposal`'s `'approved'` path only ever flipped `ai_proposals.status` — no command
+  anywhere turned an approved proposal into an actual `VerifiedFact`. Fixed by
+  `ai::approve_proposal`: it reads the proposal's `structured_json` (`subject`/`predicate`/
+  `value`/`sourceIds`), re-validates every `sourceId` is a real `document_pages` row belonging to
+  the same matter (rejecting the proposal otherwise, per `AppError::InvalidSourceReference` — the
+  same fail-closed pattern used everywhere else in this codebase), and creates the `VerifiedFact`
+  with `created_from_proposal_id` set plus one real `VerifiedFactSource` row per cited page. The
+  stored quote is always read back from the actual `document_pages.display_text`, never taken
+  from whatever text the model claimed — the AI proposes which source and what to extract, the
+  actual quoted text is re-derived from the real document, not trusted from the response.
+- The OpenAI settings card displayed `clientDataAuthorized` but had no control to change it, so
+  it could only ever be `false` and `run_ai_capability` would always reject an OpenAI run with
+  `AiClientEgressNotApproved`. `AISettingsPage` now has a real checkbox for it.
+- `FactsAITab` gained the actual run/review UI: pick an enabled provider, run the (single,
+  reconstruction-scoped) `extract_facts` capability, see the run's status and its proposals, and
+  approve/reject/request-revision each one — approving calls the same `review_ai_proposal`
+  command, now with the real effect described above.
+
+Covered for real by `integrity_tests.rs::approving_an_ai_proposal_creates_a_real_grounded_verified_fact`,
+which simulates what a real provider response would have produced (a synthetic `ai_proposals` row
+in the same shape `ai::run_capability` itself writes) since this reconstruction has no live
+provider to test against in this environment — and asserts the fact-creation-with-a-real-source
+path, the double-approval rejection, and the ungrounded-`sourceId` rejection all work as described.

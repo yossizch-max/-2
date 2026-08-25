@@ -11,6 +11,7 @@ function ProviderCard({kind,label,defaultBaseUrl,profile,reload}:{
   const [baseUrl,setBaseUrl]=useState(profile?.baseUrl ?? defaultBaseUrl);
   const [model,setModel]=useState(profile?.model ?? "");
   const [apiKey,setApiKey]=useState("");
+  const [clientDataAuthorized,setClientDataAuthorized]=useState(profile?.clientDataAuthorized??false);
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState<string|null>(null);
 
@@ -19,7 +20,7 @@ function ProviderCard({kind,label,defaultBaseUrl,profile,reload}:{
     try{
       await commands.save_ai_settings({
         id:profile?.id, providerKind:kind, baseUrl, model:model||undefined,
-        enabled, clientDataAuthorized:profile?.clientDataAuthorized??false,
+        enabled, clientDataAuthorized,
         apiKey:apiKey||undefined,
       });
       setApiKey("");
@@ -45,6 +46,10 @@ function ProviderCard({kind,label,defaultBaseUrl,profile,reload}:{
     <label>Endpoint<input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} readOnly={kind==="openai"}/></label>
     <label>Model<input value={model??""} onChange={e=>setModel(e.target.value)} placeholder={kind==="local"?"llama3":"gpt-4.1"}/></label>
     {kind==="openai" && <label>API Key<input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={profile?"••••••••":"הזן מפתח"}/></label>}
+    {kind==="openai" && <label style={{display:"flex",alignItems:"center",gap:8,flexDirection:"row"}}>
+      <input type="checkbox" checked={clientDataAuthorized} onChange={e=>setClientDataAuthorized(e.target.checked)}/>
+      מאשר שליחת חומר מהתיק לספק חיצוני זה (נדרש לפני כל הרצת AI על נתוני לקוח)
+    </label>}
     {status && <p className="quiet">{status}</p>}
     <div className="header-actions">
       <button className="btn secondary" onClick={test} disabled={busy}>בדיקה סינתטית</button>

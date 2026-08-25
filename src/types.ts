@@ -53,6 +53,24 @@ export type VerifiedFact = {
   sourceLabel: string; stale: boolean; verifiedAt: string;
 };
 
+export type AiProfile = {
+  id: string; providerKind: "local" | "openai"; baseUrl: string;
+  model?: string | null; enabled: boolean; clientDataAuthorized: boolean;
+};
+
+export type AiProposal = {
+  id: string; proposalKind: string;
+  structured: {subject?: string; predicate?: string; value?: string; sourceIds?: string[]};
+  status: "pending" | "approved" | "rejected" | "needs_revision";
+  reviewedAt?: string | null; reviewNote?: string | null;
+};
+
+export type AiRun = {
+  id: string; matterId?: string | null; capability: string; status: string;
+  model?: string | null; startedAt: string; finishedAt?: string | null;
+  proposals: AiProposal[];
+};
+
 export type DamageCalculation = {
   id: string; matterId: string; regime: "pip" | "tort";
   lifeState: "living" | "death"; status: "draft" | "locked";

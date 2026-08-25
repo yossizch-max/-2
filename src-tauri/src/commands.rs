@@ -761,6 +761,10 @@ pub fn review_ai_proposal(state: State<'_, AppState>, payload: Value) -> AppResu
         return Err(AppError::Validation("invalid review decision".into()));
     }
     let note=payload.get("reviewNote").and_then(Value::as_str);
+    if decision=="approved"{
+        let verified_fact_id=ai::approve_proposal(&state.db,proposal_id,note)?;
+        return Ok(json!({"ok":true,"verifiedFactId":verified_fact_id}));
+    }
     state.db.write(|conn|{let changed=conn.execute(
         "UPDATE ai_proposals SET status=?2,reviewed_at=?3,review_note=?4 WHERE id=?1 AND status='pending'",
         params![proposal_id,decision,Utc::now().to_rfc3339(),note]

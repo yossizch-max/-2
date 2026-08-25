@@ -217,3 +217,71 @@ pub fn run_capability(
 
     Ok(run_id)
 }
+
+/// The other half of "AI proposes, human approves": approving a pending fact proposal
+/// doesn't just flip its status - it deterministically creates the real VerifiedFact
+/// (linked back via created_from_proposal_id) and its VerifiedFactSource rows, from
+/// the proposal's own structured_json and sourceIds. Rejecting/needs-revision never
+/// reaches here - only approval creates anything. Never trusts the AI's prose as the
+/// stored quote: the display_quote is always read back from the actual document_pages
+/// row for each cited sourceId, not from whatever the model claimed.
+pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->AppResult<String>{
+    db.write(|conn|{
+        let tx=conn.transaction()?;
+
+        let (matter_id,structured_json,status):(String,String,String)=tx.query_row(
+            "SELECT matter_id,structured_json,status FROM ai_proposals WHERE id=?1",
+            [proposal_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(|_|AppError::NotFound("ai proposal".into()))?;
+        if status!="pending"{
+            return Err(AppError::Validation("proposal not pending".into()));
+        }
+
+        let parsed:Value=serde_json::from_str(&structured_json)
+            .map_err(|_|AppError::Validation("proposal structured_json is not valid JSON".into()))?;
+        let subject=parsed.get("subject").and_then(Value::as_str)
+            .ok_or_else(||AppError::Validation("proposal missing subject".into()))?;
+        let predicate=parsed.get("predicate").and_then(Value::as_str)
+            .ok_or_else(||AppError::Validation("proposal missing predicate".into()))?;
+        let value=parsed.get("value").and_then(Value::as_str)
+            .ok_or_else(||AppError::Validation("proposal missing value".into()))?;
+        let source_ids:Vec<String>=parsed.get("sourceIds").and_then(Value::as_array)
+            .ok_or(AppError::InvalidSourceReference)?
+            .iter().filter_map(|v|v.as_str().map(str::to_string)).collect();
+        if source_ids.is_empty(){
+            return Err(AppError::InvalidSourceReference);
+        }
+
+        let fact_id=Uuid::new_v4().to_string();
+        let now=Utc::now().to_rfc3339();
+        tx.execute(
+            "INSERT INTO verified_facts(
+                id,matter_id,subject,predicate,value_text,status,created_from_proposal_id,verified_at
+             ) VALUES(?1,?2,?3,?4,?5,'valid',?6,?7)",
+            params![fact_id,matter_id,subject,predicate,value,proposal_id,now]
+        )?;
+
+        for page_id in &source_ids {
+            let (document_version_id,display_text,text_sha):(String,String,String)=tx.query_row(
+                "SELECT document_version_id,display_text,text_sha256
+                 FROM document_pages WHERE id=?1 AND matter_id=?2",
+                params![page_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+            ).map_err(|_|AppError::InvalidSourceReference)?;
+            tx.execute(
+                "INSERT INTO verified_fact_sources(
+                    id,matter_id,verified_fact_id,document_version_id,document_page_id,
+                    display_quote,normalized_quote,source_text_sha256
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?6,?7)",
+                params![Uuid::new_v4().to_string(),matter_id,fact_id,document_version_id,page_id,display_text,text_sha]
+            )?;
+        }
+
+        tx.execute(
+            "UPDATE ai_proposals SET status='approved',reviewed_at=?2,review_note=?3 WHERE id=?1",
+            params![proposal_id,now,review_note]
+        )?;
+
+        tx.commit()?;
+        Ok(fact_id)
+    })
+}
