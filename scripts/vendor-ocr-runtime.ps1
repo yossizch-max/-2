@@ -28,20 +28,22 @@ try {
   New-Item -ItemType Directory -Force -Path $popplerDir | Out-Null
   New-Item -ItemType Directory -Force -Path $tessdataDir | Out-Null
 
-  # --- Tesseract (Inno Setup installer, extracted with innoextract - the installer
-  #     is NEVER executed, so there is no risk of it hanging on a GUI/UAC prompt
-  #     that can never be answered on a headless CI runner) ---
+  # --- Tesseract (NSIS installer, extracted with 7-Zip - the installer is NEVER
+  #     executed, so there is no risk of it hanging on a GUI/UAC prompt that can
+  #     never be answered on a headless CI runner. Confirmed via `file`/`strings`
+  #     that this specific installer is an NSIS (Nullsoft) archive, not Inno Setup -
+  #     that assumption was wrong in an earlier version of this script.) ---
   $tesseractInstaller=Fetch-Verified $config.tesseract.url $config.tesseract.sha256 "tesseract-installer.exe"
-  if($config.tesseract.installerKind -ne "innosetup"){
+  if($config.tesseract.installerKind -ne "nsis"){
     throw "unrecognized tesseract installerKind '$($config.tesseract.installerKind)': extraction rules must be reviewed for a new installer format before release"
   }
-  if(!(Get-Command innoextract -ErrorAction SilentlyContinue)){
-    throw "innoextract is required to safely extract the Inno Setup installer (it must never be executed) but was not found on PATH"
-  }
+  $sevenZip=Get-Command 7z -ErrorAction SilentlyContinue
+  if(!$sevenZip -and (Test-Path "C:\Program Files\7-Zip\7z.exe")){$sevenZip=@{Source="C:\Program Files\7-Zip\7z.exe"}}
+  if(!$sevenZip){throw "7-Zip (7z) is required to safely extract the NSIS installer (it must never be executed) but was not found"}
   $tesseractExtractDir=Join-Path $temp "tesseract-extract"
   New-Item -ItemType Directory -Force -Path $tesseractExtractDir | Out-Null
-  & innoextract -e -d $tesseractExtractDir $tesseractInstaller
-  if($LASTEXITCODE -ne 0){throw "innoextract exited with code $LASTEXITCODE"}
+  & $sevenZip.Source x "-o$tesseractExtractDir" -y $tesseractInstaller | Out-Null
+  if($LASTEXITCODE -ne 0){throw "7z exited with code $LASTEXITCODE"}
   $tesseractExe=Get-ChildItem -Path $tesseractExtractDir -Recurse -Filter "tesseract.exe" | Select-Object -First 1
   if(!$tesseractExe){throw "tesseract.exe not found in extracted installer contents"}
   Copy-Item $tesseractExe.FullName $tesseractDir -Force

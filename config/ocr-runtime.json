@@ -5,7 +5,7 @@
     "license": "Apache-2.0",
     "url": "https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe",
     "sha256": "c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9",
-    "installerKind": "innosetup"
+    "installerKind": "nsis"
   },
   "poppler": {
     "version": "24.08.0-0",

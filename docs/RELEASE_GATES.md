@@ -49,18 +49,29 @@ actually downloaded and its SHA256 verified against the pinned value before use 
 guessed. `scripts/vendor-ocr-runtime.ps1` downloads, verifies, and stages all of it into
 `src-tauri/resources/ocr/`.
 
-**Incident (2026-08-24):** the first real attempt at this ran the Tesseract Inno Setup
-installer with `/VERYSILENT` to extract its contents. It hung for **5.5 hours**
-(19:41–01:18 UTC) before GitHub cancelled it — almost certainly a GUI/UAC prompt with no
-one on a headless runner to answer it. Fixed by switching to `innoextract`, which reads
-the installer's contents directly and **never executes it**, eliminating that failure
-mode entirely. Every step in `windows-release-gate.yml` now also carries an explicit
-`timeout-minutes` (and the job itself is capped at 90 minutes total) specifically so a
-future hang fails fast instead of silently burning hours of runner time again.
+**Incident 1 (2026-08-24, run #4):** the first real attempt ran the Tesseract installer
+with `/VERYSILENT`, assuming it was Inno Setup. It hung for **5.5 hours** (19:41–01:18
+UTC) before GitHub cancelled it — almost certainly a GUI/UAC prompt with no one on a
+headless runner to answer it. Fixed by never executing the installer at all, plus adding
+explicit `timeout-minutes` to every step (and a 90-minute job-level cap) so a future hang
+fails fast instead of silently burning hours of runner time.
+
+**Incident 2 (2026-08-25, run #5):** the fix above used `innoextract`, which failed
+immediately with `Not a supported Inno Setup installer!` — the "Inno Setup" assumption
+itself was wrong. `strings`/`file` on the downloaded installer show it is actually an
+**NSIS (Nullsoft)** installer (`Nullsoft.NSIS.exehead`, "Nullsoft Install System
+v3.08-3"). Re-fixed to extract with `7z x` (7-Zip, pre-installed on GitHub's Windows
+runners, reads NSIS archives directly without executing them) instead — verified locally
+first (`config/ocr-runtime.json`'s `installerKind` is now `"nsis"`): `7z x` on the
+downloaded installer produces 139 files including `tesseract.exe` and all 57 of its
+DLLs directly at the extraction root, and the poppler zip's internal
+`poppler-24.08.0/Library/bin/` directory was confirmed (via `unzip -l`) to contain
+`pdftotext.exe` and `pdftoppm.exe` exactly where the script's directory search expects
+them — checked ahead of the next CI run instead of guessed again.
 
 Remaining to actually close this gate:
-1. Confirm the `innoextract`-based run succeeds end-to-end on a real Windows runner
-   (in progress as of this writing).
+1. Confirm the `7z`-based run succeeds end-to-end on a real Windows runner (in progress
+   as of this writing — run #6).
 2. Confirm the OCR runtime files actually land inside the Tauri release bundle output,
    not just in `src-tauri/resources/ocr/` pre-build (Gate C's "verify final Tauri bundle
    contains all required runtime files" — the workflow reports this but doesn't yet hard
