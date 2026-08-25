@@ -2,11 +2,11 @@
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "tested_at": "2026-08-25",
   "regenerated_note": "This file was stale from the 2026-08-24 initial import (61 commands, 31 tables, 25 wired/36 stub) through many subsequent commits before being regenerated here against actually-current, actually-run checks. Treat any future drift the same way this drift was found: by an independent check against the real source, not by trusting this file.",
-  "regenerated_against_parent_commit": "6cd9fc75332f9f422069d034bbd2b9543b3cbeb5",
+  "regenerated_against_parent_commit": "97b2e6de3490d723d41a29865fc32c23d81a96e5",
   "reconstruction_not_byte_for_byte": true,
   "frontend_backend_contract": {
-    "frontend_invokes": 69,
-    "rust_commands": 69,
+    "frontend_invokes": 86,
+    "rust_commands": 86,
     "missing": [],
     "extra": [],
     "result": "PASS",
@@ -21,7 +21,8 @@
     "commandPaletteFocusTrap": true,
     "ariaCurrent": true,
     "focusVisible": true,
-    "thirtyThreeTables": true,
+    "thirtyThreeTablesInBaseSchema": true,
+    "fiveTablesInLegalRulesInfra": true,
     "ocrSourceMismatch": true,
     "ocrReverify": true,
     "docxDocumentAnchoring": true,
@@ -33,10 +34,10 @@
     "verified_by": "node scripts/static-qa.mjs"
   },
   "database": {
-    "user_version": 12,
-    "tables": 33,
-    "indexes": 21,
-    "triggers": 24,
+    "user_version": 13,
+    "tables": 38,
+    "indexes": 26,
+    "triggers": 37,
     "integrity_check": "ok",
     "foreign_key_check": [],
     "locked_damage_update_blocked": true,
@@ -46,28 +47,35 @@
     "approved_legal_version_update_blocked": true,
     "approved_legal_sections_mutation_blocked": true,
     "approved_legal_paragraphs_mutation_blocked": true,
-    "cross_matter_fact_source_blocked": true
+    "cross_matter_fact_source_blocked": true,
+    "approved_ruleset_mutation_blocked": true,
+    "engine_run_snapshot_immutable": true,
+    "note": "38 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13)"
   },
   "reconstructed_commands": {
-    "total": 69,
-    "wired": 69,
+    "total": 86,
+    "wired": 86,
     "fail_closed_not_yet_wired": 0,
-    "note": "All 69 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command."
+    "note": "All 86 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command. 17 of the 86 are the new legal-rules-infrastructure commands (list/get/create/update_draft/add_source/add_rule/add_test_case/review_test_case/run_tests/submit_for_review/approve/supersede_ruleset, preview/commit_engine_run)."
   },
   "rust_compile": {
     "cargo_check_locked": "PASS",
-    "cargo_test_locked": "PASS (19/19)"
+    "cargo_test_locked": "PASS (44/44)"
   },
   "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
   "windows_tauri_build": {
     "status": "PASS on a real windows-2025 GitHub Actions runner",
-    "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32835457436",
-    "most_recent_verified_commit": "fb1ec8690e8b409497182af55ae1ffb679fe4513",
-    "note": "commits after that run (including this regeneration) have not yet had a fresh Windows CI run - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
+    "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32866131285",
+    "most_recent_verified_commit": "d0cdb3e88cc85e3ce06205c0ab69d42c396858dd",
+    "note": "commits after that run (including this regeneration, which adds the legal-rules infrastructure) have not yet had a fresh Windows CI run - see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
   },
   "ocr_third_party_runtime": {
     "status": "BUNDLED_AND_VERIFIED",
     "detail": "Tesseract/Poppler/heb+ara+eng.traineddata vendored, SHA256-verified against config/ocr-runtime.json, and confirmed present in the built installer's resources/ocr/ directory on real Windows CI - see docs/RELEASE_GATES.md Gate C"
+  },
+  "legal_rules_infrastructure": {
+    "status": "PHASE_A_COMPLETE_NO_ISRAELI_LAW_CONTENT",
+    "detail": "Governed Ruleset/Rule/Source/TestCase/EngineRun schema and lifecycle (src-tauri/src/legal_rules.rs), a constrained-DSL rule interpreter (10 safe operators, no code eval/network/filesystem), and a Settings UI for authoring/testing/approving rulesets. Contains zero Israeli substantive law - a ruleset is only usable once a lawyer has sourced, tested and approved it. Phase B (Medical/Wage/Liability evidence ledgers) and Phase C (the first real lawyer-approved legal module) are deliberately not attempted."
   },
   "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE",
   "release_verdict_detail": "See docs/RELEASE_GATES.md for the authoritative, actively-maintained gate-by-gate status. This file is a point-in-time snapshot, not a live source of truth."

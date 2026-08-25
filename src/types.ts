@@ -106,6 +106,38 @@ export type LegalDocumentVersionDetail = {
   status: "draft" | "approved" | "superseded"; sections: LegalDocumentSection[];
 };
 
+export type LegalRuleset = {
+  id: string; engineKind: string; jurisdiction: string; title: string; version: string;
+  status: "draft" | "under_review" | "approved" | "superseded" | "revoked";
+  effectiveFrom?: string | null; effectiveTo?: string | null;
+  approvedAt?: string | null; approvedBy?: string | null; supersededBy?: string | null;
+  sourceCount: number; testCaseCount: number; approvedTestCaseCount: number;
+};
+
+export type LegalRulesetSource = {
+  id: string; sourceKind: string; citation: string; pinpoint?: string | null;
+  documentVersionId?: string | null; documentPageId?: string | null;
+  sourceSha256: string; verifiedAt?: string | null; verifiedBy?: string | null;
+};
+
+export type LegalRule = {
+  id: string; ruleKey: string; ruleType: string; priority: number;
+  conditions: unknown; operation: unknown;
+  explanationTemplate?: string | null; sourceId?: string | null;
+};
+
+export type LegalRuleTestCase = {
+  id: string; name: string; input: unknown; expectedOutput: unknown;
+  reviewStatus: "draft" | "approved" | "rejected";
+  reviewedBy?: string | null; reviewedAt?: string | null;
+};
+
+export type LegalRulesetDetail = LegalRuleset & {
+  description?: string | null; createdAt: string; createdBy?: string | null;
+  submittedForReviewAt?: string | null; integritySha256?: string | null;
+  sources: LegalRulesetSource[]; rules: LegalRule[]; testCases: LegalRuleTestCase[];
+};
+
 export type Authority = {
   id: string; matterId: string; citation: string; title: string;
   status: "draft" | "verified" | "revoked";

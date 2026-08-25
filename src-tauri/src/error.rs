@@ -16,6 +16,8 @@ pub enum AppError {
     AiProviderRefusal,
     #[error("INVALID_SOURCE_REFERENCE")]
     InvalidSourceReference,
+    #[error("NO_APPROVED_RULE_FOR_CONTEXT")]
+    NoApprovedRuleForContext,
     #[error("PDF_CONVERTER_UNAVAILABLE")]
     PdfConverterUnavailable,
     #[error("NOT_FOUND: {0}")]

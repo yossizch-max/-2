@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, legal_docs, models, scanner, search, security,
+    ai, authorities, damage, extraction, legal_docs, legal_rules, models, scanner, search, security,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -15,6 +15,15 @@ use uuid::Uuid;
 fn required_string<'a>(payload:&'a Value,key:&str)->AppResult<&'a str>{
     payload.get(key).and_then(Value::as_str)
         .ok_or_else(||AppError::Validation(format!("{key} required")))
+}
+
+/// For fields the legal-rules DSL stores as JSON-in-a-TEXT-column (conditions,
+/// operations, test-case input/expected output): accepts the value as real nested
+/// JSON from the frontend and re-serializes it to the compact string form the DB and
+/// `legal_rules.rs`'s parsers expect.
+fn required_json_string(payload:&Value,key:&str)->AppResult<String>{
+    let value=payload.get(key).ok_or_else(||AppError::Validation(format!("{key} required")))?;
+    serde_json::to_string(value).map_err(AppError::Serde)
 }
 
 #[tauri::command]
@@ -1273,4 +1282,231 @@ pub fn export_legal_document(state: State<'_, AppState>, payload: Value) -> AppR
         params![id,matter_id,version_id,output_kind,output_path,output_sha256,Utc::now().to_rfc3339()]
     )?;Ok(())})?;
     Ok(json!({"id":id,"outputSha256":output_sha256}))
+}
+
+// --- Legal rules infrastructure (Phase A): thin command wrappers over legal_rules.rs.
+// No Israeli substantive law is decided here - only whether a governed Ruleset exists,
+// is properly sourced/tested, and may be used. See legal_rules.rs's module doc comment.
+
+#[tauri::command]
+pub fn list_legal_rulesets(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let engine_kind=payload.get("engineKind").and_then(Value::as_str);
+    state.db.read(|conn|{
+        let mut stmt=conn.prepare(
+            "SELECT id,engine_kind,jurisdiction,title,version,status,effective_from,effective_to,
+             approved_at,approved_by,superseded_by,
+             (SELECT count(*) FROM legal_ruleset_sources s WHERE s.ruleset_id=r.id),
+             (SELECT count(*) FROM legal_rule_test_cases t WHERE t.ruleset_id=r.id),
+             (SELECT count(*) FROM legal_rule_test_cases t WHERE t.ruleset_id=r.id AND t.review_status='approved')
+             FROM legal_rulesets r WHERE ?1 IS NULL OR engine_kind=?1
+             ORDER BY engine_kind,jurisdiction,title,version"
+        )?;
+        let rows=stmt.query_map([engine_kind],|r|Ok(json!({
+            "id":r.get::<_,String>(0)?,"engineKind":r.get::<_,String>(1)?,"jurisdiction":r.get::<_,String>(2)?,
+            "title":r.get::<_,String>(3)?,"version":r.get::<_,String>(4)?,"status":r.get::<_,String>(5)?,
+            "effectiveFrom":r.get::<_,Option<String>>(6)?,"effectiveTo":r.get::<_,Option<String>>(7)?,
+            "approvedAt":r.get::<_,Option<String>>(8)?,"approvedBy":r.get::<_,Option<String>>(9)?,
+            "supersededBy":r.get::<_,Option<String>>(10)?,
+            "sourceCount":r.get::<_,i64>(11)?,"testCaseCount":r.get::<_,i64>(12)?,"approvedTestCaseCount":r.get::<_,i64>(13)?
+        })))?.collect::<Result<Vec<_>,_>>()?;
+        Ok(Value::Array(rows))
+    })
+}
+
+#[tauri::command]
+pub fn get_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    state.db.read(|conn|{
+        let ruleset=conn.query_row(
+            "SELECT id,engine_kind,jurisdiction,title,version,status,effective_from,effective_to,
+             description,created_at,created_by,submitted_for_review_at,approved_at,approved_by,
+             superseded_by,integrity_sha256
+             FROM legal_rulesets WHERE id=?1",
+            [ruleset_id],|r|Ok(json!({
+                "id":r.get::<_,String>(0)?,"engineKind":r.get::<_,String>(1)?,"jurisdiction":r.get::<_,String>(2)?,
+                "title":r.get::<_,String>(3)?,"version":r.get::<_,String>(4)?,"status":r.get::<_,String>(5)?,
+                "effectiveFrom":r.get::<_,Option<String>>(6)?,"effectiveTo":r.get::<_,Option<String>>(7)?,
+                "description":r.get::<_,Option<String>>(8)?,"createdAt":r.get::<_,String>(9)?,
+                "createdBy":r.get::<_,Option<String>>(10)?,"submittedForReviewAt":r.get::<_,Option<String>>(11)?,
+                "approvedAt":r.get::<_,Option<String>>(12)?,"approvedBy":r.get::<_,Option<String>>(13)?,
+                "supersededBy":r.get::<_,Option<String>>(14)?,"integritySha256":r.get::<_,Option<String>>(15)?
+            }))
+        ).map_err(|_|AppError::NotFound("legal ruleset".into()))?;
+
+        let mut source_stmt=conn.prepare(
+            "SELECT id,source_kind,citation,pinpoint,document_version_id,document_page_id,
+             source_sha256,verified_at,verified_by FROM legal_ruleset_sources WHERE ruleset_id=?1 ORDER BY created_at"
+        )?;
+        let sources=source_stmt.query_map([ruleset_id],|r|Ok(json!({
+            "id":r.get::<_,String>(0)?,"sourceKind":r.get::<_,String>(1)?,"citation":r.get::<_,String>(2)?,
+            "pinpoint":r.get::<_,Option<String>>(3)?,"documentVersionId":r.get::<_,Option<String>>(4)?,
+            "documentPageId":r.get::<_,Option<String>>(5)?,"sourceSha256":r.get::<_,String>(6)?,
+            "verifiedAt":r.get::<_,Option<String>>(7)?,"verifiedBy":r.get::<_,Option<String>>(8)?
+        })))?.collect::<Result<Vec<_>,_>>()?;
+
+        let mut rule_stmt=conn.prepare(
+            "SELECT id,rule_key,rule_type,priority,conditions_json,operation_json,explanation_template,source_id
+             FROM legal_rules WHERE ruleset_id=?1 ORDER BY priority"
+        )?;
+        let rules=rule_stmt.query_map([ruleset_id],|r|{
+            let conditions:String=r.get(4)?;
+            let operation:String=r.get(5)?;
+            Ok(json!({
+                "id":r.get::<_,String>(0)?,"ruleKey":r.get::<_,String>(1)?,"ruleType":r.get::<_,String>(2)?,
+                "priority":r.get::<_,i64>(3)?,
+                "conditions":serde_json::from_str::<Value>(&conditions).unwrap_or(Value::Null),
+                "operation":serde_json::from_str::<Value>(&operation).unwrap_or(Value::Null),
+                "explanationTemplate":r.get::<_,Option<String>>(6)?,"sourceId":r.get::<_,Option<String>>(7)?
+            }))
+        })?.collect::<Result<Vec<_>,_>>()?;
+
+        let mut tc_stmt=conn.prepare(
+            "SELECT id,name,input_json,expected_output_json,review_status,reviewed_by,reviewed_at
+             FROM legal_rule_test_cases WHERE ruleset_id=?1 ORDER BY created_at"
+        )?;
+        let test_cases=tc_stmt.query_map([ruleset_id],|r|{
+            let input:String=r.get(2)?;
+            let expected:String=r.get(3)?;
+            Ok(json!({
+                "id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,
+                "input":serde_json::from_str::<Value>(&input).unwrap_or(Value::Null),
+                "expectedOutput":serde_json::from_str::<Value>(&expected).unwrap_or(Value::Null),
+                "reviewStatus":r.get::<_,String>(4)?,"reviewedBy":r.get::<_,Option<String>>(5)?,
+                "reviewedAt":r.get::<_,Option<String>>(6)?
+            }))
+        })?.collect::<Result<Vec<_>,_>>()?;
+
+        let mut ruleset=ruleset;
+        ruleset["sources"]=Value::Array(sources);
+        ruleset["rules"]=Value::Array(rules);
+        ruleset["testCases"]=Value::Array(test_cases);
+        Ok(ruleset)
+    })
+}
+
+#[tauri::command]
+pub fn create_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let engine_kind=required_string(&payload,"engineKind")?;
+    let jurisdiction=required_string(&payload,"jurisdiction")?;
+    let title=required_string(&payload,"title")?;
+    let version=required_string(&payload,"version")?;
+    let effective_from=payload.get("effectiveFrom").and_then(Value::as_str);
+    let effective_to=payload.get("effectiveTo").and_then(Value::as_str);
+    let description=payload.get("description").and_then(Value::as_str);
+    let created_by=payload.get("createdBy").and_then(Value::as_str);
+    let id=legal_rules::create_ruleset(&state.db,engine_kind,jurisdiction,title,version,effective_from,effective_to,description,created_by)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn update_draft_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let title=payload.get("title").and_then(Value::as_str);
+    let effective_from=payload.get("effectiveFrom").and_then(Value::as_str);
+    let effective_to=payload.get("effectiveTo").and_then(Value::as_str);
+    let description=payload.get("description").and_then(Value::as_str);
+    legal_rules::update_draft_ruleset(&state.db,ruleset_id,title,effective_from,effective_to,description)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn add_legal_ruleset_source(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let source_kind=required_string(&payload,"sourceKind")?;
+    let citation=required_string(&payload,"citation")?;
+    let pinpoint=payload.get("pinpoint").and_then(Value::as_str);
+    let document_version_id=payload.get("documentVersionId").and_then(Value::as_str);
+    let document_page_id=payload.get("documentPageId").and_then(Value::as_str);
+    let verified_by=payload.get("verifiedBy").and_then(Value::as_str);
+    let id=legal_rules::add_source(&state.db,ruleset_id,source_kind,citation,pinpoint,document_version_id,document_page_id,verified_by)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn add_legal_rule(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let rule_key=required_string(&payload,"ruleKey")?;
+    let rule_type=required_string(&payload,"ruleType")?;
+    let priority=payload.get("priority").and_then(Value::as_i64).unwrap_or(0);
+    let conditions_json=required_json_string(&payload,"conditions")?;
+    let operation_json=required_json_string(&payload,"operation")?;
+    let explanation_template=payload.get("explanationTemplate").and_then(Value::as_str);
+    let source_id=payload.get("sourceId").and_then(Value::as_str);
+    let id=legal_rules::add_rule(&state.db,ruleset_id,rule_key,rule_type,priority,&conditions_json,&operation_json,explanation_template,source_id)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn add_legal_rule_test_case(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let name=required_string(&payload,"name")?;
+    let input_json=required_json_string(&payload,"input")?;
+    let expected_json=required_json_string(&payload,"expectedOutput")?;
+    let id=legal_rules::add_test_case(&state.db,ruleset_id,name,&input_json,&expected_json)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn review_legal_rule_test_case(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let test_case_id=required_string(&payload,"testCaseId")?;
+    let approved=payload.get("approved").and_then(Value::as_bool)
+        .ok_or_else(||AppError::Validation("approved required".into()))?;
+    let reviewed_by=payload.get("reviewedBy").and_then(Value::as_str);
+    legal_rules::review_test_case(&state.db,ruleset_id,test_case_id,approved,reviewed_by)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn run_legal_rule_tests(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let results=legal_rules::run_tests(&state.db,ruleset_id)?;
+    Ok(json!(results.into_iter().map(|(name,passed,detail)|json!({
+        "name":name,"passed":passed,"detail":detail
+    })).collect::<Vec<_>>()))
+}
+
+#[tauri::command]
+pub fn submit_legal_ruleset_for_review(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    legal_rules::submit_for_review(&state.db,ruleset_id)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn approve_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let approved_by=payload.get("approvedBy").and_then(Value::as_str);
+    let integrity_sha256=legal_rules::approve_ruleset(&state.db,ruleset_id,approved_by)?;
+    Ok(json!({"integritySha256":integrity_sha256}))
+}
+
+#[tauri::command]
+pub fn supersede_legal_ruleset(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let old_ruleset_id=required_string(&payload,"oldRulesetId")?;
+    let new_ruleset_id=required_string(&payload,"newRulesetId")?;
+    legal_rules::supersede_ruleset(&state.db,old_ruleset_id,new_ruleset_id)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn preview_legal_engine_run(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let context_json=required_json_string(&payload,"context")?;
+    let outcome=legal_rules::preview_engine_run(&state.db,ruleset_id,&context_json)?;
+    Ok(json!({
+        "matchedRuleKey":outcome.matched_rule_key,"explanation":outcome.explanation,
+        "registers":outcome.registers,"trace":outcome.trace,
+        "rulesetVersion":outcome.ruleset_version,"rulesetIntegritySha256":outcome.ruleset_integrity_sha256
+    }))
+}
+
+#[tauri::command]
+pub fn commit_legal_engine_run(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let engine_kind=required_string(&payload,"engineKind")?;
+    let ruleset_id=required_string(&payload,"rulesetId")?;
+    let context_json=required_json_string(&payload,"context")?;
+    let id=legal_rules::commit_engine_run(&state.db,matter_id,engine_kind,ruleset_id,&context_json)?;
+    Ok(json!({"id":id}))
 }

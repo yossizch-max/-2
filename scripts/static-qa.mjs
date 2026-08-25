@@ -9,6 +9,7 @@ const palette=read("src/components/CommandPalette.tsx");
 const shell=read("src/components/AppShell.tsx");
 const tokens=read("src/styles/tokens.css");
 const sql=read("src-tauri/migrations/001_schema_v12.sql");
+const sqlRulesInfra=read("src-tauri/migrations/002_legal_rules_infrastructure_v13.sql");
 const snapshot=read("src-tauri/src/source_snapshot.rs");
 const extraction=read("src-tauri/src/extraction.rs");
 const ai=read("src-tauri/src/ai.rs");
@@ -18,7 +19,11 @@ const checks={
   commandPaletteFocusTrap:palette.includes('e.key!=="Tab"')&&palette.includes("openerRef"),
   ariaCurrent:shell.includes("aria-current"),
   focusVisible:tokens.includes(":focus-visible"),
-  thirtyThreeTables:(sql.match(/CREATE TABLE /g)||[]).length===33,
+  // Counted per-migration-file, not just a single combined total: a check that only
+  // asserted the sum would stay silently "true" even if tables shifted between files,
+  // or if a future migration added/removed tables elsewhere in 001 or 002 by mistake.
+  thirtyThreeTablesInBaseSchema:(sql.match(/CREATE TABLE /g)||[]).length===33,
+  fiveTablesInLegalRulesInfra:(sqlRulesInfra.match(/CREATE TABLE /g)||[]).length===5,
   ocrSourceMismatch:snapshot.includes("SourceShaMismatch"),
   ocrReverify:extraction.includes("snapshot.verify_unchanged()"),
   docxDocumentAnchoring:extraction.includes('anchor_kind: "document"')&&extraction.includes("page_number: None"),

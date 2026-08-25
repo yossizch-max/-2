@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
+import { LegalRulesPage } from "./LegalRulesPage";
+import type { LegalRuleset } from "../types";
 
 type Suggestion={id:string;pathDisplay:string;suggestedTitle:string;fileCount:number;createdAt:string};
 type ScanRun={id:string;rootPath:string;status:string;startedAt:string;finishedAt?:string|null;discoveredCount:number;hashedCount:number;errorCount:number};
 
 export function SettingsPage() {
+  const [showLegalRules,setShowLegalRules]=useState(false);
+  const {data:rulesets}=useCommand(
+    ()=>commands.list_legal_rulesets({}) as Promise<LegalRuleset[]>, []
+  );
   const {data:officeRoot,reload:reloadRoot}=useCommand(
     ()=>commands.get_office_root() as Promise<{path:string|null}>, []
   );
@@ -56,8 +62,20 @@ export function SettingsPage() {
 
   const rows=[["מסד נתונים","SQLCipher · תקין"],["מפתח שחזור","Restore drill חובה לפני שימוש אמיתי"],["סריקה","Stage A / Stage B · Local-first"],["OCR","Tesseract + Poppler + heb/ara/eng"],["PDF Export","Word/LibreOffice נדרש"],["Code signing","חובה לפני הפצה"]];
 
+  if(showLegalRules){
+    return <div className="page"><LegalRulesPage onBack={()=>setShowLegalRules(false)}/></div>;
+  }
+
+  const approvedRulesetCount=rulesets?.filter(r=>r.status==="approved").length??0;
+
   return <div className="page">
     <div className="page-head"><div><span className="eyebrow">SYSTEM</span><h1>הגדרות ובריאות</h1><p>הצפנה, שחזור, סריקה, OCR, Rulesets ו־AI.</p></div></div>
+
+    <section className="workspace-card">
+      <div className="card-head"><div><span className="eyebrow">GOVERNANCE</span><h2>כללים משפטיים</h2></div>
+        <button className="btn secondary" onClick={()=>setShowLegalRules(true)}>פתח</button></div>
+      <p className="quiet">{rulesets?.length??0} Rulesets · {approvedRulesetCount} מאושרים. כלל דטרמיניסטי לחישוב מועד או פיצוי נכנס לשימוש רק דרך Ruleset מאושר, עם מקור מאומת ובדיקות עוברות.</p>
+    </section>
 
     <section className="workspace-card">
       <h2>תיקיית משרד (Office Root)</h2>

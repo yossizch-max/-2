@@ -28,10 +28,14 @@ the round-3 section below), tier 3 (Israeli tort-law domain modules) is delibera
 of scope pending a real lawyer's involvement. Two engineering-only items both audit
 rounds had logged as "deliberately not addressed" — the OCR temp-directory RAII gap and
 Verified Authority not requiring an approved passage — were then also fixed (see the
-"Follow-up fixes" section below), and reconfirmed on real Windows CI at run #12, commit
-`d0cdb3e` (2026-08-25) — the latest commit on `main`, and current as of this pass. What's
-left needs a human on a real Windows machine with a fresh installer: real OCR, real AI provider
-calls, and DOCX export, which doesn't exist in this reconstruction yet.**
+"Follow-up fixes" section below), confirmed on real Windows CI at run #12, commit
+`d0cdb3e` (2026-08-25). A fourth document then specified governed infrastructure for
+deterministic legal rules; Phase A (schema, DSL interpreter, ruleset lifecycle, engine
+runs, Settings UI — deliberately zero Israeli substantive law) is now built and tested
+(see "Legal rules infrastructure, Phase A" below) but **not yet reconfirmed on Windows
+CI** — that run is still needed before Gate C/E can be called current again. What's
+left needs a human on a real Windows machine with a fresh installer: real OCR, real AI
+provider calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -294,6 +298,77 @@ and `qa:static` all pass. Confirmed on real Windows CI at
 `d0cdb3e`, 2026-08-25 — all 24 tests pass there too, not just in this sandbox — see the
 updated Gate C/E entries below.
 
+## Legal rules infrastructure, Phase A (2026-08-25)
+
+A fourth external document (`TAHRIR_LEGAL_RULES_INFRASTRUCTURE_SPEC_20260825.md`) specified
+governed infrastructure for deterministic legal rules — explicitly **not** Israeli
+substantive law itself, only the machinery for a lawyer to author, source, test and
+approve a rule before it may drive a committed legal result. Reviewed before
+implementation (see the conversation for the review pass); Phase A (infrastructure
+only — "No Israeli rule content yet," per the spec) is now built:
+
+- **Schema** (`002_legal_rules_infrastructure_v13.sql`, additive to `001`, `PRAGMA
+  user_version=13`): `legal_rulesets` (draft → under_review → approved → superseded/
+  revoked; firm-wide, not matter-scoped — a Ruleset is a governed asset used across
+  every matter), `legal_ruleset_sources`, `legal_rules`, `legal_rule_test_cases`,
+  `legal_engine_runs` (an immutable, matter-bound calculation trace). Triggers mirror
+  the existing `legal_document_*` immutability pattern: an approved ruleset (and
+  everything that composes it) cannot be mutated or deleted, except the one specific
+  transition supersession needs; a committed engine run's snapshot/result/trace can
+  never change.
+- **The DSL** (`src-tauri/src/legal_rules.rs`): `conditions_json` is an implicit-AND
+  list of `{field,op,value}` checks against a flat JSON context; `operation_json` is an
+  ordered sequence of steps over named registers, restricted to 10 fixed safe operators
+  (`compare`, `add_days`, `subtract_days`, `add_amount`, `subtract_amount`,
+  `multiply_decimal` — fixed-point, no floating-point drift, half-up rounding — `cap`,
+  `floor`, `choose`, `require_input`). No code evaluation, no SQL, no filesystem, no
+  network access — an unknown operator is a hard error, not silently ignored.
+- **Ruleset lifecycle**: create/add-source/add-rule/add-test-case all only work on a
+  `draft` ruleset. A source bound to a real in-app document is verified immediately
+  (its SHA256 is read from `document_versions`, never trusted from the caller); a
+  citation-only source is only verified if the caller names a `verified_by` — a
+  lawyer's deliberate act, not a default. `approve_ruleset` re-checks everything at
+  approval time, not just at draft time: at least one currently verified, non-stale
+  source; every rule cites one; at least one test case exists and *all* of them are
+  reviewer-approved *and* pass a fresh, non-cached run of the DSL right now. Only then
+  is an integrity SHA256 computed over the full structural content and the ruleset
+  locked. Supersession never deletes — the old ruleset is retained forever, just
+  marked `superseded`, and the replacement must itself already be an approved ruleset
+  for the same engine/jurisdiction.
+- **Engine runs**: `preview_legal_engine_run` computes a result without persisting
+  anything; `commit_legal_engine_run` never trusts a previewed result — it recomputes
+  from scratch server-side against the ruleset as it exists right now (re-checking the
+  matched rule's specific source for staleness one more time), then persists an
+  immutable trace row. No rule matching fails closed with `NoApprovedRuleForContext`
+  (surfaced as the fixed `NO_APPROVED_RULE_FOR_CONTEXT` error code the spec asked for),
+  never silently produces a result.
+- **Settings UI**: `SettingsPage` gained a "כללים משפטיים" card linking to a new
+  `LegalRulesPage` — a ruleset list (engine/title/version/status/source count/test
+  coverage) plus a per-ruleset editor (sources, rules, test cases, run-tests, submit/
+  approve, and an engine-run preview panel for approved rulesets). No "activate" button
+  exists for a draft; every action's real gating comes from the backend, the UI just
+  surfaces whatever error it returns.
+
+**Beyond the spec's literal section 8 command list**, `review_legal_rule_test_case`
+was added — the spec's own approval invariant ("required test cases are approved")
+has no command anywhere in section 8 to actually mark a test case approved, so this is
+a necessary completion of the spec's own stated requirement, not scope creep.
+
+**Deliberately not attempted**: Phase B (Medical/Wage/Liability evidence ledgers) and
+Phase C (the first real lawyer-approved legal module — a deadline rules engine, a
+damages ruleset). Also not wired: `commit_legal_engine_run` integration into
+`TasksCalendarTab`/`DamageTab` (the spec's "Integration with current TAHRIR" section)
+— the command exists and is tested, but no UI calls it yet from a matter workspace.
+
+15 new backend tests (9 mapped to the spec's own section-12 list by number, plus the
+DSL's 11 pure-function unit tests) — 44/44 total. `cargo check/test --locked`,
+`npm run build`, `contract:check` (86/86, no drift), `qa:static` all pass.
+`scripts/static-qa.mjs`'s table-count check was split into one assertion per migration
+file (`thirtyThreeTablesInBaseSchema`/`fiveTablesInLegalRulesInfra`) rather than one
+combined total — the same class of silent-staleness risk as the `contract:check`
+`=== 61` bug from earlier in this project, caught proactively this time instead of by
+a CI failure.
+
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
   `VerifiedSourceSnapshot::create` before any parsing. ✅
@@ -316,7 +391,7 @@ that live check belongs to Gate F.
 - `package-lock.json` and `src-tauri/Cargo.lock` are committed and reviewed. ✅
 - `npm ci` — clean install, 0 vulnerabilities from `npm audit --audit-level=high`. ✅
 - `cargo check --locked` — passes. ✅
-- `cargo test --locked -- --test-threads=1` — 24/24 tests pass (grown from the original
+- `cargo test --locked -- --test-threads=1` — 44/44 tests pass (grown from the original
   4 as Gates F and the external-audit response added real coverage). ✅
 - Build does not modify either lockfile — verified by hashing both files before and
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;

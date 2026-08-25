@@ -10,6 +10,7 @@ mod gate_f_partial;
 #[cfg(test)]
 mod integrity_tests;
 mod legal_docs;
+mod legal_rules;
 mod models;
 mod scanner;
 mod search;
@@ -115,7 +116,21 @@ pub fn run() {
             commands::update_legal_document_paragraph,
             commands::confirm_legal_document_paragraph,
             commands::delete_legal_document_paragraph,
-            commands::export_legal_document
+            commands::export_legal_document,
+            commands::list_legal_rulesets,
+            commands::get_legal_ruleset,
+            commands::create_legal_ruleset,
+            commands::update_draft_legal_ruleset,
+            commands::add_legal_ruleset_source,
+            commands::add_legal_rule,
+            commands::add_legal_rule_test_case,
+            commands::review_legal_rule_test_case,
+            commands::run_legal_rule_tests,
+            commands::submit_legal_ruleset_for_review,
+            commands::approve_legal_ruleset,
+            commands::supersede_legal_ruleset,
+            commands::preview_legal_engine_run,
+            commands::commit_legal_engine_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");

@@ -174,3 +174,17 @@ document attached to it. `legal_authority_passages` existed in the schema since 
 original import but was never wired to any command until now. A new `authorities` module
 holds this logic (testable outside `tauri::State`, same pattern as `legal_docs`/`damage`),
 and `AuthoritiesTab` gained a passage-management panel.
+
+## Legal rules infrastructure, Phase A (2026-08-25)
+
+A fourth external document specified governed infrastructure for deterministic legal
+rules — see `docs/RELEASE_GATES.md`'s "Legal rules infrastructure, Phase A" section for
+the full writeup. This is deliberately **not** Israeli substantive law: it's the
+machinery (`legal_rulesets`/`legal_ruleset_sources`/`legal_rules`/
+`legal_rule_test_cases`/`legal_engine_runs`, a constrained 10-operator DSL interpreter,
+a ruleset lifecycle with re-checked-at-approval-time invariants, immutable engine-run
+traces, and a Settings UI) that lets a lawyer author, source, test and approve a rule
+before it may drive a committed result — with zero legal content encoded by this pass.
+Phase B (evidence ledgers) and Phase C (the first real lawyer-approved legal module)
+remain deliberately unattempted, consistent with the position taken on the third
+report's Tier 3 above.

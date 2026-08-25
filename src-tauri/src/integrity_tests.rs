@@ -67,10 +67,21 @@
 //! that same containment against the page's *current* text; `verify` now requires at
 //! least one approved passage and folds the approved passages' hashes into the integrity
 //! hash.
+//!
+//! Legal rules infrastructure (Phase A, `TAHRIR_LEGAL_RULES_INFRASTRUCTURE_SPEC_20260825.md`):
+//! a governed Ruleset/Rule/Source/TestCase/EngineRun system that contains no Israeli
+//! substantive law itself - only the machinery for a lawyer to author, source, test and
+//! approve a deterministic rule before it may drive a committed legal result. The spec's
+//! own section 12 lists 10 required regression tests; below covers 9 of them directly
+//! (numbered to match). #10, "cross-Matter ledger source reference blocked", is a Phase B
+//! concern (the Medical/Wage/Liability ledgers don't exist yet) and has no Phase A
+//! equivalent: `legal_rulesets`/`legal_ruleset_sources` are deliberately NOT matter-scoped
+//! (a Ruleset is a firm-wide governed asset, usable across every matter), so there is no
+//! cross-matter boundary to test here yet.
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, models::DamageInput, scanner};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -759,4 +770,228 @@ fn approving_a_passage_re_checks_containment_against_the_current_source_text() {
 
     let result = authorities::approve_passage(&db, &matter_id, &authority_id, &passage_id);
     assert!(result.is_err(), "approval must re-check containment against the page's current text, not trust what was true when the passage was drafted");
+}
+
+// --- Legal rules infrastructure (Phase A): schema-level trigger checks ---
+// (business-logic-level tests for the legal_rules module itself live further below,
+// once its lifecycle functions are introduced)
+
+#[test]
+fn approved_ruleset_permits_supersede_but_blocks_other_mutation_and_delete() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO legal_rulesets(id,engine_kind,jurisdiction,title,version,status,created_at)
+             VALUES('r1','deadline','IL','t','1','approved','x')", [],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO legal_rulesets(id,engine_kind,jurisdiction,title,version,status,created_at)
+             VALUES('r2','deadline','IL','t','2','draft','x')", [],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO legal_rulesets(id,engine_kind,jurisdiction,title,version,status,created_at)
+             VALUES('r3','deadline','IL','t3','3','approved','x')", [],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
+    let supersede = db.write(|conn| conn.execute(
+        "UPDATE legal_rulesets SET status='superseded',superseded_by='r2' WHERE id='r1'", []
+    ).map_err(AppError::Db));
+    assert!(supersede.is_ok(), "the supersede transition must be allowed on an approved ruleset");
+
+    let mutate = db.write(|conn| conn.execute(
+        "UPDATE legal_rulesets SET title='HACKED' WHERE id='r3'", []
+    ).map_err(AppError::Db));
+    assert!(mutate.is_err(), "mutating any other field of an approved ruleset must be blocked");
+
+    let delete = db.write(|conn| conn.execute("DELETE FROM legal_rulesets WHERE id='r3'", [])
+        .map_err(AppError::Db));
+    assert!(delete.is_err(), "deleting an approved ruleset must be blocked");
+}
+
+// --- legal_rules module: business-logic-level tests (spec section 12's list) ---
+
+/// Builds a minimal but real, approvable ruleset: one citation-only verified source,
+/// one rule ("add 30 days to trigger_date"), one test case that actually passes.
+/// Returns (ruleset_id, source_id).
+fn new_approvable_ruleset(db: &DbState, version: &str) -> (String, String) {
+    let ruleset_id = legal_rules::create_ruleset(
+        db, "deadline", "IL", "Test deadline rules", version, None, None, None, Some("test"),
+    ).unwrap();
+    let source_id = legal_rules::add_source(
+        db, &ruleset_id, "internal_legal_memo", "Test citation", None, None, None, Some("lawyer@test"),
+    ).unwrap();
+    legal_rules::add_rule(
+        db, &ruleset_id, "filing_30_days", "deadline", 0,
+        r#"[{"field":"procedure_type","op":"eq","value":"filing"}]"#,
+        r#"[{"op":"add_days","from":{"reg":"trigger_date"},"days":30,"into":"result"}]"#,
+        Some("המועד נקבע ל-{result}"), Some(&source_id),
+    ).unwrap();
+    let test_case_id = legal_rules::add_test_case(
+        db, &ruleset_id, "30 days from trigger",
+        r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#,
+        r#"{"result":"2026-01-31","matchedRuleKey":"filing_30_days"}"#,
+    ).unwrap();
+    legal_rules::review_test_case(db, &ruleset_id, &test_case_id, true, Some("lawyer@test")).unwrap();
+    (ruleset_id, source_id)
+}
+
+#[test]
+fn spec_5_a_draft_ruleset_cannot_drive_a_committed_result() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "legal rules test: draft cannot commit");
+    let (ruleset_id, _) = new_approvable_ruleset(&db, "1");
+    // never approved - still 'draft'
+    let context = r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#;
+    let result = legal_rules::commit_engine_run(&db, &matter_id, "deadline", &ruleset_id, context);
+    assert!(result.is_err(), "a draft ruleset must never be usable to commit a legal engine run");
+}
+
+#[test]
+fn spec_6_a_ruleset_without_any_source_cannot_be_approved() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let ruleset_id = legal_rules::create_ruleset(&db, "deadline", "IL", "No source", "1", None, None, None, None).unwrap();
+    legal_rules::add_rule(
+        &db, &ruleset_id, "r1", "deadline", 0,
+        r#"[{"field":"x","op":"eq","value":1}]"#,
+        r#"[{"op":"add_days","from":{"reg":"trigger_date"},"days":1,"into":"result"}]"#,
+        None, None,
+    ).unwrap();
+    let tc = legal_rules::add_test_case(&db, &ruleset_id, "tc", r#"{"x":1,"trigger_date":"2026-01-01"}"#, r#"{}"#).unwrap();
+    legal_rules::review_test_case(&db, &ruleset_id, &tc, true, None).unwrap();
+    let result = legal_rules::approve_ruleset(&db, &ruleset_id, None);
+    assert!(result.is_err(), "a ruleset with zero sources must never be approvable");
+}
+
+#[test]
+fn spec_7_a_ruleset_whose_test_suite_fails_cannot_be_approved() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let (ruleset_id, _) = new_approvable_ruleset(&db, "1");
+    // add a second, approved test case that is simply wrong about what the rule produces
+    let bad_tc = legal_rules::add_test_case(
+        &db, &ruleset_id, "wrong expectation",
+        r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#,
+        r#"{"result":"1999-01-01"}"#,
+    ).unwrap();
+    legal_rules::review_test_case(&db, &ruleset_id, &bad_tc, true, None).unwrap();
+    let result = legal_rules::approve_ruleset(&db, &ruleset_id, None);
+    assert!(result.is_err(), "approval must refuse to proceed while any approved test case actually fails");
+}
+
+#[test]
+fn spec_8_a_source_that_has_gone_stale_blocks_approval() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "legal rules test: stale source");
+    let (version_id, page_id) = new_document_with_page(&db, &matter_id, "חוק לדוגמה, סעיף 1.");
+    let _ = page_id;
+
+    let ruleset_id = legal_rules::create_ruleset(&db, "deadline", "IL", "Stale source test", "1", None, None, None, None).unwrap();
+    let source_id = legal_rules::add_source(
+        &db, &ruleset_id, "legislation", "חוק לדוגמה", Some("סעיף 1"), Some(&version_id), None, None,
+    ).unwrap();
+    legal_rules::add_rule(
+        &db, &ruleset_id, "r1", "deadline", 0,
+        r#"[{"field":"procedure_type","op":"eq","value":"filing"}]"#,
+        r#"[{"op":"add_days","from":{"reg":"trigger_date"},"days":30,"into":"result"}]"#,
+        None, Some(&source_id),
+    ).unwrap();
+    let tc = legal_rules::add_test_case(
+        &db, &ruleset_id, "tc",
+        r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#,
+        r#"{"result":"2026-01-31"}"#,
+    ).unwrap();
+    legal_rules::review_test_case(&db, &ruleset_id, &tc, true, None).unwrap();
+
+    // sanity: approvable right now, while the source is fresh
+    db.write(|conn| conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1", [&version_id]).map_err(AppError::Db)).unwrap();
+    let result = legal_rules::approve_ruleset(&db, &ruleset_id, None);
+    assert!(result.is_err(), "a ruleset citing a now-stale source must not be approvable");
+}
+
+#[test]
+fn spec_3_and_4_superseding_an_approved_ruleset_retains_it_unmodified() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let (old_id, _) = new_approvable_ruleset(&db, "1");
+    legal_rules::submit_for_review(&db, &old_id).unwrap();
+    let old_hash = legal_rules::approve_ruleset(&db, &old_id, Some("lawyer@test")).unwrap();
+
+    let (new_id, _) = new_approvable_ruleset(&db, "2");
+    legal_rules::submit_for_review(&db, &new_id).unwrap();
+    legal_rules::approve_ruleset(&db, &new_id, Some("lawyer@test")).unwrap();
+
+    legal_rules::supersede_ruleset(&db, &old_id, &new_id).unwrap();
+
+    let (status, superseded_by, hash_after): (String, Option<String>, Option<String>) = db.read(|conn| conn.query_row(
+        "SELECT status,superseded_by,integrity_sha256 FROM legal_rulesets WHERE id=?1", [&old_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(status, "superseded", "the old ruleset must be marked superseded, not deleted");
+    assert_eq!(superseded_by.as_deref(), Some(new_id.as_str()));
+    assert_eq!(hash_after.as_deref(), Some(old_hash.as_str()), "superseding must not alter the old ruleset's own content/hash");
+
+    // superseding a draft (never approved) must be rejected
+    let (draft_id, _) = new_approvable_ruleset(&db, "3");
+    assert!(legal_rules::supersede_ruleset(&db, &draft_id, &new_id).is_err(), "only an approved ruleset can be superseded");
+}
+
+#[test]
+fn spec_9_a_historical_engine_run_preserves_the_ruleset_version_it_actually_ran_against() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "legal rules test: historical run preserved");
+    let (old_id, _) = new_approvable_ruleset(&db, "1");
+    legal_rules::submit_for_review(&db, &old_id).unwrap();
+    let old_hash = legal_rules::approve_ruleset(&db, &old_id, None).unwrap();
+
+    let context = r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#;
+    let run_id = legal_rules::commit_engine_run(&db, &matter_id, "deadline", &old_id, context).unwrap();
+
+    let (new_id, _) = new_approvable_ruleset(&db, "2");
+    legal_rules::submit_for_review(&db, &new_id).unwrap();
+    legal_rules::approve_ruleset(&db, &new_id, None).unwrap();
+    legal_rules::supersede_ruleset(&db, &old_id, &new_id).unwrap();
+
+    let (stored_ruleset_id, stored_version, stored_hash): (String, String, String) = db.read(|conn| conn.query_row(
+        "SELECT ruleset_id,ruleset_version,ruleset_integrity_sha256 FROM legal_engine_runs WHERE id=?1", [&run_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(stored_ruleset_id, old_id, "the historical run must still point at the ruleset version it actually ran against");
+    assert_eq!(stored_version, "1");
+    assert_eq!(stored_hash, old_hash, "supersession must not retroactively change what an old run recorded");
+
+    // and the run row itself is immutable
+    let tamper = db.write(|conn| conn.execute(
+        "UPDATE legal_engine_runs SET result_json='{}' WHERE id=?1", [&run_id]
+    ).map_err(AppError::Db));
+    assert!(tamper.is_err(), "an engine run's snapshot must be immutable once committed");
+}
+
+#[test]
+fn approved_ruleset_commit_produces_the_expected_deterministic_result_and_no_match_fails_closed() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "legal rules test: commit happy path");
+    let (ruleset_id, _) = new_approvable_ruleset(&db, "1");
+    legal_rules::submit_for_review(&db, &ruleset_id).unwrap();
+    legal_rules::approve_ruleset(&db, &ruleset_id, None).unwrap();
+
+    let matching_context = r#"{"procedure_type":"filing","trigger_date":"2026-01-01"}"#;
+    let run_id = legal_rules::commit_engine_run(&db, &matter_id, "deadline", &ruleset_id, matching_context).unwrap();
+    let result_json: String = db.read(|conn| conn.query_row(
+        "SELECT result_json FROM legal_engine_runs WHERE id=?1", [&run_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert!(result_json.contains("2026-01-31"), "the committed result must contain the deterministically computed date");
+    assert!(result_json.contains("filing_30_days"), "the committed result must record which rule matched");
+
+    let non_matching_context = r#"{"procedure_type":"something_else","trigger_date":"2026-01-01"}"#;
+    let no_match = legal_rules::commit_engine_run(&db, &matter_id, "deadline", &ruleset_id, non_matching_context);
+    assert!(matches!(no_match, Err(AppError::NoApprovedRuleForContext)),
+        "when no rule's conditions match, this must fail closed with NO_APPROVED_RULE_FOR_CONTEXT, never silently produce a result");
 }
