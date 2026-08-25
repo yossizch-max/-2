@@ -28,20 +28,24 @@ try {
   New-Item -ItemType Directory -Force -Path $popplerDir | Out-Null
   New-Item -ItemType Directory -Force -Path $tessdataDir | Out-Null
 
-  # --- Tesseract (Inno Setup installer, extracted silently, DLLs/exe staged out) ---
+  # --- Tesseract (Inno Setup installer, extracted with innoextract - the installer
+  #     is NEVER executed, so there is no risk of it hanging on a GUI/UAC prompt
+  #     that can never be answered on a headless CI runner) ---
   $tesseractInstaller=Fetch-Verified $config.tesseract.url $config.tesseract.sha256 "tesseract-installer.exe"
   if($config.tesseract.installerKind -ne "innosetup"){
     throw "unrecognized tesseract installerKind '$($config.tesseract.installerKind)': extraction rules must be reviewed for a new installer format before release"
   }
-  $tesseractInstallDir=Join-Path $temp "tesseract-install"
-  $proc=Start-Process -FilePath $tesseractInstaller `
-    -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"$tesseractInstallDir`"" `
-    -Wait -PassThru
-  if($proc.ExitCode -ne 0){throw "tesseract installer exited with code $($proc.ExitCode)"}
-  $tesseractExe=Join-Path $tesseractInstallDir "tesseract.exe"
-  if(!(Test-Path $tesseractExe)){throw "tesseract.exe not found after silent install"}
-  Copy-Item $tesseractExe $tesseractDir -Force
-  Get-ChildItem $tesseractInstallDir -Filter "*.dll" | Copy-Item -Destination $tesseractDir -Force
+  if(!(Get-Command innoextract -ErrorAction SilentlyContinue)){
+    throw "innoextract is required to safely extract the Inno Setup installer (it must never be executed) but was not found on PATH"
+  }
+  $tesseractExtractDir=Join-Path $temp "tesseract-extract"
+  New-Item -ItemType Directory -Force -Path $tesseractExtractDir | Out-Null
+  & innoextract -e -d $tesseractExtractDir $tesseractInstaller
+  if($LASTEXITCODE -ne 0){throw "innoextract exited with code $LASTEXITCODE"}
+  $tesseractExe=Get-ChildItem -Path $tesseractExtractDir -Recurse -Filter "tesseract.exe" | Select-Object -First 1
+  if(!$tesseractExe){throw "tesseract.exe not found in extracted installer contents"}
+  Copy-Item $tesseractExe.FullName $tesseractDir -Force
+  Get-ChildItem $tesseractExe.Directory -Filter "*.dll" | Copy-Item -Destination $tesseractDir -Force
 
   # --- Poppler (plain zip release, pdftotext/pdftoppm + DLLs staged out of Library\bin) ---
   $popplerZip=Fetch-Verified $config.poppler.url $config.poppler.sha256 "poppler.zip"

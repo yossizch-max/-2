@@ -39,23 +39,39 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — blocked, cannot be completed from this session
-`scripts/vendor-ocr-runtime.ps1` is **intentionally fail-closed**: even given a fully
-filled-in `config/ocr-runtime.example.json` with real, licensed Tesseract/Poppler/
-tessdata URLs and SHA256 pins, the script downloads and verifies them and then always
-`throw`s with `FAIL-CLOSED: runtime extraction rules must be approved for the selected
-distributions before release` — by design, so nobody ships a Windows binary blob without
-a human explicitly approving *which* distribution and *how* it gets extracted/staged.
+## Gate C, Windows OCR runtime — in progress
 
-To close this gate, a human (not this session) must:
-1. Pick and license/approve specific Tesseract, Poppler and tessdata (heb/ara/eng)
-   Windows distributions.
-2. Fill in `config/ocr-runtime.example.json` with the real pinned version/URL/SHA256
-   for each.
-3. Extend `vendor-ocr-runtime.ps1` with the approved extraction/staging logic for
-   those specific distributions (it currently refuses to guess).
-4. Run it on a Windows machine and confirm `src-tauri/resources/ocr/{vendor,tessdata}`
-   is populated, then do the Hebrew/Arabic/English OCR smoke tests.
+`config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
+placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
+(oschwartz10612/poppler-windows, GPL — invoked as a subprocess, never linked),
+heb/ara/eng.traineddata (official tesseract-ocr/tessdata, Apache-2.0). Every URL was
+actually downloaded and its SHA256 verified against the pinned value before use — not
+guessed. `scripts/vendor-ocr-runtime.ps1` downloads, verifies, and stages all of it into
+`src-tauri/resources/ocr/`.
+
+**Incident (2026-08-24):** the first real attempt at this ran the Tesseract Inno Setup
+installer with `/VERYSILENT` to extract its contents. It hung for **5.5 hours**
+(19:41–01:18 UTC) before GitHub cancelled it — almost certainly a GUI/UAC prompt with no
+one on a headless runner to answer it. Fixed by switching to `innoextract`, which reads
+the installer's contents directly and **never executes it**, eliminating that failure
+mode entirely. Every step in `windows-release-gate.yml` now also carries an explicit
+`timeout-minutes` (and the job itself is capped at 90 minutes total) specifically so a
+future hang fails fast instead of silently burning hours of runner time again.
+
+Remaining to actually close this gate:
+1. Confirm the `innoextract`-based run succeeds end-to-end on a real Windows runner
+   (in progress as of this writing).
+2. Confirm the OCR runtime files actually land inside the Tauri release bundle output,
+   not just in `src-tauri/resources/ocr/` pre-build (Gate C's "verify final Tauri bundle
+   contains all required runtime files" — the workflow reports this but doesn't yet hard
+   -fail on it, since the exact Tauri v2 resource-staging path wasn't confirmed ahead of
+   time).
+3. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
+   packaged app actually running, which this session cannot do.
+4. A human should sanity-check the distribution choices above (UB-Mannheim and
+   oschwartz10612 are widely-used, reputable community builds referenced by the
+   tesseract-ocr project itself, but this session picked them unilaterally under
+   "continue with OCR" — flag here if a different distribution is preferred).
 
 ## Gate D, product consistency
 - `aria-current` on active navigation — ✅ (`scripts/static-qa.mjs::ariaCurrent`)
