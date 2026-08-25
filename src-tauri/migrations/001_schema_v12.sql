@@ -258,6 +258,26 @@ CREATE TRIGGER IF NOT EXISTS trg_approved_legal_sources_no_delete BEFORE DELETE 
 WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=OLD.legal_document_version_id AND v.status='approved')
 BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_SOURCES_IMMUTABLE'); END;
 
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_sections_no_insert BEFORE INSERT ON legal_document_sections
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=NEW.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_SECTIONS_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_sections_no_update BEFORE UPDATE ON legal_document_sections
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=OLD.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_SECTIONS_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_sections_no_delete BEFORE DELETE ON legal_document_sections
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=OLD.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_SECTIONS_IMMUTABLE'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_paragraphs_no_insert BEFORE INSERT ON legal_document_paragraphs
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=NEW.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_PARAGRAPHS_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_paragraphs_no_update BEFORE UPDATE ON legal_document_paragraphs
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=OLD.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_PARAGRAPHS_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_approved_legal_paragraphs_no_delete BEFORE DELETE ON legal_document_paragraphs
+WHEN EXISTS(SELECT 1 FROM legal_document_versions v WHERE v.id=OLD.legal_document_version_id AND v.status='approved')
+BEGIN SELECT RAISE(ABORT,'APPROVED_LEGAL_PARAGRAPHS_IMMUTABLE'); END;
+
 CREATE TRIGGER IF NOT EXISTS trg_export_audit_no_update BEFORE UPDATE ON legal_export_audit BEGIN SELECT RAISE(ABORT,'EXPORT_AUDIT_IMMUTABLE'); END;
 CREATE TRIGGER IF NOT EXISTS trg_export_audit_no_delete BEFORE DELETE ON legal_export_audit BEGIN SELECT RAISE(ABORT,'EXPORT_AUDIT_IMMUTABLE'); END;
 CREATE TRIGGER IF NOT EXISTS trg_domain_event_no_update BEFORE UPDATE ON domain_events BEGIN SELECT RAISE(ABORT,'DOMAIN_EVENT_IMMUTABLE'); END;

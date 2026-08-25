@@ -6,6 +6,8 @@ mod error;
 mod extraction;
 #[cfg(test)]
 mod gate_f_partial;
+#[cfg(test)]
+mod integrity_tests;
 mod legal_docs;
 mod models;
 mod scanner;
@@ -45,6 +47,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::choose_folder,
+            commands::choose_save_file,
             commands::get_office_root,
             commands::set_office_root,
             commands::scan_office_root,

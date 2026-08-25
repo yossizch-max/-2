@@ -1,0 +1,398 @@
+//! Regression coverage for the P0 integrity gaps found by the external "Deep Control"
+//! audit of this reconstruction (2026-08-25), verified directly against this codebase
+//! before being fixed:
+//!  - P0-1: a source that changed after hashing never got a new DocumentVersion.
+//!  - P0-2: a deleted/moved source was never marked missing (exists_now stayed 1).
+//!  - P0-3: legal_document_sections/legal_document_paragraphs had no immutability
+//!    trigger, so an approved legal document's actual text could still be edited.
+//!  - P0-4: confirm_paragraph flipped provenance_state to 'confirmed' with no check
+//!    that a 'fact' paragraph actually had a live grounding source.
+//!  - P0-5: approve_version only checked provenance_state, never re-checked that a
+//!    fact confirmed earlier in the session was still valid/non-stale at approval time.
+//!  - P1-6: lock_damage_calculation trusted a client-supplied integrity hash outright.
+//! P0-6 (Verified Authority requiring a source) is fixed in commands.rs but not
+//! re-tested here: verify_authority lives behind tauri::State with no public
+//! constructor outside a running app, same limitation already documented for
+//! export_legal_document's PDF guard in gate_f_partial.rs - verified by direct code
+//! reading instead.
+
+#![cfg(test)]
+
+use crate::{damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
+use chrono::Utc;
+use rusqlite::params;
+use std::{fs, path::PathBuf};
+use uuid::Uuid;
+
+struct TestDirs { root: PathBuf, office: PathBuf, db_path: PathBuf }
+
+impl TestDirs {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("tahrir-integrity-{}", Uuid::new_v4()));
+        let office = root.join("office");
+        fs::create_dir_all(&office).unwrap();
+        Self { db_path: root.join("tahrir.db"), root, office }
+    }
+}
+
+impl Drop for TestDirs {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+}
+
+fn new_matter(db: &DbState, title: &str) -> String {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,?2,'personal_injury','active','intake',?3,?3)",
+            params![id, title, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+    id
+}
+
+fn bind_folder(db: &DbState, matter_id: &str, folder: &PathBuf) {
+    let path_key = folder.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let now = Utc::now().to_rfc3339();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO matter_folder_bindings(id,matter_id,path_display,path_key,binding_source,active,last_seen_at)
+             VALUES(?1,?2,?3,?4,'test',1,?5)",
+            params![Uuid::new_v4().to_string(), matter_id, folder.to_string_lossy(), path_key, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+}
+
+// --- P0-3: approved legal-document content is immutable at the DB level ---
+
+#[test]
+fn approved_legal_content_is_immutable_at_db_level() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-3 test");
+
+    let doc_id = legal_docs::create_draft(&db, &matter_id, "מכתב דרישה", "demand").unwrap();
+    let version_id: String = db.read(|conn| conn.query_row(
+        "SELECT current_version_id FROM legal_documents WHERE id=?1", [&doc_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let section_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM legal_document_sections WHERE legal_document_version_id=?1 ORDER BY section_index LIMIT 1",
+        [&version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+
+    let paragraph_id = legal_docs::add_paragraph(&db, &matter_id, &version_id, &section_id, "טענה משפטית.").unwrap();
+    legal_docs::confirm_paragraph(&db, &matter_id, &version_id, &paragraph_id).unwrap();
+    legal_docs::approve_version(&db, &matter_id, &version_id).unwrap();
+
+    let mutate_paragraph_text = db.write(|conn| conn.execute(
+        "UPDATE legal_document_paragraphs SET body_text='HACKED' WHERE id=?1", [&paragraph_id]
+    ).map_err(AppError::Db));
+    assert!(mutate_paragraph_text.is_err(), "trigger must block editing an approved version's paragraph text");
+
+    let mutate_section_heading = db.write(|conn| conn.execute(
+        "UPDATE legal_document_sections SET heading='HACKED' WHERE id=?1", [&section_id]
+    ).map_err(AppError::Db));
+    assert!(mutate_section_heading.is_err(), "trigger must block editing an approved version's section heading");
+
+    let delete_paragraph = db.write(|conn| conn.execute(
+        "DELETE FROM legal_document_paragraphs WHERE id=?1", [&paragraph_id]
+    ).map_err(AppError::Db));
+    assert!(delete_paragraph.is_err(), "trigger must block deleting an approved version's paragraph");
+
+    let insert_new_paragraph = db.write(|conn| conn.execute(
+        "INSERT INTO legal_document_paragraphs(
+            id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,body_text,provenance_state
+         ) VALUES(?1,?2,?3,?4,99,'argument','snuck in','confirmed')",
+        params![Uuid::new_v4().to_string(), matter_id, version_id, section_id],
+    ).map_err(AppError::Db));
+    assert!(insert_new_paragraph.is_err(), "trigger must block inserting a new paragraph into an approved version");
+}
+
+// --- P0-4: a 'fact' paragraph requires a live grounding source to be confirmed ---
+
+#[test]
+fn confirming_a_fact_paragraph_requires_a_live_source() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-4 test");
+
+    let doc_id = legal_docs::create_draft(&db, &matter_id, "כתב תביעה", "claim").unwrap();
+    let version_id: String = db.read(|conn| conn.query_row(
+        "SELECT current_version_id FROM legal_documents WHERE id=?1", [&doc_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let section_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM legal_document_sections WHERE legal_document_version_id=?1 ORDER BY section_index LIMIT 1",
+        [&version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+
+    // A bare paragraph_kind='fact' row with no source at all - inserted directly to
+    // simulate the exact attack the audit described, bypassing add_paragraph (which
+    // never produces 'fact'-kind paragraphs in the first place).
+    let bare_fact_id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO legal_document_paragraphs(
+            id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,body_text,provenance_state
+         ) VALUES(?1,?2,?3,?4,0,'fact','עובדה כביכול בלי מקור','needs_review')",
+        params![bare_fact_id, matter_id, version_id, section_id],
+    ).map_err(AppError::Db)).unwrap();
+
+    let confirm_ungrounded = legal_docs::confirm_paragraph(&db, &matter_id, &version_id, &bare_fact_id);
+    assert!(confirm_ungrounded.is_err(), "a fact-kind paragraph with no linked verified fact must not be confirmable");
+
+    // add_paragraph itself only ever produces 'argument'-kind paragraphs, which have no
+    // grounding requirement - confirming one is a plain editorial review action.
+    let argument_id = legal_docs::add_paragraph(&db, &matter_id, &version_id, &section_id, "טענה משפטית ללא מקור עובדתי.").unwrap();
+    legal_docs::confirm_paragraph(&db, &matter_id, &version_id, &argument_id).unwrap();
+}
+
+// --- P0-5: approval re-validates fact freshness, not just a stale provenance_state ---
+
+#[test]
+fn approval_rejects_a_fact_invalidated_after_it_was_confirmed() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-5 test");
+    let now = Utc::now().to_rfc3339();
+
+    let fact_id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,verified_at)
+         VALUES(?1,?2,'התובע','נחבל','ברגל','valid',?3)",
+        params![fact_id, matter_id, now],
+    ).map_err(AppError::Db)).unwrap();
+
+    let doc_id = legal_docs::create_draft(&db, &matter_id, "כתב תביעה", "claim").unwrap();
+    let version_id: String = db.read(|conn| conn.query_row(
+        "SELECT current_version_id FROM legal_documents WHERE id=?1", [&doc_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let added = legal_docs::fill_from_verified_facts(&db, &matter_id, &version_id).unwrap();
+    assert_eq!(added, 1);
+
+    // the fact is invalidated AFTER being auto-filled-and-confirmed, before approval -
+    // provenance_state on the paragraph is still 'confirmed' from when it was added.
+    db.write(|conn| conn.execute(
+        "UPDATE verified_facts SET status='invalidated' WHERE id=?1", [&fact_id]
+    ).map_err(AppError::Db)).unwrap();
+
+    let approve_with_invalidated_fact = legal_docs::approve_version(&db, &matter_id, &version_id);
+    assert!(approve_with_invalidated_fact.is_err(), "approval must re-check fact validity, not trust a stale provenance_state");
+
+    // re-verify the fact and confirm approval succeeds once it's genuinely valid again
+    db.write(|conn| conn.execute(
+        "UPDATE verified_facts SET status='valid' WHERE id=?1", [&fact_id]
+    ).map_err(AppError::Db)).unwrap();
+    legal_docs::approve_version(&db, &matter_id, &version_id).unwrap();
+}
+
+#[test]
+fn approval_rejects_a_fact_gone_stale_after_it_was_confirmed() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-5b test");
+    let now = Utc::now().to_rfc3339();
+
+    let fact_id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,verified_at)
+         VALUES(?1,?2,'התובע','נחבל','ברגל','valid',?3)",
+        params![fact_id, matter_id, now],
+    ).map_err(AppError::Db)).unwrap();
+
+    let doc_id = legal_docs::create_draft(&db, &matter_id, "כתב תביעה", "claim").unwrap();
+    let version_id: String = db.read(|conn| conn.query_row(
+        "SELECT current_version_id FROM legal_documents WHERE id=?1", [&doc_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    legal_docs::fill_from_verified_facts(&db, &matter_id, &version_id).unwrap();
+
+    db.write(|conn| conn.execute(
+        "UPDATE verified_facts SET stale=1 WHERE id=?1", [&fact_id]
+    ).map_err(AppError::Db)).unwrap();
+
+    let approve_with_stale_fact = legal_docs::approve_version(&db, &matter_id, &version_id);
+    assert!(approve_with_stale_fact.is_err(), "approval must reject a version citing a fact that has gone stale");
+}
+
+// --- P0-1 / P0-2: scanner re-versioning, staleness cascade, missing-file detection ---
+
+#[test]
+fn changed_source_gets_a_new_version_under_the_same_document_and_cascades_stale() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-1 test");
+    let folder = dirs.office.join("matter folder");
+    fs::create_dir_all(&folder).unwrap();
+    bind_folder(&db, &matter_id, &folder);
+
+    let file_path = folder.join("letter.txt");
+    fs::write(&file_path, "original content").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+    scanner::hash_pending(&db, &matter_id).unwrap();
+
+    let occurrence_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM file_occurrences WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let old_version_id: String = db.read(|conn| conn.query_row(
+        "SELECT document_version_id FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+
+    // ground a verified fact in the original version's page, so its stale-cascade can be checked
+    let now = Utc::now().to_rfc3339();
+    let fact_id = Uuid::new_v4().to_string();
+    let page_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO document_pages(id,matter_id,document_version_id,page_number,anchor_kind,block_index,display_text,normalized_text,text_sha256,extraction_method,created_at)
+             VALUES(?1,?2,?3,1,'page',0,'x','x','x','native_text',?4)",
+            params![page_id, matter_id, old_version_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,verified_at)
+             VALUES(?1,?2,'a','b','c','valid',?3)",
+            params![fact_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO verified_fact_sources(id,matter_id,verified_fact_id,document_version_id,document_page_id,display_quote,normalized_quote,source_text_sha256)
+             VALUES(?1,?2,?3,?4,?5,'x','x','x')",
+            params![Uuid::new_v4().to_string(), matter_id, fact_id, old_version_id, page_id],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
+    // the source legitimately changes
+    fs::write(&file_path, "REPLACED content, materially different from the original").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+    let rehashed = scanner::hash_pending(&db, &matter_id).unwrap();
+    assert_eq!(rehashed, 1, "the changed occurrence must be picked up by the rehash pass");
+
+    let new_version_id: String = db.read(|conn| conn.query_row(
+        "SELECT document_version_id FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_ne!(new_version_id, old_version_id, "a changed source must move the occurrence onto a NEW DocumentVersion");
+
+    let old_stale: i64 = db.read(|conn| conn.query_row(
+        "SELECT stale FROM document_versions WHERE id=?1", [&old_version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(old_stale, 1, "the superseded version must be marked stale");
+
+    let (old_document_id, new_document_id): (String, String) = db.read(|conn| {
+        let old_doc: String = conn.query_row(
+            "SELECT document_id FROM document_versions WHERE id=?1", [&old_version_id], |r| r.get(0)
+        )?;
+        let new_doc: String = conn.query_row(
+            "SELECT document_id FROM document_versions WHERE id=?1", [&new_version_id], |r| r.get(0)
+        )?;
+        Ok((old_doc, new_doc))
+    }.map_err(AppError::Db)).unwrap();
+    assert_eq!(old_document_id, new_document_id, "the new version must belong to the SAME logical Document, not a new one");
+
+    let fact_stale: i64 = db.read(|conn| conn.query_row(
+        "SELECT stale FROM verified_facts WHERE id=?1", [&fact_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(fact_stale, 1, "a fact grounded in the superseded version must cascade to stale");
+}
+
+#[test]
+fn a_metadata_only_touch_does_not_spawn_a_pointless_new_version() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-1b test");
+    let folder = dirs.office.join("matter folder");
+    fs::create_dir_all(&folder).unwrap();
+    bind_folder(&db, &matter_id, &folder);
+
+    let file_path = folder.join("letter.txt");
+    fs::write(&file_path, "identical content").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+    scanner::hash_pending(&db, &matter_id).unwrap();
+
+    let occurrence_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM file_occurrences WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let version_before: String = db.read(|conn| conn.query_row(
+        "SELECT document_version_id FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+
+    // re-write the exact same bytes (bumps mtime, not content)
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    fs::write(&file_path, "identical content").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+    let rehashed = scanner::hash_pending(&db, &matter_id).unwrap();
+
+    let version_after: String = db.read(|conn| conn.query_row(
+        "SELECT document_version_id FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(version_before, version_after, "identical content must not spawn a new DocumentVersion, even if mtime changed");
+    let _ = rehashed;
+}
+
+#[test]
+fn a_fully_removed_source_file_is_marked_missing_after_a_complete_scan() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-2 test");
+    let folder = dirs.office.join("matter folder");
+    fs::create_dir_all(&folder).unwrap();
+    bind_folder(&db, &matter_id, &folder);
+
+    let file_path = folder.join("will-be-deleted.txt");
+    fs::write(&file_path, "temporary").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+
+    let occurrence_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM file_occurrences WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let exists_before: i64 = db.read(|conn| conn.query_row(
+        "SELECT exists_now FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(exists_before, 1);
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    fs::remove_file(&file_path).unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+
+    let exists_after: i64 = db.read(|conn| conn.query_row(
+        "SELECT exists_now FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(exists_after, 0, "a full scan that no longer observes a previously-known file must mark it missing");
+}
+
+#[test]
+fn a_file_untouched_by_a_scan_of_an_unrelated_root_is_not_marked_missing() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "P0-2b test");
+    let folder = dirs.office.join("matter folder");
+    fs::create_dir_all(&folder).unwrap();
+    bind_folder(&db, &matter_id, &folder);
+
+    let file_path = folder.join("kept.txt");
+    fs::write(&file_path, "kept").unwrap();
+    scanner::scan_metadata(&db, &dirs.office).unwrap();
+
+    // scanning a disjoint, empty root must never mark files under the real office root missing
+    let other_root = dirs.root.join("unrelated");
+    fs::create_dir_all(&other_root).unwrap();
+    scanner::scan_metadata(&db, &other_root).unwrap();
+
+    let occurrence_id: String = db.read(|conn| conn.query_row(
+        "SELECT id FROM file_occurrences WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let exists_now: i64 = db.read(|conn| conn.query_row(
+        "SELECT exists_now FROM file_occurrences WHERE id=?1", [&occurrence_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(exists_now, 1, "a scan of a different root must not affect files outside it");
+}
+
+// --- P1-6: damage lock recompute primitive ---
+
+#[test]
+fn damage_calculate_used_for_locking_is_deterministic_and_tamper_evident() {
+    let inputs = vec![DamageInput{key:"past_wage_loss".into(),cents:10_000_00,source:"payslips".into()}];
+    let a = damage::calculate("tort","living",&inputs).unwrap();
+    let b = damage::calculate("tort","living",&inputs).unwrap();
+    assert_eq!(a.integrity_sha256, b.integrity_sha256, "the same inputs must always hash the same way");
+    assert!(damage::verify_for_lock("tort","living",&inputs,a.gross_cents,a.deductions_cents,999_999).is_err());
+}

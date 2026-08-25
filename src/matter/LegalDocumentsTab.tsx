@@ -105,6 +105,12 @@ function LegalDocumentEditor({matterId,doc,onClose,onChanged}:{
     await commands.add_legal_document_paragraph({matterId,versionId,sectionId,bodyText:newParagraphText});
     setAddingToSection(null); setNewParagraphText("");
   });
+  const approve=()=>run(()=>commands.approve_legal_document({matterId,versionId}));
+  const exportTxt=()=>run(async()=>{
+    const picked=await commands.choose_save_file({defaultName:`${doc.title}.txt`}) as {path:string|null};
+    if(!picked.path)return;
+    await commands.export_legal_document({matterId,legalDocumentVersionId:versionId,outputKind:"txt",outputPath:picked.path});
+  });
 
   return <div className="modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)onClose();}}>
     <div className="workspace-card" style={{width:"min(760px,94vw)",maxHeight:"88vh",overflowY:"auto"}}>
@@ -118,8 +124,12 @@ function LegalDocumentEditor({matterId,doc,onClose,onChanged}:{
       {actionError && <p className="quiet">שגיאה: {actionError}</p>}
       {isDraft && <div className="header-actions">
         <button className="btn secondary" onClick={fillFacts} disabled={busy}>מלא עובדות מאומתות</button>
+        <button className="btn primary" onClick={approve} disabled={busy}>{busy?"מאשר...":"אשר מסמך (בלתי הפיך)"}</button>
       </div>}
-      {version && !isDraft && <p className="quiet">גרסה מאושרת וקבועה — לעריכה יש ליצור "גרסה חדשה" מרשימת המסמכים.</p>}
+      {version && !isDraft && <div className="header-actions">
+        <p className="quiet">גרסה מאושרת וקבועה — לעריכה יש ליצור "גרסה חדשה" מרשימת המסמכים.</p>
+        <button className="btn secondary" onClick={exportTxt} disabled={busy}>{busy?"מייצא...":"ייצוא כטקסט"}</button>
+      </div>}
       <div className="legal-paper">
         {version?.sections.map(s=>
           <div key={s.id} className="paper-paragraph">

@@ -142,6 +142,11 @@ pub fn fill_from_verified_facts(db:&DbState,matter_id:&str,version_id:&str)->App
     })
 }
 
+/// A manually-added paragraph is always paragraph_kind='argument': lawyer-authored
+/// legal text, editorial framing, prayer for relief - not a factual claim. Paragraphs
+/// asserting facts (paragraph_kind='fact') can only be created by
+/// `fill_from_verified_facts`, which grounds them in a real verified fact atomically -
+/// this keeps "a fact requires a source" true by construction rather than by convention.
 pub fn add_paragraph(db:&DbState,matter_id:&str,version_id:&str,section_id:&str,body_text:&str)->AppResult<String>{
     let paragraph_id=Uuid::new_v4().to_string();
     db.write(|conn|{
@@ -160,7 +165,7 @@ pub fn add_paragraph(db:&DbState,matter_id:&str,version_id:&str,section_id:&str,
         conn.execute(
             "INSERT INTO legal_document_paragraphs(
                 id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,body_text,provenance_state
-             ) VALUES(?1,?2,?3,?4,?5,'manual',?6,'needs_review')",
+             ) VALUES(?1,?2,?3,?4,?5,'argument',?6,'needs_review')",
             params![paragraph_id,matter_id,version_id,section_id,next_index,body_text]
         )?;
         Ok(())
@@ -196,11 +201,35 @@ pub fn update_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:
     })
 }
 
+fn has_valid_grounding(conn:&rusqlite::Connection,matter_id:&str,paragraph_id:&str)->AppResult<bool>{
+    let grounded:i64=conn.query_row(
+        "SELECT count(*) FROM legal_document_sources s
+         JOIN verified_facts f ON f.id=s.verified_fact_id AND f.matter_id=s.matter_id
+         WHERE s.matter_id=?1 AND s.paragraph_id=?2 AND s.source_kind='verified_fact'
+           AND f.status='valid' AND f.stale=0",
+        params![matter_id,paragraph_id],|r|r.get(0)
+    )?;
+    Ok(grounded>0)
+}
+
+/// A 'fact' paragraph may only be confirmed while it still has at least one live
+/// source: a verified_fact that is currently status='valid' and not stale. An
+/// 'argument' paragraph (lawyer-authored legal text) has no such requirement - it's
+/// confirmed by editorial review, not source grounding.
 pub fn confirm_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:&str)->AppResult<()>{
     db.write(|conn|{
         let status=paragraph_version_status(conn,matter_id,version_id,paragraph_id)?;
         if status!="draft"{
             return Err(AppError::Validation("only a draft version can be edited".into()));
+        }
+        let kind:String=conn.query_row(
+            "SELECT paragraph_kind FROM legal_document_paragraphs WHERE id=?1 AND matter_id=?2",
+            params![paragraph_id,matter_id],|r|r.get(0)
+        )?;
+        if kind=="fact" && !has_valid_grounding(conn,matter_id,paragraph_id)?{
+            return Err(AppError::Validation(
+                "a factual paragraph requires at least one currently valid, non-stale verified fact as a source before it can be confirmed".into()
+            ));
         }
         conn.execute(
             "UPDATE legal_document_paragraphs SET provenance_state='confirmed' WHERE id=?1 AND matter_id=?2",
@@ -224,9 +253,74 @@ pub fn delete_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:
     })
 }
 
+/// A deterministic, canonical rendering of a version's full authored content: section
+/// headings in order, then each paragraph's kind/text/provenance in order, then each
+/// paragraph's sources - plus the linked damage calculation's own integrity hash, if
+/// this version cites one. This is what `approval_sha256` actually binds, so that
+/// approved content can't drift (heading reworded, paragraph reordered, a source
+/// silently unlinked) without changing the hash - not just the paragraph bodies.
+pub fn canonical_content(conn:&rusqlite::Connection,matter_id:&str,version_id:&str)->AppResult<String>{
+    let mut out=String::new();
+
+    if let Some(damage_calculation_id)=conn.query_row(
+        "SELECT damage_calculation_id FROM legal_document_versions WHERE id=?1 AND matter_id=?2",
+        params![version_id,matter_id],|r|r.get::<_,Option<String>>(0)
+    )?{
+        let (status,integrity):(String,Option<String>)=conn.query_row(
+            "SELECT status,integrity_sha256 FROM damage_calculations WHERE id=?1 AND matter_id=?2",
+            params![damage_calculation_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?))
+        ).map_err(|_|AppError::NotFound("linked damage calculation".into()))?;
+        if status!="locked"{
+            return Err(AppError::Validation("this version cites a damage calculation that is not locked".into()));
+        }
+        out.push_str(&format!("damage:{damage_calculation_id}:{}\n",integrity.unwrap_or_default()));
+    }
+
+    let mut section_stmt=conn.prepare(
+        "SELECT id,section_index,heading FROM legal_document_sections
+         WHERE matter_id=?1 AND legal_document_version_id=?2 ORDER BY section_index"
+    )?;
+    let sections:Vec<(String,i64,String)>=section_stmt.query_map(params![matter_id,version_id],|r|
+        Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+    )?.collect::<Result<Vec<_>,_>>()?;
+
+    for (section_id,section_index,heading) in sections {
+        out.push_str(&format!("§{section_index}:{heading}\n"));
+        let mut para_stmt=conn.prepare(
+            "SELECT id,paragraph_index,paragraph_kind,body_text,provenance_state
+             FROM legal_document_paragraphs WHERE section_id=?1 ORDER BY paragraph_index"
+        )?;
+        let paragraphs:Vec<(String,i64,String,String,String)>=para_stmt.query_map(params![section_id],|r|
+            Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
+        )?.collect::<Result<Vec<_>,_>>()?;
+
+        for (paragraph_id,paragraph_index,kind,body_text,provenance) in paragraphs {
+            out.push_str(&format!("  ¶{paragraph_index}[{kind}/{provenance}]:{body_text}\n"));
+            let mut src_stmt=conn.prepare(
+                "SELECT source_kind,coalesce(verified_fact_id,''),coalesce(authority_passage_id,''),coalesce(document_page_id,'')
+                 FROM legal_document_sources WHERE paragraph_id=?1 ORDER BY id"
+            )?;
+            let sources:Vec<(String,String,String,String)>=src_stmt.query_map(params![paragraph_id],|r|
+                Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
+            )?.collect::<Result<Vec<_>,_>>()?;
+            for (source_kind,fact,authority,page) in sources {
+                out.push_str(&format!("    src:{source_kind}:{fact}:{authority}:{page}\n"));
+            }
+        }
+    }
+    Ok(out)
+}
+
+pub fn compute_approval_hash(conn:&rusqlite::Connection,matter_id:&str,version_id:&str)->AppResult<String>{
+    let content=canonical_content(conn,matter_id,version_id)?;
+    Ok(hex::encode(Sha256::digest(format!("{matter_id}:{version_id}:{content}"))))
+}
+
 pub fn approve_version(db:&DbState,matter_id:&str,version_id:&str)->AppResult<String>{
     db.write(|conn|{
-        let pending:i64=conn.query_row(
+        let tx=conn.transaction()?;
+
+        let pending:i64=tx.query_row(
             "SELECT count(*) FROM legal_document_paragraphs
              WHERE matter_id=?1 AND legal_document_version_id=?2
                AND provenance_state<>'confirmed'",
@@ -236,28 +330,41 @@ pub fn approve_version(db:&DbState,matter_id:&str,version_id:&str)->AppResult<St
             return Err(AppError::Validation("paragraph provenance review pending".into()));
         }
 
-        let content=conn.query_row(
-            "SELECT coalesce(group_concat(body_text,'\n'),'')
-             FROM legal_document_paragraphs
-             WHERE matter_id=?1 AND legal_document_version_id=?2",
-            params![matter_id,version_id], |r|r.get::<_,String>(0)
+        // Re-validate at approval time, not just at confirm time: a fact confirmed
+        // earlier in the drafting session may have been invalidated or gone stale
+        // since. approve_version is the last real gate before this content becomes
+        // immutable, so it must not trust a provenance_state set in the past.
+        let ungrounded:i64=tx.query_row(
+            "SELECT count(*) FROM legal_document_paragraphs p
+             WHERE p.matter_id=?1 AND p.legal_document_version_id=?2 AND p.paragraph_kind='fact'
+               AND NOT EXISTS(
+                 SELECT 1 FROM legal_document_sources s
+                 JOIN verified_facts f ON f.id=s.verified_fact_id AND f.matter_id=s.matter_id
+                 WHERE s.paragraph_id=p.id AND s.source_kind='verified_fact'
+                   AND f.status='valid' AND f.stale=0
+               )",
+            params![matter_id,version_id], |r|r.get(0)
         )?;
+        if ungrounded>0{
+            return Err(AppError::Validation(
+                "one or more factual paragraphs cite a fact that is no longer valid or has gone stale - re-verify or remove it before approving".into()
+            ));
+        }
 
-        let approval_sha=hex::encode(Sha256::digest(
-            format!("{matter_id}:{version_id}:{content}")
-        ));
-        let changed=conn.execute(
+        let approval_sha=compute_approval_hash(&tx,matter_id,version_id)?;
+        let changed=tx.execute(
             "UPDATE legal_document_versions
              SET status='approved',approval_sha256=?3,approved_at=?4
              WHERE matter_id=?1 AND id=?2 AND status='draft'",
             params![matter_id,version_id,approval_sha,Utc::now().to_rfc3339()]
         )?;
         if changed!=1{return Err(AppError::Validation("version not approvable".into()));}
-        conn.execute(
+        tx.execute(
             "UPDATE legal_documents SET status='approved',updated_at=?3
              WHERE matter_id=?1 AND current_version_id=?2",
             params![matter_id,version_id,Utc::now().to_rfc3339()]
         )?;
+        tx.commit()?;
         Ok(approval_sha)
     })
 }

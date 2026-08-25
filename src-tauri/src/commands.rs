@@ -57,6 +57,14 @@ pub fn choose_folder(app: AppHandle, state: State<'_, AppState>, payload: Value)
 }
 
 #[tauri::command]
+pub fn choose_save_file(app: AppHandle, state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let _=&state;
+    let default_name=payload.get("defaultName").and_then(Value::as_str).unwrap_or("export.txt");
+    let picked=app.dialog().file().set_file_name(default_name).blocking_save_file();
+    Ok(json!({"path":picked.map(|p|p.to_string())}))
+}
+
+#[tauri::command]
 pub fn get_office_root(state: State<'_, AppState>, _payload: Value) -> AppResult<Value> {
     let _=&state;
     {
@@ -903,17 +911,39 @@ pub fn calculate_damage(state: State<'_, AppState>, payload: Value) -> AppResult
 
 #[tauri::command]
 pub fn lock_damage_calculation(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
-    let _=&state;
-    {
     let id=required_string(&payload,"calculationId")?;
-    let integrity=required_string(&payload,"integritySha256")?;
-    state.db.write(|conn|{let changed=conn.execute(
-        "UPDATE damage_calculations SET status='locked',integrity_sha256=?2,locked_at=?3,updated_at=?3
-         WHERE id=?1 AND status='draft'",
-        params![id,integrity,Utc::now().to_rfc3339()]
-    )?;if changed!=1{return Err(AppError::Validation("calculation not lockable".into()));}Ok(())})?;
+    state.db.write(|conn|{
+        let tx=conn.transaction()?;
+        let (regime,life_state,gross,deductions,net):(String,String,i64,i64,i64)=tx.query_row(
+            "SELECT regime,life_state,gross_cents,deductions_cents,net_cents
+             FROM damage_calculations WHERE id=?1 AND status='draft'",
+            [id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
+        ).map_err(|_|AppError::Validation("calculation not lockable".into()))?;
+
+        let inputs:Vec<models::DamageInput>={
+            let mut stmt=tx.prepare(
+                "SELECT input_key,value_text,source_kind FROM damage_inputs WHERE calculation_id=?1"
+            )?;
+            let rows=stmt.query_map([id],|r|{
+                let key:String=r.get(0)?;
+                let value_text:String=r.get(1)?;
+                let source:String=r.get(2)?;
+                Ok(models::DamageInput{key,cents:value_text.parse().unwrap_or(0),source})
+            })?.collect::<Result<Vec<_>,_>>()?;
+            rows
+        };
+        let recomputed=damage::verify_for_lock(&regime,&life_state,&inputs,gross,deductions,net)?;
+
+        let changed=tx.execute(
+            "UPDATE damage_calculations SET status='locked',integrity_sha256=?2,locked_at=?3,updated_at=?3
+             WHERE id=?1 AND status='draft'",
+            params![id,recomputed.integrity_sha256,Utc::now().to_rfc3339()]
+        )?;
+        if changed!=1{return Err(AppError::Validation("calculation not lockable".into()));}
+        tx.commit()?;
+        Ok(())
+    })?;
     Ok(json!({"ok":true}))
-}
 }
 
 #[tauri::command]
@@ -956,12 +986,24 @@ pub fn verify_authority(state: State<'_, AppState>, payload: Value) -> AppResult
     let matter_id=required_string(&payload,"matterId")?;
     let authority_id=required_string(&payload,"authorityId")?;
     state.db.write(|conn|{
-        let (citation,title,court,decision_date):(String,String,Option<String>,Option<String>)=conn.query_row(
-            "SELECT citation,title,court,decision_date FROM legal_authorities WHERE id=?1 AND matter_id=?2 AND status='draft'",
-            params![authority_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
+        let (citation,title,court,decision_date,source_version):(String,String,Option<String>,Option<String>,Option<String>)=conn.query_row(
+            "SELECT citation,title,court,decision_date,source_document_version_id
+             FROM legal_authorities WHERE id=?1 AND matter_id=?2 AND status='draft'",
+            params![authority_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
         ).map_err(|_|AppError::Validation("authority not verifiable".into()))?;
+        // Source-first: an authority cannot be "verified" without an actual stored
+        // decision/passage backing it. The composite FK on source_document_version_id
+        // already guarantees same-matter when it's set; this just makes it required.
+        let source_version=source_version.ok_or_else(||AppError::Validation(
+            "an authority requires a stored source document before it can be verified".into()
+        ))?;
+        let source_sha:String=conn.query_row(
+            "SELECT content_sha256 FROM document_versions WHERE id=?1 AND matter_id=?2",
+            params![source_version,matter_id],|r|r.get(0)
+        ).map_err(|_|AppError::InvalidSourceReference)?;
         let integrity_sha=hex::encode(Sha256::digest(format!(
-            "{authority_id}:{citation}:{title}:{}:{}",court.unwrap_or_default(),decision_date.unwrap_or_default()
+            "{authority_id}:{citation}:{title}:{}:{}:{source_version}:{source_sha}",
+            court.unwrap_or_default(),decision_date.unwrap_or_default()
         )));
         let changed=conn.execute(
             "UPDATE legal_authorities SET status='verified',verified_at=?3,integrity_sha256=?4
@@ -1108,12 +1150,22 @@ pub fn export_legal_document(state: State<'_, AppState>, payload: Value) -> AppR
     }
 
     let content:String=state.db.read(|conn|{
-        let status:String=conn.query_row(
-            "SELECT status FROM legal_document_versions WHERE id=?1 AND matter_id=?2",
-            params![version_id,matter_id],|r|r.get(0)
+        let (status,stored_hash):(String,Option<String>)=conn.query_row(
+            "SELECT status,approval_sha256 FROM legal_document_versions WHERE id=?1 AND matter_id=?2",
+            params![version_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?))
         ).map_err(|_|AppError::NotFound("legal document version".into()))?;
         if status!="approved"{
             return Err(AppError::Validation("only approved versions can be exported".into()));
+        }
+        // Defense in depth: the immutability triggers should make this impossible, but
+        // export is the last checkpoint before client-facing content leaves the app -
+        // recompute the same canonical hash approve_version bound and refuse to export
+        // if it no longer matches what was actually approved.
+        let recomputed=legal_docs::compute_approval_hash(conn,matter_id,version_id)?;
+        if stored_hash.as_deref()!=Some(recomputed.as_str()){
+            return Err(AppError::Validation(
+                "approved content integrity check failed - the document no longer matches what was approved, refusing to export".into()
+            ));
         }
         let mut stmt=conn.prepare(
             "SELECT p.body_text FROM legal_document_paragraphs p

@@ -45,6 +45,25 @@ pub fn calculate(regime: &str, life_state: &str, inputs: &[DamageInput]) -> AppR
     })
 }
 
+/// Never trust a caller-supplied integrity hash for something about to become
+/// immutable. This re-derives the result from the persisted inputs and refuses to
+/// proceed if it doesn't match the totals already stored on the row - which would mean
+/// the row was edited (or tampered with) out of band since it was last saved.
+pub fn verify_for_lock(
+    regime: &str, life_state: &str, inputs: &[DamageInput],
+    stored_gross_cents: i64, stored_deductions_cents: i64, stored_net_cents: i64,
+) -> AppResult<DamageResult> {
+    let recomputed = calculate(regime, life_state, inputs)?;
+    if (recomputed.gross_cents, recomputed.deductions_cents, recomputed.net_cents)
+        != (stored_gross_cents, stored_deductions_cents, stored_net_cents)
+    {
+        return Err(AppError::Validation(
+            "stored totals do not match a fresh recalculation from the persisted inputs - refusing to lock".into()
+        ));
+    }
+    Ok(recomputed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +82,12 @@ mod tests {
     fn death_model_rejects_living_future_wage_key() {
         let inputs=vec![DamageInput{key:"future_wage_loss".into(),cents:1,source:"manual".into()}];
         assert!(calculate("tort","death",&inputs).is_err());
+    }
+    #[test]
+    fn verify_for_lock_rejects_tampered_stored_totals() {
+        let inputs=vec![DamageInput{key:"past_wage_loss".into(),cents:100_00,source:"manual".into()}];
+        assert!(verify_for_lock("tort","living",&inputs,100_00,0,100_00).is_ok());
+        let tampered=verify_for_lock("tort","living",&inputs,100_00,0,999_999);
+        assert!(tampered.is_err(), "a stored net that doesn't match a fresh recompute from the same inputs must be rejected, not trusted");
     }
 }

@@ -9,6 +9,7 @@ export const commands = {
   get_settings: (payload:Record<string,unknown>={}) => call("get_settings",payload),
   save_settings: (payload:Record<string,unknown>={}) => call("save_settings",payload),
   choose_folder: (payload:Record<string,unknown>={}) => call("choose_folder",payload),
+  choose_save_file: (payload:Record<string,unknown>={}) => call("choose_save_file",payload),
   get_office_root: (payload:Record<string,unknown>={}) => call("get_office_root",payload),
   set_office_root: (payload:Record<string,unknown>={}) => call("set_office_root",payload),
   scan_office_root: (payload:Record<string,unknown>={}) => call("scan_office_root",payload),

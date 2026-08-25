@@ -15,12 +15,95 @@ F: a real automated test (`cargo test gate_f_partial`) now covers every step of 
 fail-closed source-tamper rejection, full-text search, fact verification, damage lock,
 legal-document authoring — template sections, auto-fill from verified facts, manual
 paragraph add/edit/confirm/delete, approval, starting a new version from an approved
-one — export+audit, DB reopen) — genuinely executed, not mocked. What's left needs a
-human on a real Windows machine with Gate E's installer: real OCR, real AI provider
-calls, and DOCX export, which doesn't exist in this reconstruction yet.**
+one — export+audit, DB reopen) — genuinely executed, not mocked. An independent audit
+(2026-08-25, see "External audit response" below) then found and this pass fixed seven
+P0 integrity gaps a passing test suite hadn't caught — approved-document immutability,
+source-lifecycle/staleness, fact-grounding requirements, and a client-trusted damage
+hash — with 10 new regression tests (`integrity_tests.rs`). What's left needs a human
+on a real Windows machine with a fresh Gate E build off the current commit: real OCR,
+real AI provider calls, and DOCX export, which doesn't exist in this reconstruction
+yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
+
+## External audit response — "Deep Control" report, 2026-08-25
+
+An independent audit of this source (`TAHRIR_CANONICAL_DEEP_CONTROL_20260825.md`)
+returned a **NO-GO**, backed by seven P0-severity findings. Each was independently
+re-verified directly against this codebase before being fixed — none were taken on
+faith. All seven are now closed:
+
+- **P0-1, source version lifecycle incomplete** — `scanner::hash_pending` only ever
+  hashed occurrences with `document_version_id IS NULL`, so a file edited/replaced
+  after being hashed could never enter the source graph as a new version; nothing ever
+  set `document_versions.stale`. Fixed: `scanner::rehash_changed_versions` detects a
+  changed occurrence (its current metadata no longer matches its DocumentVersion's
+  recorded metadata — refreshed on every scan by `flush_batch`), re-hashes it, and if
+  the content actually differs, creates a new DocumentVersion under the **same**
+  logical Document, marks the old version `stale=1`, and cascades `stale=1` onto any
+  `verified_facts` grounded in the old version's pages. A metadata-only touch
+  (identical content, bumped mtime) does not spawn a version.
+- **P0-2, deleted/moved sources never marked missing** — nothing ever set
+  `exists_now=0`. Fixed: a full, uninterrupted `scan_metadata` run now marks
+  previously-known occurrences under its root that weren't re-observed this run as
+  `exists_now=0`. A scan that errors out mid-walk returns before this step and never
+  mass-marks anything missing.
+- **P0-3, approved legal-document content not immutable at the DB level** — a direct
+  `UPDATE legal_document_paragraphs`/`legal_document_sections` succeeded even after the
+  parent version was approved; only `legal_document_versions` and
+  `legal_document_sources` had triggers. Fixed: six new triggers
+  (insert/update/delete × sections/paragraphs) in `001_schema_v12.sql`, mirroring the
+  existing `legal_document_sources` pattern.
+- **P0-4, paragraph "confirmed" required no provenance** — `confirm_paragraph` flipped
+  any paragraph to `confirmed` with no check that a source existed. Fixed:
+  `add_paragraph` now only ever produces `paragraph_kind='argument'` (lawyer-authored
+  legal text — confirming is editorial review, no source needed); `paragraph_kind='fact'`
+  paragraphs are only ever created by `fill_from_verified_facts`, which grounds them
+  atomically, and `confirm_paragraph` now refuses to confirm a `'fact'` paragraph
+  without a currently-valid, non-stale `verified_fact` source.
+- **P0-5, invalid/stale facts could remain in an approvable draft** — `approve_version`
+  only checked `provenance_state`, never re-checked that a linked fact was still valid.
+  Fixed: `approve_version` now re-validates every `'fact'` paragraph's grounding at
+  approval time, not just at confirm time — a fact invalidated or gone stale after
+  being confirmed blocks approval.
+- **P0-6, an authority could be "verified" without a source** — `verify_authority` never
+  required `source_document_version_id`. Fixed: verification now requires it, and binds
+  the source's `content_sha256` into the integrity hash. `AuthoritiesTab` gained a
+  source-document picker so this is reachable from the UI.
+- **P0-7, installer stale relative to source** — `main` was 5 commits ahead of the
+  commit (`e92a148`) Gate C's installer was built from. Not independently re-fixed here
+  (it's a consequence of every fix above); Gate C/E need a fresh Windows run against the
+  current commit before this reconstruction can be called verified end-to-end again.
+
+Also closed while responding to the same report (flagged there as P1, not P0, but easy
+to close alongside these and directly relevant to "don't trust unverified state"):
+- **Damage lock trusted a client-supplied integrity hash.** `lock_damage_calculation`
+  now re-derives it from the persisted `damage_inputs` via the new
+  `damage::verify_for_lock`, and refuses to lock if that doesn't match the calculation's
+  stored totals.
+- **`approval_sha256` only hashed paragraph bodies**, not section headings/order,
+  paragraph kind/provenance, or source references — a reordered section or silently
+  detached source wouldn't change the hash. `legal_docs::canonical_content` now builds a
+  structural fingerprint of the whole version (plus a linked, locked damage
+  calculation's own hash, when one is cited), and `export_legal_document` recomputes and
+  verifies it before writing output — defense in depth behind the new triggers, not a
+  replacement for them.
+- **The UI had no way to actually approve or export a legal document** — the commands
+  existed, nothing called them. `LegalDocumentsTab`'s editor now has "אשר מסמך" (approve)
+  and "ייצוא כטקסט" (export) actions, the latter via a new `choose_save_file` command.
+
+Real regression coverage for all of this lives in `src-tauri/src/integrity_tests.rs`
+(10 new tests, all passing) — see its module doc comment for exactly which finding each
+test covers. `src-tauri/src/gate_f_partial.rs`'s existing coverage is unaffected (still
+passing) since these are additive constraints, not behavior changes to the paths it
+already exercises.
+
+**Deliberately not addressed** (P1/P2 in the report, out of scope for this pass): the
+AI run/review/verify-fact UI is still not wired end-to-end; DOCX/PDF export still don't
+exist; the damage engine is still an additive prototype, not a versioned legal ruleset
+engine; there's no deterministic legal-deadline rules engine; OCR temp-directory cleanup
+isn't RAII-guarded against every early-exit path. None of these were claimed fixed.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -224,10 +307,11 @@ Per-step outcome:
 11. Run AI review — ❌ same as #10
 12. Approve/reject fact proposal — ⚠️ the direct "commit a verified fact" half is
     covered for real; the AI-proposal review half needs #11 first
-13. Change source and prove stale propagation — ⚠️ re-extraction rejection is the same
-    mechanism as #3, covered for real; the `document_versions.stale` column itself is
-    never actually set by any of the 68 commands in this reconstruction — a real
-    product gap, flagged here rather than silently worked around in the test
+13. Change source and prove stale propagation — ✅ real, as of the P0-1 fix above:
+    `scanner::rehash_changed_versions` now sets `document_versions.stale=1` on the
+    superseded version and cascades `stale=1` onto any grounded `verified_facts`;
+    `integrity_tests.rs` asserts both, plus that `approve_version` refuses a document
+    citing a now-stale or invalidated fact
 14. Create and lock damage calculation — ✅ real, including the immutability trigger
 15. Create legal draft — ✅ real
 16. Edit as a new version — ✅ real (`legal_docs::create_new_version` plus the

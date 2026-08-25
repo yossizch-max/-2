@@ -36,8 +36,9 @@ export function DamageTab({matterId}:{matterId:string}) {
     if(!c||c.status!=="draft")return;
     setBusy(true);setFormError(null);
     try{
-      const calc=await commands.calculate_damage({regime:c.regime,lifeState:c.lifeState,inputs:c.inputs??[]}) as {integritySha256:string};
-      await commands.lock_damage_calculation({calculationId:c.id,integritySha256:calc.integritySha256});
+      // The server recomputes and verifies the integrity hash itself from the
+      // persisted inputs - it never trusts a client-supplied value.
+      await commands.lock_damage_calculation({calculationId:c.id});
       reload();
     }catch(e){setFormError(String(e));}
     finally{setBusy(false);}

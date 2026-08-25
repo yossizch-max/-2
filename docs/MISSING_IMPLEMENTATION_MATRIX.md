@@ -2,17 +2,18 @@
 
 This document distinguishes reconstructed executable handlers from command contracts that remain intentionally fail-closed.
 
-Total command contract: **68** (the original alpha.16 61-command contract plus
+Total command contract: **69** (the original alpha.16 61-command contract plus
 `create_legal_document_version`, `get_legal_document_version`, `fill_legal_document_facts`,
 `add_legal_document_paragraph`, `update_legal_document_paragraph`,
-`confirm_legal_document_paragraph` and `delete_legal_document_paragraph` — see "Gaps found and
-fixed during Gate F" and "Legal-document authoring efficiency pass" below)
+`confirm_legal_document_paragraph`, `delete_legal_document_paragraph` and `choose_save_file` —
+see "Gaps found and fixed during Gate F", "Legal-document authoring efficiency pass" and
+`docs/RELEASE_GATES.md`'s "External audit response" section below)
 
-Wired handlers: **68**
+Wired handlers: **69**
 
 Fail-closed historical endpoints: **0**
 
-All 68 commands in the Tauri contract have real handlers backed by the SQLCipher schema
+All 69 commands in the Tauri contract have real handlers backed by the SQLCipher schema
 (`src-tauri/migrations/001_schema_v12.sql`, 33 user tables). None return
 `RECONSTRUCTED_COMMAND_NOT_YET_WIRED` any longer.
 
@@ -88,12 +89,19 @@ changes closed that gap:
   `confirm_legal_document_paragraph` / `delete_legal_document_paragraph` let a lawyer draft, edit,
   approve-for-inclusion and remove paragraphs directly in `LegalDocumentsTab`'s new editor view,
   without leaving the app. All four (and the autofill) reject any version whose `status` isn't
-  `draft` in application code — this matters because the schema's immutability triggers guard
-  `legal_document_versions` and `legal_document_sources`, but **not**
-  `legal_document_paragraphs` itself, so the draft-only check in `legal_docs.rs` is the only thing
-  actually stopping an approved version's paragraphs from being edited. Editing a paragraph's text
-  always resets its `provenance_state` to `needs_review`, so `approve_version`'s existing
-  all-paragraphs-confirmed gate forces an explicit re-confirm before a next approval.
+  `draft` in application code. At the time this was written, the schema's immutability triggers
+  guarded `legal_document_versions`/`legal_document_sources` but **not**
+  `legal_document_paragraphs`/`legal_document_sections`, so the application-level draft-only check
+  was the *only* thing stopping an approved version's text from being edited — an external audit
+  independently caught this exact gap days later (P0-3, see `docs/RELEASE_GATES.md`'s "External
+  audit response") and it's now also enforced by six new DB triggers, not application code alone.
+  Editing a paragraph's text always resets its `provenance_state` to `needs_review`, so
+  `approve_version`'s all-paragraphs-confirmed gate forces an explicit re-confirm before the next
+  approval.
 
 Covered for real by `gate_f_partial.rs`: template seeding, autofill (including its idempotency),
-and the add/edit/confirm/delete cycle for a manually-added paragraph.
+and the add/edit/confirm/delete cycle for a manually-added paragraph. The stronger integrity
+properties added in response to the external audit (approved-content DB immutability, fact
+grounding requirements, stale/invalidated-fact revalidation at approval, tamper-resistant damage
+locking) are covered separately in `src-tauri/src/integrity_tests.rs` — see
+`docs/RELEASE_GATES.md` for the full writeup.
