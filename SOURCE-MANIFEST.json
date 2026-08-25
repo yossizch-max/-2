@@ -1,11 +1,11 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-25",
-  "regenerated_against_commit": "4391f3caf272853f471b3ce38145e83b029879b4",
+  "regenerated_against_commit": "d7b3ae6d3efa4fe4336b10594f9669dd0b15b8b5",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
-  "file_count": 90,
+  "file_count": 92,
   "files": [
     {
       "path": ".github/workflows/windows-release-gate.yml",
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 6152,
-      "sha256": "3d92245f214572c1f513c4ba159d7d64ccbcc76026eaaddb6bdfec9e805aff70"
+      "size": 7568,
+      "sha256": "1cc8b1bce090ae90b347a6c27c5932308306d6f7345c7c0ac204aced875d591a"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 841,
-      "sha256": "c189c01424bf5ff0323a1b2e7c372b813d505823a304545b79ae936e315f823a"
+      "size": 934,
+      "sha256": "e407bbab15f6f9a0ce8240561957b9532bf16576a656a3d315e60aaef627dc5f"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "116d69d15c7cbd2ef2794afeccabbbcf2ead82ed14c15abd643d1a4b129b890d"
+      "sha256": "24190b7669f3f7cae2b018e1e5479a6ea3db6ed8c5e16480ad2057761bed1152"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 15321,
-      "sha256": "c046e43d0816c63c5498b761329468a6aaacbb23ccb3e70c9ac17c20f6f326b2"
+      "size": 16592,
+      "sha256": "fe4e0922c9582879337252cb448cfda01894022d1e1283a09b0c65f966c344d0"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 54245,
-      "sha256": "cf3cb3427d0610b3662a594508b16acd5895ac4834dd78dae2b75b4ea35a5d6f"
+      "size": 57661,
+      "sha256": "578ffcc78b6fac180be2ac6403df8ee6c00806f3cf4953bdd2227c4c8371123a"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -119,8 +119,8 @@
     },
     {
       "path": "scripts/static-qa.mjs",
-      "size": 2051,
-      "sha256": "114a733404ab32bc9ae4302e631cf9dc67b5f72c2245f5cd6d33b43af78b02f2"
+      "size": 2217,
+      "sha256": "db05b3d01f10ba483c098c963c5353f4677fea0eb33fd49650f3dbdc707a68c5"
     },
     {
       "path": "scripts/vendor-ocr-runtime.ps1",
@@ -183,6 +183,11 @@
       "sha256": "f58689553183141156573869b7bf1cb4241f02b23949746c412ac6f4a5b858fb"
     },
     {
+      "path": "src-tauri/migrations/003_matter_profile_v14.sql",
+      "size": 1436,
+      "sha256": "abb4acc8c0c4f2ef5ecb42539c300af6350271768f0c2fddb852db491d733666"
+    },
+    {
       "path": "src-tauri/resources/ocr/README.md",
       "size": 640,
       "sha256": "9cbb7dfec5f41b051e1e9877db2c44fbcf60a6d26e303f4676dbe4912b1b8792"
@@ -214,8 +219,8 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "size": 73471,
-      "sha256": "45111f29e4a8d49df9c2d2e12a037de74e2df6d3dfd583623b36b640f1762e69"
+      "size": 76212,
+      "sha256": "cf81aee91f90dc8983cae287dff7a1ffdd2e09b0df8682f89f6e997d57290ed0"
     },
     {
       "path": "src-tauri/src/damage.rs",
@@ -224,8 +229,8 @@
     },
     {
       "path": "src-tauri/src/db.rs",
-      "size": 4566,
-      "sha256": "400b3680ad57bb0bfe8ddbd676c6f81a24f58fc8b8130c7fc0078a834f005d04"
+      "size": 6256,
+      "sha256": "90e8c4b8c0d3fa7f5c14e238f783ca478c700ecf63ec259472a9f3496d7606a8"
     },
     {
       "path": "src-tauri/src/error.rs",
@@ -244,8 +249,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 66066,
-      "sha256": "4bda5cf1dbc65dfec1b9fcc637f534b95163ca722c46ac9d3c641f364fc6da3e"
+      "size": 70528,
+      "sha256": "6713b2de07a1a34bd47c6bcabf3186509e7532b0bd378eadbdad4a77f74ccf39"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
@@ -259,8 +264,8 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "size": 4977,
-      "sha256": "6d439d2d4431e474d81508e3d013eb4057fc76840f74a25f5708e40010824872"
+      "size": 5251,
+      "sha256": "78a999c2831143164cc930c2d5e59989d0d4e317b52c5f2e746ef4c48c69dad2"
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -268,9 +273,14 @@
       "sha256": "b95767cd78424a51141c35229949362af82572a94b952633cbfb9dc96994d8b3"
     },
     {
+      "path": "src-tauri/src/matter_profile.rs",
+      "size": 7112,
+      "sha256": "553035701e695bb8ab181007caa009f2d4447878f21a44825e6123b571a4357c"
+    },
+    {
       "path": "src-tauri/src/models.rs",
-      "size": 1304,
-      "sha256": "c4748f1b937cc1eb4c6b45c2b6370ebd349375bcac54bf7c1faad35aab1c5238"
+      "size": 1918,
+      "sha256": "d35600f6fb1852f319e56b7f3b01c61600942e6c8d9c2729d501585a80fdf3c0"
     },
     {
       "path": "src-tauri/src/scanner.rs",
@@ -334,8 +344,8 @@
     },
     {
       "path": "src/lib/ipc.ts",
-      "size": 8691,
-      "sha256": "da9ded6b8379e69ce8b41af3dcfca04ea8fe8b0d17c9bc11ea9956e24c41eecb"
+      "size": 9277,
+      "sha256": "1dafe9ddb18935515628a956f539f3bcba519c45896bc9243da3234183cb28eb"
     },
     {
       "path": "src/main.tsx",
@@ -369,8 +379,8 @@
     },
     {
       "path": "src/matter/OverviewTab.tsx",
-      "size": 2192,
-      "sha256": "f50ff2f595bb804b8e9072ca01dd1f98d61ca44cc3af68ea63be320107f6013f"
+      "size": 9617,
+      "sha256": "8c12eaccff45be2eb0c58c6fce2b1a5e13faee17847dfa820dcdcd67ae0cf304"
     },
     {
       "path": "src/matter/TasksCalendarTab.tsx",
@@ -404,8 +414,8 @@
     },
     {
       "path": "src/pages/MattersPage.tsx",
-      "size": 3064,
-      "sha256": "631f386a5f9362b2ffe481eb35d240855fb34b5e60dd138757fcf909afff1c4e"
+      "size": 3394,
+      "sha256": "3b95289314aa060f3e5812bc0e0bfac8b368cfd0cf5d41e800276efe81d596c3"
     },
     {
       "path": "src/pages/SearchPage.tsx",
@@ -429,8 +439,8 @@
     },
     {
       "path": "src/styles/app.css",
-      "size": 10919,
-      "sha256": "88f5c6b75f0b0db441c65fe08c28f7b4fb1bb8f553e0debbcb255dfca93e2675"
+      "size": 11170,
+      "sha256": "0817b544c6f0d46d90e3ff864a6573d928c6175f821cc6c1815dc398bb67632e"
     },
     {
       "path": "src/styles/tokens.css",
@@ -439,8 +449,8 @@
     },
     {
       "path": "src/types.ts",
-      "size": 5336,
-      "sha256": "f008c234e209d4a3b80c497f9eca782730587e6272866bfb7a9032c382b264c3"
+      "size": 6672,
+      "sha256": "5d19523156c41079305fb06c62d6542f4315bec57f2f137c70870261a3b0e06d"
     },
     {
       "path": "tsconfig.app.json",

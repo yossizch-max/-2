@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, legal_docs, legal_rules, models, scanner, search, security,
+    ai, authorities, damage, extraction, legal_docs, legal_rules, matter_profile, models, scanner, search, security,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -204,6 +204,7 @@ pub fn create_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
     {
     let title=required_string(&payload,"title")?;
     let matter_type=payload.get("matterType").and_then(Value::as_str).unwrap_or("generic_civil");
+    matter_profile::validate_case_type(matter_type)?;
     let internal=payload.get("internalNumber").and_then(Value::as_str);
     let id=Uuid::new_v4().to_string(); let now=Utc::now().to_rfc3339();
     state.db.write(|conn|{
@@ -263,6 +264,7 @@ pub fn update_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
     let internal=payload.get("internalNumber").and_then(Value::as_str);
     let external=payload.get("externalNumber").and_then(Value::as_str);
     let matter_type=payload.get("matterType").and_then(Value::as_str);
+    if let Some(mt)=matter_type { matter_profile::validate_case_type(mt)?; }
     let status=payload.get("status").and_then(Value::as_str);
     state.db.write(|conn|{let changed=conn.execute(
         "UPDATE matters SET
@@ -289,6 +291,62 @@ pub fn set_matter_stage(state: State<'_, AppState>, payload: Value) -> AppResult
     )?;Ok(())})?;
     Ok(json!({"ok":true}))
 }
+}
+
+#[tauri::command]
+pub fn get_matter_profile(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let profile=matter_profile::get_profile(&state.db,matter_id)?;
+    Ok(serde_json::to_value(profile)?)
+}
+
+#[tauri::command]
+pub fn save_matter_profile(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let event_date=payload.get("eventDate").and_then(Value::as_str);
+    let court_name=payload.get("courtName").and_then(Value::as_str);
+    let btl_claim_number=payload.get("btlClaimNumber").and_then(Value::as_str);
+    let case_summary=payload.get("caseSummary").and_then(Value::as_str);
+    matter_profile::save_profile(&state.db,matter_id,event_date,court_name,btl_claim_number,case_summary)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn list_matter_parties(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let parties=matter_profile::list_parties(&state.db,matter_id)?;
+    Ok(serde_json::to_value(parties)?)
+}
+
+#[tauri::command]
+pub fn add_matter_party(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let role=required_string(&payload,"role")?;
+    let name=required_string(&payload,"name")?;
+    let contact_details=payload.get("contactDetails").and_then(Value::as_str);
+    let notes=payload.get("notes").and_then(Value::as_str);
+    let id=matter_profile::add_party(&state.db,matter_id,role,name,contact_details,notes)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn update_matter_party(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let party_id=required_string(&payload,"partyId")?;
+    let matter_id=required_string(&payload,"matterId")?;
+    let role=payload.get("role").and_then(Value::as_str);
+    let name=payload.get("name").and_then(Value::as_str);
+    let contact_details=payload.get("contactDetails").and_then(Value::as_str);
+    let notes=payload.get("notes").and_then(Value::as_str);
+    matter_profile::update_party(&state.db,party_id,matter_id,role,name,contact_details,notes)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn delete_matter_party(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let party_id=required_string(&payload,"partyId")?;
+    let matter_id=required_string(&payload,"matterId")?;
+    matter_profile::delete_party(&state.db,party_id,matter_id)?;
+    Ok(json!({"ok":true}))
 }
 
 #[tauri::command]

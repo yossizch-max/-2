@@ -212,3 +212,21 @@ integer arithmetic for comparisons/cap/floor instead of `f64`; and a legal-rule-
 sample value was removed from the rule-authoring form. P1-6 (linking engine runs to
 `legal_deadlines`/`damage_calculations`) is deliberately deferred until that
 integration itself is built, per the audit's own framing.
+
+## Phase B, milestone B1 — Matter Profile (2026-08-25)
+
+Three further reports (Israeli civil/tort market research, ledger-lifecycle, and
+AI-pipeline deep dives) recommended TAHRIR become an AI-native Case Operating System,
+laying out a Phase B roadmap (Matter Profile → Workstreams → Ledgers → AI Pipeline →
+Missing Evidence Matrix → Case Health). `matters` had no client/party/insurer/court/
+event-date/BTL data at all, and "workstream"/"matter pack"/"missing evidence" had zero
+hits in the repo — genuinely greenfield. This pass implements only the roadmap's first
+milestone, B1: a new `matter_profile` side table (event date, court, BTL claim number,
+case summary) and a `matter_parties` contact list (role-constrained per the market
+report's own taxonomy), plus a Rust-side allowlist tightening `matters.matter_type`. No
+lock/approval lifecycle — this is plain office-management data, not an evidentiary
+claim. See `docs/RELEASE_GATES.md`'s "Phase B, milestone B1" section for the full
+writeup, including why `matters` itself is never `ALTER`ed. B2–B6 (Workstreams, Missing
+Evidence Matrix, Medical/Wage/Liability Ledgers, AI Pipeline, Case Health) are
+deliberately left as a roadmap only — each gets its own planning pass before
+implementation.

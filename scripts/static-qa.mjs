@@ -10,6 +10,7 @@ const shell=read("src/components/AppShell.tsx");
 const tokens=read("src/styles/tokens.css");
 const sql=read("src-tauri/migrations/001_schema_v12.sql");
 const sqlRulesInfra=read("src-tauri/migrations/002_legal_rules_infrastructure_v13.sql");
+const sqlMatterProfile=read("src-tauri/migrations/003_matter_profile_v14.sql");
 const snapshot=read("src-tauri/src/source_snapshot.rs");
 const extraction=read("src-tauri/src/extraction.rs");
 const ai=read("src-tauri/src/ai.rs");
@@ -24,6 +25,7 @@ const checks={
   // or if a future migration added/removed tables elsewhere in 001 or 002 by mistake.
   thirtyThreeTablesInBaseSchema:(sql.match(/CREATE TABLE /g)||[]).length===33,
   fiveTablesInLegalRulesInfra:(sqlRulesInfra.match(/CREATE TABLE /g)||[]).length===5,
+  twoTablesInMatterProfile:(sqlMatterProfile.match(/CREATE TABLE /g)||[]).length===2,
   ocrSourceMismatch:snapshot.includes("SourceShaMismatch"),
   ocrReverify:extraction.includes("snapshot.verify_unchanged()"),
   docxDocumentAnchoring:extraction.includes('anchor_kind: "document"')&&extraction.includes("page_number: None"),

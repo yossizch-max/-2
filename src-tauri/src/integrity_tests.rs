@@ -78,10 +78,21 @@
 //! equivalent: `legal_rulesets`/`legal_ruleset_sources` are deliberately NOT matter-scoped
 //! (a Ruleset is a firm-wide governed asset, usable across every matter), so there is no
 //! cross-matter boundary to test here yet.
+//!
+//! Phase B, milestone B1 (Matter Profile, 2026-08-25): `matter_profile.rs` adds
+//! case-type/event/court/BTL fields (a new `matter_profile` 1:1 side table, so the
+//! existing `matters` table is never ALTERed - see the module doc comment) and a
+//! `matter_parties` contact list. Plain office-management data, no lock/approval
+//! lifecycle - the tests below cover upsert idempotency, party-role validation, and
+//! that deleting a matter cascades to both new tables. `create_matter`/`update_matter`'s
+//! new case-type validation isn't separately tested here for the same `tauri::State`
+//! reason as `verify_authority` above (see the v1 P0-6 note); `matter_profile::
+//! validate_case_type`/`validate_party_role` themselves are unit-tested directly in
+//! `matter_profile.rs`.
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, models::DamageInput, scanner};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, scanner};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -1218,4 +1229,72 @@ fn engine_run_status_can_only_move_forward_never_backward() {
         "UPDATE legal_engine_runs SET status='proposed' WHERE id=?1", [&run_id]
     ).map_err(AppError::Db));
     assert!(backward.is_err(), "moving status backward (locked -> proposed) must be blocked");
+}
+
+// --- Phase B, B1: Matter Profile ---
+
+#[test]
+fn matter_profile_upsert_is_idempotent_and_updates_in_place() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B1 test: profile upsert");
+
+    let empty = matter_profile::get_profile(&db, &matter_id).unwrap();
+    assert!(empty.event_date.is_none(), "a matter with no saved profile yet must read back as empty, not error");
+
+    matter_profile::save_profile(&db, &matter_id, Some("2026-03-12"), Some("שלום"), None, Some("סיכום ראשוני")).unwrap();
+    let first = matter_profile::get_profile(&db, &matter_id).unwrap();
+    assert_eq!(first.event_date.as_deref(), Some("2026-03-12"));
+    assert_eq!(first.court_name.as_deref(), Some("שלום"));
+
+    matter_profile::save_profile(&db, &matter_id, Some("2026-03-12"), Some("שלום"), Some("BTL-1"), Some("סיכום מעודכן")).unwrap();
+    let second = matter_profile::get_profile(&db, &matter_id).unwrap();
+    assert_eq!(second.btl_claim_number.as_deref(), Some("BTL-1"), "a second save must update the same row in place, not fail or duplicate");
+    assert_eq!(second.case_summary.as_deref(), Some("סיכום מעודכן"));
+
+    let malformed = matter_profile::save_profile(&db, &matter_id, Some("12/03/2026"), None, None, None);
+    assert!(malformed.is_err(), "a non-ISO event date must be rejected, not silently stored");
+}
+
+#[test]
+fn matter_party_requires_a_known_role() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B1 test: party role");
+
+    let rejected = matter_profile::add_party(&db, &matter_id, "made_up_role", "פלוני", None, None);
+    assert!(rejected.is_err(), "an unknown party role must be rejected");
+
+    let id = matter_profile::add_party(&db, &matter_id, "insurer", "כלל חברה לביטוח", Some("03-1234567"), None).unwrap();
+    let parties = matter_profile::list_parties(&db, &matter_id).unwrap();
+    assert_eq!(parties.len(), 1);
+    assert_eq!(parties[0].role, "insurer");
+
+    matter_profile::update_party(&db, &id, &matter_id, Some("insurer"), None, Some("03-7654321"), Some("נציג: דנה")).unwrap();
+    let updated = matter_profile::list_parties(&db, &matter_id).unwrap();
+    assert_eq!(updated[0].contact_details.as_deref(), Some("03-7654321"));
+
+    matter_profile::delete_party(&db, &id, &matter_id).unwrap();
+    let after_delete = matter_profile::list_parties(&db, &matter_id).unwrap();
+    assert!(after_delete.is_empty());
+}
+
+#[test]
+fn deleting_a_matter_cascades_to_its_profile_and_parties() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B1 test: cascade delete");
+    matter_profile::save_profile(&db, &matter_id, Some("2026-01-01"), None, None, None).unwrap();
+    matter_profile::add_party(&db, &matter_id, "client", "התובע", None, None).unwrap();
+
+    db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db)).unwrap();
+
+    let profile_rows: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM matter_profile WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    let party_rows: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM matter_parties WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(profile_rows, 0, "matter_profile must cascade-delete with its matter");
+    assert_eq!(party_rows, 0, "matter_parties must cascade-delete with its matter");
 }

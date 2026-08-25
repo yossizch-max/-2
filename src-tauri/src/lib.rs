@@ -11,6 +11,7 @@ mod gate_f_partial;
 mod integrity_tests;
 mod legal_docs;
 mod legal_rules;
+mod matter_profile;
 mod models;
 mod scanner;
 mod search;
@@ -62,6 +63,12 @@ pub fn run() {
             commands::get_matter,
             commands::update_matter,
             commands::set_matter_stage,
+            commands::get_matter_profile,
+            commands::save_matter_profile,
+            commands::list_matter_parties,
+            commands::add_matter_party,
+            commands::update_matter_party,
+            commands::delete_matter_party,
             commands::list_documents,
             commands::get_document,
             commands::list_document_versions,

@@ -35,3 +35,18 @@ pub struct DamageResult {
     pub gross_cents: i64, pub deductions_cents: i64,
     pub net_cents: i64, pub integrity_sha256: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MatterProfile {
+    pub matter_id: String, pub event_date: Option<String>, pub court_name: Option<String>,
+    pub btl_claim_number: Option<String>, pub case_summary: Option<String>, pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MatterParty {
+    pub id: String, pub matter_id: String, pub role: String, pub name: String,
+    pub contact_details: Option<String>, pub notes: Option<String>,
+    pub created_at: String, pub updated_at: String,
+}

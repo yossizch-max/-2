@@ -37,7 +37,11 @@ implementation and returned six P0 governance/integrity gaps (superseded-ruleset
 mutability, missing reviewer identity, citation-only sources satisfying approval,
 caller-controlled engine_kind, unenforced effective dates, non-deterministic priority
 ties) plus five P1s — all fixed in one hardening pass (see "Legal rules infrastructure,
-Phase A hardening" below), **but not yet reconfirmed on Windows CI** — that run is still
+Phase A hardening" below), confirmed on real Windows CI at run #14, commit `d7b3ae6`.
+Three further reports (market/product research plus ledger-lifecycle and AI-pipeline
+deep dives) then laid out a Phase B roadmap; its first milestone, B1 (Matter Profile —
+case type, event/court/BTL fields, party contacts), is implemented (see "Phase B,
+milestone B1" below), **but not yet reconfirmed on Windows CI** — that run is still
 needed before Gate C/E can be called current again. What's left needs a human on a real
 Windows machine with a fresh installer: real OCR, real AI
 provider calls, and DOCX export, which doesn't exist in this reconstruction yet.**
@@ -469,6 +473,50 @@ required for Phase A's own correctness.
 total. `cargo check/test --locked`, `npm run build`, `contract:check` (86/86, no
 drift), `qa:static` all pass.
 
+**Confirmed on real Windows CI**: [run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747),
+commit `d7b3ae6`, 2026-08-25 - `cargo test --locked` passed 58/58 on the real
+`windows-2025` runner.
+
+## Phase B, milestone B1 — Matter Profile (2026-08-25)
+
+Three further reports (`TAHRIR_ISRAEL_CIVIL_TORT_MARKET_PRODUCT_RESEARCH_20260825.md`,
+`TAHRIR_LEDGER_LIFECYCLE_DEEP_REPORT_20260825.md`,
+`TAHRIR_AI_PIPELINE_AUTOPILOT_DEEP_REPORT_20260825.md`) recommended TAHRIR become an
+AI-native Case Operating System for Israeli tort/civil practice, laying out a Phase B
+roadmap (Matter Profile → Workstreams → Ledgers → AI Pipeline → Missing Evidence Matrix
+→ Case Health). Codebase exploration confirmed this is genuinely greenfield - `matters`
+had no client/party/insurer/court/event-date/BTL data at all. This pass implements only
+the first milestone, B1 (Matter Profile); B2-B6 are deliberately left as a roadmap, each
+to get its own planning pass before implementation.
+
+- **New migration `003_matter_profile_v14.sql`**: a `matter_profile` 1:1 side table
+  (event date, court name, BTL claim number, case summary) and a `matter_parties`
+  contact list (role constrained to client/party/witness/employer/insurer/
+  medical_institution/expert/opposing_counsel/court, matching the market report's own
+  taxonomy). `matters` itself is deliberately never `ALTER`ed - every migration to date
+  is additive-only and re-run in full on every `DbState::open()` call, and
+  `ALTER TABLE ... ADD COLUMN` isn't idempotent in SQLite (a second run fails with
+  "duplicate column name"), which would break that invariant. `matters.matter_type`
+  already had the right concept for case type; it's tightened with a Rust-side
+  allowlist (`matter_profile::validate_case_type`, the same pattern `damage.rs` already
+  uses for `regime`/`life_state`/input keys) rather than a redundant new column.
+- Plain office-management data, not an evidentiary claim: no lock/approval lifecycle,
+  no DB immutability triggers - editable like `update_matter` already was.
+- 6 new commands (`get_matter_profile`, `save_matter_profile`, `list_matter_parties`,
+  `add_matter_party`, `update_matter_party`, `delete_matter_party`), a case-type
+  `<select>` on matter creation, and a "פרופיל תיק"/"צדדים" panel pair on
+  `OverviewTab.tsx`.
+
+7 new backend tests (upsert idempotency, malformed-date rejection, party-role
+validation, cascade delete of both new tables with their matter, plus 3 pure unit
+tests for the allowlists) - 65/65 total. `cargo check/test --locked`, `npm run build`,
+`contract:check` (92/92, no drift), `qa:static` (now also checking
+`twoTablesInMatterProfile`) all pass. Migration re-verified idempotent (applied 3x: 40
+tables, 27 indexes, 37 triggers, `user_version=14`, integrity ok, `fk_check` clean).
+
+**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
+can be called current on Gate C/E.
+
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
   `VerifiedSourceSnapshot::create` before any parsing. ✅
@@ -497,7 +545,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #13)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #14)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -621,27 +669,28 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049), commit
-`64b7066`, 2026-08-25 (rounds 2/3 and the follow-up fixes were separately confirmed at
-[run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829) commit `7a3ec11`,
-[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830) commit `721cc03`,
-and [run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285) commit
-`d0cdb3e`, all same day). Build took ~33 minutes total (no cross-run cache: everything,
-including SQLCipher/OpenSSL, compiles from source every run).
+[run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747), commit
+`d7b3ae6`, 2026-08-25 (rounds 2/3, the follow-up fixes, and Phase A were separately
+confirmed at [run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829)
+commit `7a3ec11`, [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830)
+commit `721cc03`, [run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285)
+commit `d0cdb3e`, and [run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049)
+commit `64b7066`, all same day). Build took ~33 minutes total (no cross-run cache:
+everything, including SQLCipher/OpenSSL, compiles from source every run). Phase B
+milestone B1 (Matter Profile) has not had its own run yet.
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 44/44 as of run #13, up from 24 at run #12 as
-  the legal-rules-infrastructure regression tests were added) ✅
+- Rust locked tests (`cargo test --locked`, 58/58 as of run #14, up from 44 at run #13 as
+  the Phase A hardening regression tests were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #13]
-  (https://github.com/yossizch-max/-2/actions/runs/32877320049) reconfirms the artifact
-  at 61,506,165 bytes on the current source. Each run's artifact expires 14 days after
-  that run.
+  full OCR runtime (see Gate C) at 61.4MB, and [run #14]
+  (https://github.com/yossizch-max/-2/actions/runs/32885155747) reconfirms the artifact
+  on the current source. Each run's artifact expires 14 days after that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
 - release SHA256 / release manifest / rollback package — ❌ not done. These are

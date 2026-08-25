@@ -2,11 +2,11 @@
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "tested_at": "2026-08-25",
   "regenerated_note": "This file was stale from the 2026-08-24 initial import (61 commands, 31 tables, 25 wired/36 stub) through many subsequent commits before being regenerated here against actually-current, actually-run checks. Treat any future drift the same way this drift was found: by an independent check against the real source, not by trusting this file.",
-  "regenerated_against_parent_commit": "4391f3caf272853f471b3ce38145e83b029879b4",
+  "regenerated_against_parent_commit": "d7b3ae6d3efa4fe4336b10594f9669dd0b15b8b5",
   "reconstruction_not_byte_for_byte": true,
   "frontend_backend_contract": {
-    "frontend_invokes": 86,
-    "rust_commands": 86,
+    "frontend_invokes": 92,
+    "rust_commands": 92,
     "missing": [],
     "extra": [],
     "result": "PASS",
@@ -23,6 +23,7 @@
     "focusVisible": true,
     "thirtyThreeTablesInBaseSchema": true,
     "fiveTablesInLegalRulesInfra": true,
+    "twoTablesInMatterProfile": true,
     "ocrSourceMismatch": true,
     "ocrReverify": true,
     "docxDocumentAnchoring": true,
@@ -34,9 +35,9 @@
     "verified_by": "node scripts/static-qa.mjs"
   },
   "database": {
-    "user_version": 13,
-    "tables": 38,
-    "indexes": 26,
+    "user_version": 14,
+    "tables": 40,
+    "indexes": 27,
     "triggers": 37,
     "integrity_check": "ok",
     "foreign_key_check": [],
@@ -53,24 +54,25 @@
     "superseded_ruleset_mutation_blocked": true,
     "superseded_to_approved_reversal_blocked": true,
     "engine_run_status_reversal_blocked": true,
-    "note": "38 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13)"
+    "matter_profile_and_parties_cascade_delete_with_matter": true,
+    "note": "40 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13) + 2 matter-profile tables (003_matter_profile_v14.sql, additive, PRAGMA user_version=14) - matters itself is never ALTERed, see the migration's own doc comment"
   },
   "reconstructed_commands": {
-    "total": 86,
-    "wired": 86,
+    "total": 92,
+    "wired": 92,
     "fail_closed_not_yet_wired": 0,
-    "note": "All 86 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command. 17 of the 86 are the new legal-rules-infrastructure commands (list/get/create/update_draft/add_source/add_rule/add_test_case/review_test_case/run_tests/submit_for_review/approve/supersede_ruleset, preview/commit_engine_run)."
+    "note": "All 92 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command. 17 of the 92 are the legal-rules-infrastructure commands, and 6 are the new Phase B milestone B1 matter-profile commands (get/save_matter_profile, list/add/update/delete_matter_party)."
   },
   "rust_compile": {
     "cargo_check_locked": "PASS",
-    "cargo_test_locked": "PASS (58/58)"
+    "cargo_test_locked": "PASS (65/65)"
   },
   "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
   "windows_tauri_build": {
     "status": "PASS on a real windows-2025 GitHub Actions runner",
     "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32877320049",
     "most_recent_verified_commit": "64b70661254867e857a39c1c86c5e883055f7c8f",
-    "note": "this run includes the legal-rules infrastructure (44/44 tests passed on the real runner) but PREDATES the 2026-08-25 Phase A hardening pass (now 58/58 tests locally) - that hardening commit has NOT yet been separately confirmed on a real Windows CI runner; see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
+    "note": "this run includes the legal-rules infrastructure (44/44 tests passed on the real runner) but PREDATES both the 2026-08-25 Phase A hardening pass and the Phase B milestone B1 (Matter Profile) commit that follows it (now 65/65 tests locally) - neither has been separately confirmed on a real Windows CI runner yet; see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
   },
   "ocr_third_party_runtime": {
     "status": "BUNDLED_AND_VERIFIED",
@@ -84,6 +86,15 @@
     "status": "PHASE_A_HARDENING_COMPLETE_LOCALLY_NOT_YET_CI_CONFIRMED",
     "source_audit": "TAHRIR_LEGAL_RULES_PHASE_A_DEEP_CONTROL_20260825.md",
     "detail": "All 6 P0 findings and 5 of 6 P1 findings from the 2026-08-25 independent audit fixed and covered by new regression tests: terminal-state immutability (approved/superseded/revoked, not just approved), required non-empty reviewer identity on approve/review, page-level (not version-level) source grounding for approval, engine_kind always read from the ruleset itself, effective-period validation and enforcement, deterministic priority/rule_key tie-breaking, atomic single-transaction approval, forward-only engine-run status, exact integer arithmetic for cent-valued comparisons, and rejection of meaningless (assertion-free) test cases. P1-6 (linking legal_engine_runs to legal_deadlines/damage_calculations via FK) is deliberately deferred until real integration work begins, per the audit's own recommendation. cargo test --locked: 58/58 passing locally; this commit has not yet had its own Windows CI run - see docs/RELEASE_GATES.md for current status before treating it as CI-confirmed."
+  },
+  "phase_b_matter_profile": {
+    "status": "MILESTONE_B1_COMPLETE_LOCALLY_NOT_YET_CI_CONFIRMED",
+    "source_reports": [
+      "TAHRIR_ISRAEL_CIVIL_TORT_MARKET_PRODUCT_RESEARCH_20260825.md",
+      "TAHRIR_LEDGER_LIFECYCLE_DEEP_REPORT_20260825.md",
+      "TAHRIR_AI_PIPELINE_AUTOPILOT_DEEP_REPORT_20260825.md"
+    ],
+    "detail": "First milestone (B1) of the Phase B roadmap: a new matter_profile 1:1 side table (event date, court, BTL claim number, case summary) and a matter_parties contact list (role-constrained: client/party/witness/employer/insurer/medical_institution/expert/opposing_counsel/court), plus a Rust-side allowlist tightening create_matter/update_matter's case type. The existing matters table is never ALTERed - src-tauri/src/matter_profile.rs and its migration explain why. Plain office-management data: no lock/approval lifecycle, no DB immutability triggers, since none of it is an evidentiary claim. B2-B6 (Workstreams, Missing Evidence Matrix, Medical/Wage/Liability Ledgers, AI Pipeline, Case Health) are deliberately not attempted in this pass - each gets its own planning pass before implementation."
   },
   "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE",
   "release_verdict_detail": "See docs/RELEASE_GATES.md for the authoritative, actively-maintained gate-by-gate status. This file is a point-in-time snapshot, not a live source of truth."

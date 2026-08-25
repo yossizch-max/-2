@@ -153,3 +153,35 @@ export type DocumentPage = {
   id: string; pageNumber?: number | null; anchorKind: string; blockIndex: number;
   text: string; textSha256: string; method: string;
 };
+
+export const CASE_TYPES: Array<{value: string; label: string}> = [
+  {value: "motor_vehicle_accident", label: "תאונת דרכים"},
+  {value: "workplace_accident", label: "תאונת עבודה"},
+  {value: "general_negligence", label: "רשלנות כללית"},
+  {value: "medical_negligence", label: "רשלנות רפואית"},
+  {value: "civil_commercial_dispute", label: "סכסוך אזרחי/מסחרי"},
+  {value: "generic_civil", label: "אחר"},
+];
+
+export const PARTY_ROLES: Array<{value: string; label: string}> = [
+  {value: "client", label: "לקוח"},
+  {value: "party", label: "צד"},
+  {value: "witness", label: "עד"},
+  {value: "employer", label: "מעסיק"},
+  {value: "insurer", label: "מבטחת"},
+  {value: "medical_institution", label: "מוסד רפואי"},
+  {value: "expert", label: "מומחה"},
+  {value: "opposing_counsel", label: "עו\"ד צד שכנגד"},
+  {value: "court", label: "בית משפט"},
+];
+
+export type MatterProfile = {
+  matterId: string; eventDate?: string | null; courtName?: string | null;
+  btlClaimNumber?: string | null; caseSummary?: string | null; updatedAt: string;
+};
+
+export type MatterParty = {
+  id: string; matterId: string; role: string; name: string;
+  contactDetails?: string | null; notes?: string | null;
+  createdAt: string; updatedAt: string;
+};
