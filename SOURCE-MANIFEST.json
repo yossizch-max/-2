@@ -1,7 +1,7 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-25",
-  "regenerated_against_commit": "da0465e71dff80ae43297e0c8bdcbce9c8d03ddc",
+  "regenerated_against_commit": "d0cdb3e88cc85e3ce06205c0ab69d42c396858dd",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 39694,
-      "sha256": "f8097e09b3648845a27f680d0ee7c75821f5aaf7f11b349e044c837427defdcd"
+      "size": 40800,
+      "sha256": "bc0a883f45a6e1f4712bfbc09da58899f5c15baf0ef53f2b6aef2dbb8f3a85fd"
     },
     {
       "path": "docs/SOURCE_BASIS.md",

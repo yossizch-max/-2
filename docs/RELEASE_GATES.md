@@ -28,10 +28,9 @@ the round-3 section below), tier 3 (Israeli tort-law domain modules) is delibera
 of scope pending a real lawyer's involvement. Two engineering-only items both audit
 rounds had logged as "deliberately not addressed" — the OCR temp-directory RAII gap and
 Verified Authority not requiring an approved passage — were then also fixed (see the
-"Follow-up fixes" section below). Gate C/E were last reconfirmed at run #11, commit
-`721cc03`; the follow-up fixes land in a later commit and need their own Windows run
-before Gate C/E can be called current again. What's left needs a human on a real
-Windows machine with a fresh installer: real OCR, real AI provider
+"Follow-up fixes" section below), and reconfirmed on real Windows CI at run #12, commit
+`d0cdb3e` (2026-08-25) — the latest commit on `main`, and current as of this pass. What's
+left needs a human on a real Windows machine with a fresh installer: real OCR, real AI provider
 calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
@@ -290,7 +289,10 @@ and four new tests in `integrity_tests.rs` (`adding_an_authority_passage_require
 `approving_a_passage_re_checks_containment_against_the_current_source_text`) — 24/24
 backend tests pass. `npm run build`, `contract:check` (72/72, no drift — three new
 commands: `list_authority_passages`, `add_authority_passage`, `approve_authority_passage`),
-and `qa:static` all pass.
+and `qa:static` all pass. Confirmed on real Windows CI at
+[run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285), commit
+`d0cdb3e`, 2026-08-25 — all 24 tests pass there too, not just in this sandbox — see the
+updated Gate C/E entries below.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -320,7 +322,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #11)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #12)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -398,6 +400,17 @@ re-testing new logic. The `tahrir-windows-installer-unsigned` artifact from run 
 61,417,485 bytes (~61.4MB) — the small delta from run #9's 61,398,227 bytes is expected
 (application code size changed; the OCR payload itself did not) and is not a regression.
 
+**Reconfirmed again after the OCR RAII cleanup fix (2026-08-25, run #12):** this round
+*did* touch `extraction.rs` (the `OcrTempDir` guard around `extract_scanned_pdf`'s
+scratch directory), so this run is the real test of that change, not just a rebuild.
+[Run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285), commit
+`d0cdb3e`, succeeded end-to-end: `cargo test --locked` (24/24, including the new
+`ocr_temp_dir_is_removed_on_early_return_through_the_question_mark_operator` test and
+the four new authority-passage tests) passed on the real runner, OCR vendoring and
+verification both succeeded, and the installer artifact
+(`tahrir-windows-installer-unsigned`) is 61,431,884 bytes — consistent with the OCR
+payload being unchanged (only the cleanup logic around it changed).
+
 Still remaining:
 1. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
    packaged app actually running on a real machine, which this session cannot do.
@@ -424,25 +437,26 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830), commit
-`721cc03`, 2026-08-25 (round-2 fixes were separately confirmed at
+[run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285), commit
+`d0cdb3e`, 2026-08-25 (round-2 and round-3 fixes were separately confirmed at
 [run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829), commit
-`7a3ec11`, same day). Build took ~30 minutes total (no cross-run cache: everything,
-including SQLCipher/OpenSSL, compiles from source every run).
+`7a3ec11`, and [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830),
+commit `721cc03`, same day). Build took ~42 minutes total (no cross-run cache:
+everything, including SQLCipher/OpenSSL, compiles from source every run).
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 19/19 as of run #11, up from 15 at run #9 as
-  round-2's regression tests were added) ✅
+- Rust locked tests (`cargo test --locked`, 24/24 as of run #12, up from 19 at run #11 as
+  the OCR-RAII and authority-passage regression tests were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #11]
-  (https://github.com/yossizch-max/-2/actions/runs/32854305830) reconfirms the artifact
-  at 61,417,485 bytes on the current, round-3-fixed source. Each run's artifact expires
-  14 days after that run.
+  full OCR runtime (see Gate C) at 61.4MB, and [run #12]
+  (https://github.com/yossizch-max/-2/actions/runs/32866131285) reconfirms the artifact
+  at 61,431,884 bytes on the current source. Each run's artifact expires 14 days after
+  that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
 - release SHA256 / release manifest / rollback package — ❌ not done. These are
