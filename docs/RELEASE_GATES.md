@@ -21,12 +21,14 @@ then found and this project fixed eleven P0-severity integrity gaps a passing te
 suite hadn't caught — approved-document immutability, source-lifecycle/staleness
 (including partial-scan safety and stale-source AI approvals), fact-grounding
 requirements, a client-trusted damage hash, and stale/self-contradictory package
-provenance metadata — with regression tests for everything code-level. Gate C/E were
-reconfirmed on the source as of round 1's fixes (run #9, commit `fb1ec86`) but round 2's
-fixes land after that run, so Gate C/E need re-confirming again before this reconstruction
-can be called current. What's left needs a human on a real Windows machine with a fresh
-installer: real OCR, real AI provider calls, and DOCX export, which doesn't exist in this
-reconstruction yet.**
+provenance metadata — with regression tests for everything code-level. A third,
+different-kind report (UX/product/legal-domain maturity, not code integrity) then found
+several dead UI paths and hardcoded state; tiers 1 and 2 of that report are fixed (see
+the round-3 section below), tier 3 (Israeli tort-law domain modules) is deliberately out
+of scope pending a real lawyer's involvement. Gate C/E are reconfirmed current as of
+run #11, commit `721cc03` (2026-08-25) — the latest commit on `main`. What's left needs
+a human on a real Windows machine with a fresh installer: real OCR, real AI provider
+calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -193,6 +195,57 @@ run as root, which is documented directly on that test rather than worked around
 silently). v2 P1-7 is a frontend-only wire-up with no new backend logic, so it has no
 dedicated test.
 
+## External audit response, round 3 — UX/product/legal-domain design report, 2026-08-25
+
+A third report (`TAHRIR_DEEP_DESIGN_LEGAL_REPORT_20260825.md`) reviewed the product from
+a different angle than rounds 1-2 — UX completeness and legal-domain maturity, not
+code-level data integrity. Its concrete, spot-checkable claims (dead `onClick` handlers,
+hardcoded health status, a literal "PIP" label, a CSS column mismatch) were each
+independently re-verified against the code before being fixed. Prioritized into three
+tiers; tiers 1 and 2 are closed as of commit `721cc03`:
+
+**Tier 1 — dead UI and fake state:**
+- `TodayPage`/`ActionCenterPage`/`SearchPage` rows rendered as buttons but had no
+  `onClick` — clicking a row did nothing. Wired all three through the `matterId`
+  navigation state already used by `MattersPage`.
+- `TodayPage` grouped items by a fixed kind-order list, not by date. Now buckets by real
+  `dueAt` (overdue/today/tomorrow/next 7 days), falling back to kind-based buckets
+  (review/waiting/resume) for undated items, with a summary line.
+- `Inspector` and `commands::get_app_health` were fully hardcoded — always reported
+  "SQLCipher"/"מקומי"/"כבוי" regardless of actual state. `get_app_health` now runs a real
+  `SELECT 1` DB probe, checks whether `office_root` is bound, checks whether the
+  Tesseract/Poppler binaries exist on disk under `resource_root`, and checks
+  `ai_provider_profiles` for an `enabled=1` row; `Inspector` renders whatever comes back.
+- `DamageTab` labelled the PIP regime option literally "PIP" (English acronym in a
+  Hebrew-first UI) — relabeled to "פלת\"ד" (the internal `"pip"` enum value is unchanged).
+- `DocumentsTab` renders 5 columns but the shared `.tr` grid CSS was hardcoded to 4
+  columns, silently clipping the "פעולות" (actions) column. Scoped a 5-column override
+  to `.documents-table` rather than changing the shared `.tr` rule other tables
+  (`DamageTab`, `SettingsPage`) still rely on.
+
+**Tier 2 — bounded legal-UX pass:**
+- The AI review UI (`FactsAITab`) showed only a source count per proposal, with no way
+  to read what the AI actually saw before approving or rejecting. `get_ai_run` now
+  resolves each proposal's `sourceIds` to the underlying `document_pages` text
+  (truncated to 400 characters, with file name and page number) and the UI renders it
+  inline above the approve/reject/needs-revision actions.
+- Committing a deadline (`commit_deadline`) was a single irreversible click with no
+  preflight. `TasksCalendarTab` now requires an explicit two-step confirm — the first
+  click reveals the date/source being locked and requires a second, separate click
+  before `commit_deadline` actually fires.
+
+**Deliberately not addressed in this pass:** Tier 3 of the same report (a deterministic
+deadline-computation rules engine per Israeli civil procedure, a versioned Israeli tort
+damages ruleset, and Medical/Wage/Liability domain ledgers) requires a real licensed
+tort lawyer's active involvement to be correct — this is not something to encode
+unilaterally from a report, and building it without that validation would be worse than
+leaving the gap explicit.
+
+Verified: `cargo check/test --locked` (19/19), `npm run build`, `contract:check` (69/69,
+no drift), `qa:static` (all checks pass). Confirmed on real Windows CI at
+[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830), commit
+`721cc03`, 2026-08-25 — see the updated Gate C/E entries below.
+
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
   `VerifiedSourceSnapshot::create` before any parsing. ✅
@@ -215,13 +268,13 @@ that live check belongs to Gate F.
 - `package-lock.json` and `src-tauri/Cargo.lock` are committed and reviewed. ✅
 - `npm ci` — clean install, 0 vulnerabilities from `npm audit --audit-level=high`. ✅
 - `cargo check --locked` — passes. ✅
-- `cargo test --locked -- --test-threads=1` — 15/15 tests pass (grown from the original
+- `cargo test --locked -- --test-threads=1` — 19/19 tests pass (grown from the original
   4 as Gates F and the external-audit response added real coverage). ✅
 - Build does not modify either lockfile — verified by hashing both files before and
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #9)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #11)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -288,6 +341,17 @@ the resulting installer artifact (`tahrir-windows-installer-unsigned`, run #9) i
 vendoring existed, consistent with the OCR runtime actually being embedded and
 unchanged by the audit-response commits.
 
+**Reconfirmed again after round-2 and round-3 fixes (2026-08-25, run #10 then run #11):**
+run #10 (commit `7a3ec11`, the round-2 audit fixes) succeeded end-to-end; run #11
+(commit `721cc03`, the round-3 Tier 1/2 UX fixes) then also succeeded end-to-end —
+every step green including `cargo check --locked`, `cargo test --locked` (19/19, up
+from 15 as round-2's regression tests were added), OCR vendoring, "Verify OCR runtime
+files are present", and `npm run desktop:build`. Neither round touched OCR vendoring or
+extraction code, so this reconfirms the runtime is still correctly embedded rather than
+re-testing new logic. The `tahrir-windows-installer-unsigned` artifact from run #11 is
+61,417,485 bytes (~61.4MB) — the small delta from run #9's 61,398,227 bytes is expected
+(application code size changed; the OCR payload itself did not) and is not a regression.
+
 Still remaining:
 1. Hebrew/Arabic/English OCR smoke tests against real scanned documents — needs the
    packaged app actually running on a real machine, which this session cannot do.
@@ -314,22 +378,25 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #9](https://github.com/yossizch-max/-2/actions/runs/32835457436), commit `fb1ec86`,
-2026-08-25. Build took ~40 minutes total (no cross-run cache: everything, including
-SQLCipher/OpenSSL, compiles from source every run).
+[run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830), commit
+`721cc03`, 2026-08-25 (round-2 fixes were separately confirmed at
+[run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829), commit
+`7a3ec11`, same day). Build took ~30 minutes total (no cross-run cache: everything,
+including SQLCipher/OpenSSL, compiles from source every run).
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 15/15 as of run #9) ✅
+- Rust locked tests (`cargo test --locked`, 19/19 as of run #11, up from 15 at run #9 as
+  round-2's regression tests were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #9]
-  (https://github.com/yossizch-max/-2/actions/runs/32835457436) reconfirms the same
-  61,398,227-byte artifact on the current, audit-response-fixed source. Each run's
-  artifact expires 14 days after that run.
+  full OCR runtime (see Gate C) at 61.4MB, and [run #11]
+  (https://github.com/yossizch-max/-2/actions/runs/32854305830) reconfirms the artifact
+  at 61,417,485 bytes on the current, round-3-fixed source. Each run's artifact expires
+  14 days after that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
 - release SHA256 / release manifest / rollback package — ❌ not done. These are

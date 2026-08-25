@@ -147,3 +147,16 @@ source (now regenerated for real via `scripts/generate-source-manifest.mjs`, and
 the QA files), a malformed `damage_inputs.value_text` silently became 0 instead of failing, and the
 Verified Facts "open source" button had no `onClick`. All fixed; see `RELEASE_GATES.md` for detail
 per finding and which ones are covered by new tests.
+
+## Third-round report: UX/product/legal-domain design, tiers 1-2 (2026-08-25)
+
+A third report, reviewing UX completeness and legal-domain maturity rather than data
+integrity, found several dead UI paths and hardcoded state — see `docs/RELEASE_GATES.md`'s
+"External audit response, round 3" section for the full writeup. Tier 1 (dead navigation on
+Today/Action Center/Search, hardcoded `get_app_health`/`Inspector`, a literal "PIP" label, a
+CSS column mismatch in the documents table) and Tier 2 (AI review proposals showing source
+excerpts instead of just a count, a two-step confirm before committing a deadline) are both
+fixed. Tier 3 of that same report (a deterministic deadline rules engine, a versioned Israeli
+tort damages ruleset, Medical/Wage/Liability ledgers) is deliberately not attempted — it
+requires a real licensed tort lawyer's active involvement to be correct, not something to
+encode unilaterally from a report.
