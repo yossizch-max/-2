@@ -109,4 +109,15 @@ export type LegalDocumentVersionDetail = {
 export type Authority = {
   id: string; matterId: string; citation: string; title: string;
   status: "draft" | "verified" | "revoked";
+  sourceDocumentVersionId?: string | null; approvedPassageCount: number;
+};
+
+export type AuthorityPassage = {
+  id: string; sourcePageId: string; passageText: string; issueTag?: string | null;
+  approved: boolean; page?: number | null; fileName?: string | null;
+};
+
+export type DocumentPage = {
+  id: string; pageNumber?: number | null; anchorKind: string; blockIndex: number;
+  text: string; textSha256: string; method: string;
 };

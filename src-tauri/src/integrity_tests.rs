@@ -54,10 +54,23 @@
 //!  - v2 P0-3 (stale SOURCE-MANIFEST.json/QA_*.json at the repo root) and v2 P0-4 (the
 //!    Windows installer trailing the latest source again) aren't code-level findings
 //!    and have no corresponding test here.
+//!
+//! v2 P1-2 (fixed in a later pass, not part of the original v2 response): `verify_authority`
+//! only ever required `source_document_version_id` to be set - an authority citing an
+//! entire document could be "verified" without anyone ever having read and stood behind
+//! a specific passage of it. `legal_authority_passages` existed in the schema but was
+//! never read or written by any command. Fixed in the new `authorities` module (split out
+//! of `commands.rs`, which is untestable here for the same `tauri::State` reason as
+//! `verify_authority` itself used to be - see the v1 P0-6 note above): `add_passage`
+//! requires the quoted text to appear verbatim (after `extraction::normalize_source_text`)
+//! on the cited page of the authority's own source document; `approve_passage` re-checks
+//! that same containment against the page's *current* text; `verify` now requires at
+//! least one approved passage and folds the approved passages' hashes into the integrity
+//! hash.
 
 #![cfg(test)]
 
-use crate::{ai, damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, models::DamageInput, scanner};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -626,4 +639,124 @@ fn malformed_damage_input_value_fails_closed_instead_of_becoming_zero() {
         }).map_err(AppError::Db)
     });
     assert!(result.is_err(), "a corrupt damage_inputs.value_text must be a hard error, never silently parsed as 0");
+}
+
+// --- v2 P1-2: an authority requires an approved passage, not just a source document ---
+// (legal_authority_passages already existed in the schema but nothing ever read or
+// wrote it - verify_authority only ever required source_document_version_id to be
+// set, so an authority citing an entire unrelated document could still be "verified")
+
+fn new_document_with_page(db: &DbState, matter_id: &str, page_text: &str) -> (String, String) {
+    let document_id = Uuid::new_v4().to_string();
+    let version_id = Uuid::new_v4().to_string();
+    let page_id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at) VALUES(?1,?2,'מסמך',?3,?3)",
+            params![document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,created_at) VALUES(?1,?2,?3,'x',?4)",
+            params![version_id, document_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES(?1,?2,?3,1,'page',0,?4,?4,'x','native_text',?5)",
+            params![page_id, matter_id, version_id, page_text, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+    (version_id, page_id)
+}
+
+fn new_draft_authority(db: &DbState, matter_id: &str, source_version_id: Option<&str>) -> String {
+    let id = Uuid::new_v4().to_string();
+    db.write(|conn| conn.execute(
+        "INSERT INTO legal_authorities(id,matter_id,citation,title,source_document_version_id,status)
+         VALUES(?1,?2,'רע״א 1234/20','כותרת',?3,'draft')",
+        params![id, matter_id, source_version_id],
+    ).map_err(AppError::Db)).unwrap();
+    id
+}
+
+#[test]
+fn adding_an_authority_passage_requires_a_stored_source_document() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "v2 P1-2 test: no source");
+
+    let authority_id = new_draft_authority(&db, &matter_id, None);
+    let (_, page_id) = new_document_with_page(&db, &matter_id, "קטע כלשהו.");
+
+    let result = authorities::add_passage(&db, &matter_id, &authority_id, &page_id, "קטע כלשהו.", None);
+    assert!(result.is_err(), "an authority with no stored source document must not accept a passage");
+}
+
+#[test]
+fn adding_an_authority_passage_requires_verbatim_containment_in_the_cited_page() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "v2 P1-2 test: containment");
+
+    let (version_id, page_id) = new_document_with_page(&db, &matter_id, "בית המשפט קבע כי יש להטיל אשם תורם בשיעור 20%.");
+    let authority_id = new_draft_authority(&db, &matter_id, Some(&version_id));
+
+    let fabricated = authorities::add_passage(&db, &matter_id, &authority_id, &page_id, "בית המשפט קבע כי אין להטיל אשם תורם", None);
+    assert!(fabricated.is_err(), "a passage not actually present on the source page must be rejected, not trusted from free text");
+
+    let real = authorities::add_passage(&db, &matter_id, &authority_id, &page_id, "יש להטיל אשם תורם בשיעור 20%", Some("אשם תורם"));
+    assert!(real.is_ok(), "a passage that genuinely appears (after whitespace normalization) on the source page must be accepted");
+}
+
+#[test]
+fn verifying_an_authority_requires_at_least_one_approved_passage() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "v2 P1-2 test: verify gating");
+
+    let (version_id, page_id) = new_document_with_page(&db, &matter_id, "התובע זכאי לפיצוי בגין נזק לא ממוני.");
+    let authority_id = new_draft_authority(&db, &matter_id, Some(&version_id));
+
+    // no passage at all yet
+    assert!(authorities::verify(&db, &matter_id, &authority_id).is_err(), "verifying with zero passages must fail");
+
+    let passage_id = authorities::add_passage(&db, &matter_id, &authority_id, &page_id, "זכאי לפיצוי בגין נזק לא ממוני", None).unwrap();
+
+    // a passage exists but isn't approved yet
+    assert!(authorities::verify(&db, &matter_id, &authority_id).is_err(), "verifying with only an unapproved passage must fail");
+
+    authorities::approve_passage(&db, &matter_id, &authority_id, &passage_id).unwrap();
+    let integrity_sha = authorities::verify(&db, &matter_id, &authority_id).unwrap();
+    assert_eq!(integrity_sha.len(), 64, "must return a real sha256 hex digest");
+
+    let status: String = db.read(|conn| conn.query_row(
+        "SELECT status FROM legal_authorities WHERE id=?1", [&authority_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(status, "verified");
+
+    // an already-verified authority is no longer in 'draft', so re-verifying must fail
+    assert!(authorities::verify(&db, &matter_id, &authority_id).is_err(), "an already-verified authority must not be re-verifiable");
+}
+
+#[test]
+fn approving_a_passage_re_checks_containment_against_the_current_source_text() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "v2 P1-2 test: re-check at approval");
+
+    let (version_id, page_id) = new_document_with_page(&db, &matter_id, "הנתבע התרשל בנהיגתו.");
+    let authority_id = new_draft_authority(&db, &matter_id, Some(&version_id));
+    let passage_id = authorities::add_passage(&db, &matter_id, &authority_id, &page_id, "הנתבע התרשל בנהיגתו", None).unwrap();
+
+    // simulate the source page's text changing after the passage was drafted but
+    // before anyone approved it (e.g. a corrected re-extraction)
+    db.write(|conn| conn.execute(
+        "UPDATE document_pages SET normalized_text='טקסט שונה לחלוטין.' WHERE id=?1", [&page_id]
+    ).map_err(AppError::Db)).unwrap();
+
+    let result = authorities::approve_passage(&db, &matter_id, &authority_id, &passage_id);
+    assert!(result.is_err(), "approval must re-check containment against the page's current text, not trust what was true when the passage was drafted");
 }

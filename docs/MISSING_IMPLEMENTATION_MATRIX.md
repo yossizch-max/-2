@@ -160,3 +160,17 @@ fixed. Tier 3 of that same report (a deterministic deadline rules engine, a vers
 tort damages ruleset, Medical/Wage/Liability ledgers) is deliberately not attempted — it
 requires a real licensed tort lawyer's active involvement to be correct, not something to
 encode unilaterally from a report.
+
+## Follow-up engineering fixes: OCR RAII cleanup and authority-passage grounding (2026-08-25)
+
+Two items both audit rounds had explicitly logged as "deliberately not addressed" — see
+`docs/RELEASE_GATES.md`'s "Follow-up fixes" section for the full writeup. Neither needed
+a legal-domain judgment call, so both were picked up directly: the OCR scratch directory
+now cleans up via an RAII guard (`OcrTempDir` in `extraction.rs`) instead of manual
+`remove_dir_all` calls that a failed process spawn could bypass; and Verified Authority
+now requires at least one *approved passage* — quoted text checked verbatim against the
+authority's own source document, re-checked again at approval time — not just a source
+document attached to it. `legal_authority_passages` existed in the schema since the
+original import but was never wired to any command until now. A new `authorities` module
+holds this logic (testable outside `tauri::State`, same pattern as `legal_docs`/`damage`),
+and `AuthoritiesTab` gained a passage-management panel.

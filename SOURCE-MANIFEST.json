@@ -1,11 +1,11 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-25",
-  "regenerated_against_commit": "721cc03d964d287a44830c669c2aceb3ad554898",
+  "regenerated_against_commit": "da0465e71dff80ae43297e0c8bdcbce9c8d03ddc",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
-  "file_count": 86,
+  "file_count": 87,
   "files": [
     {
       "path": ".github/workflows/windows-release-gate.yml",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 11572,
-      "sha256": "6520b7d7edc8d835fa901c3955cdcb5b97c304be32d319aa813761ad9b168372"
+      "size": 12607,
+      "sha256": "c308dbb756953b9baa96e9cc24a91cf305130c5215495a752056b844ccf06bb6"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 36171,
-      "sha256": "4a86446c84ad6a0a14243f5aa8991a5efca2a8608bf33f457d1e5477095c2f0e"
+      "size": 39694,
+      "sha256": "f8097e09b3648845a27f680d0ee7c75821f5aaf7f11b349e044c837427defdcd"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -203,9 +203,14 @@
       "sha256": "c79147ca84b14d7fe458e159f1aa9e63cfef0ed8bc38b79442aadf84f27e4af6"
     },
     {
+      "path": "src-tauri/src/authorities.rs",
+      "size": 7333,
+      "sha256": "35d65e8162b11f9b221afe5cef9532288cba6ebd4d70a3d781cc2a4fe5cf278b"
+    },
+    {
       "path": "src-tauri/src/commands.rs",
-      "size": 59793,
-      "sha256": "e12644d9209eb7565a1d97064891ac371fe6ea6027f3dbbaa3734b27b3f65a2d"
+      "size": 60488,
+      "sha256": "66301d5c0a1ee9ce563fb668e6aee6fa24ca6f1eac3fb540fe978cdd350bde31"
     },
     {
       "path": "src-tauri/src/damage.rs",
@@ -224,8 +229,8 @@
     },
     {
       "path": "src-tauri/src/extraction.rs",
-      "size": 8356,
-      "sha256": "fa2eb52c182745850e66f9705213092cbca8515258749089c4e22b3257e54c45"
+      "size": 9512,
+      "sha256": "7f8b8df651739d028b074dacf15c397f7d51b8f8d857aea8fd4db83c9ad8af84"
     },
     {
       "path": "src-tauri/src/gate_f_partial.rs",
@@ -234,8 +239,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 32606,
-      "sha256": "1f0e8a37a027630471b32ecb28c50387258e72ed23b1a2835d22a7b7da442985"
+      "size": 40145,
+      "sha256": "676d49ce109fe05c7722c3f572447bfd6c49a7e53791a59ffc07c950ae5cd13d"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
@@ -244,8 +249,8 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "size": 4153,
-      "sha256": "3563ddf3944adab4a0c14270974dce27c743daf4247f17e6efa91898f00a46b8"
+      "size": 4311,
+      "sha256": "4fc674ef3f845a16d42ca4e3915c1992892c27e8adf648ab9c8faa48102ea500"
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -319,8 +324,8 @@
     },
     {
       "path": "src/lib/ipc.ts",
-      "size": 6890,
-      "sha256": "72ad8fc39037ea4a147f7d6bc2f45886217d08baa07f057331253522c0d78a49"
+      "size": 7211,
+      "sha256": "7e85f831047324500799a62239f200ae65d62989495976cfbb4cfcc4905a7699"
     },
     {
       "path": "src/main.tsx",
@@ -329,8 +334,8 @@
     },
     {
       "path": "src/matter/AuthoritiesTab.tsx",
-      "size": 3940,
-      "sha256": "b8b9bc931ea4c3cfe7200d82a044ee7dad493bc815f265397746da1d1e453e56"
+      "size": 8347,
+      "sha256": "6c00cfc1b79ad842d418c82dc54dd4663f9acb14e7f8f5b3c5d985c5a7ef9e52"
     },
     {
       "path": "src/matter/DamageTab.tsx",
@@ -409,8 +414,8 @@
     },
     {
       "path": "src/styles/app.css",
-      "size": 10754,
-      "sha256": "667aac8da51bb9fd7f797b04b6231674a34679406e00f05f7c8a95ac9aeed98e"
+      "size": 10856,
+      "sha256": "d54398900cc1562622da9a72273b55e16680a271a80f3148496c5d68d4010b4f"
     },
     {
       "path": "src/styles/tokens.css",
@@ -419,8 +424,8 @@
     },
     {
       "path": "src/types.ts",
-      "size": 3507,
-      "sha256": "48a34b1dbb2dd51d6f2e9e573b6c083ca323b8883f440069b911afd3fdaa5bbd"
+      "size": 3936,
+      "sha256": "87bf3055e5b720a610c42548b14b7ee8d7e52a16dbc710eca0edf1efb347d949"
     },
     {
       "path": "tsconfig.app.json",

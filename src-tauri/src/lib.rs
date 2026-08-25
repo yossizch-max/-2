@@ -1,4 +1,5 @@
 mod ai;
+mod authorities;
 mod commands;
 mod damage;
 mod db;
@@ -100,6 +101,9 @@ pub fn run() {
             commands::lock_damage_calculation,
             commands::list_authorities,
             commands::save_authority,
+            commands::list_authority_passages,
+            commands::add_authority_passage,
+            commands::approve_authority_passage,
             commands::verify_authority,
             commands::list_legal_documents,
             commands::save_legal_document_draft,

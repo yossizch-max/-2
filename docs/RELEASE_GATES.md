@@ -25,9 +25,13 @@ provenance metadata — with regression tests for everything code-level. A third
 different-kind report (UX/product/legal-domain maturity, not code integrity) then found
 several dead UI paths and hardcoded state; tiers 1 and 2 of that report are fixed (see
 the round-3 section below), tier 3 (Israeli tort-law domain modules) is deliberately out
-of scope pending a real lawyer's involvement. Gate C/E are reconfirmed current as of
-run #11, commit `721cc03` (2026-08-25) — the latest commit on `main`. What's left needs
-a human on a real Windows machine with a fresh installer: real OCR, real AI provider
+of scope pending a real lawyer's involvement. Two engineering-only items both audit
+rounds had logged as "deliberately not addressed" — the OCR temp-directory RAII gap and
+Verified Authority not requiring an approved passage — were then also fixed (see the
+"Follow-up fixes" section below). Gate C/E were last reconfirmed at run #11, commit
+`721cc03`; the follow-up fixes land in a later commit and need their own Windows run
+before Gate C/E can be called current again. What's left needs a human on a real
+Windows machine with a fresh installer: real OCR, real AI provider
 calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
@@ -116,9 +120,9 @@ already exercises.
 
 **Deliberately not addressed** (P1/P2 in the report, out of scope for this pass): DOCX/PDF
 export still don't exist; the damage engine is still an additive prototype, not a
-versioned legal ruleset engine; there's no deterministic legal-deadline rules engine;
-OCR temp-directory cleanup isn't RAII-guarded against every early-exit path. None of
-these were claimed fixed.
+versioned legal ruleset engine; there's no deterministic legal-deadline rules engine.
+None of these were claimed fixed. (The OCR temp-directory RAII gap noted here was
+subsequently fixed — see the follow-up fixes section below.)
 
 **P1-1 (AI run/review/verify-fact UI not wired end-to-end) was subsequently fixed** in a
 follow-up pass — see `docs/MISSING_IMPLEMENTATION_MATRIX.md`'s "AI review workflow
@@ -182,11 +186,12 @@ Also fixed (v2 P1, not P0, but cheap to close alongside these):
   `list_verified_facts` now also returns an `occurrenceId` (joined through
   `verified_fact_sources.document_version_id`), and the button calls `open_occurrence`.
 
-**Deliberately not addressed** (v2 P1/P2, out of scope for this pass): v2 P1-2
-(Verified Authority still doesn't require an approved passage, only a source document);
-v2 P1-3 (damage engine still an additive prototype, not a versioned rules engine); v2
-P1-5 (no deterministic deadline engine); v2 P1-6 (DOCX/PDF export still absent); the
-round-1 OCR RAII cleanup gap. None of these were claimed fixed.
+**Deliberately not addressed** (v2 P1/P2, out of scope for this pass): v2 P1-3 (damage
+engine still an additive prototype, not a versioned rules engine); v2 P1-5 (no
+deterministic deadline engine); v2 P1-6 (DOCX/PDF export still absent). None of these
+were claimed fixed. (v2 P1-2 — Verified Authority requiring an approved passage — and
+the round-1 OCR RAII cleanup gap were both subsequently fixed; see the follow-up fixes
+section below.)
 
 Real regression coverage lives in `src-tauri/src/integrity_tests.rs` (4 new tests) and
 `src-tauri/src/scanner.rs`'s own test module (1 new unit test for the partial-scan
@@ -246,6 +251,47 @@ no drift), `qa:static` (all checks pass). Confirmed on real Windows CI at
 [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830), commit
 `721cc03`, 2026-08-25 — see the updated Gate C/E entries below.
 
+## Follow-up fixes: OCR temp-dir RAII cleanup and authority-passage grounding (2026-08-25)
+
+Two items that both audit rounds had explicitly logged as "deliberately not addressed"
+were picked up in a later pass, since neither needs a lawyer's judgment call to fix —
+both are ordinary engineering gaps:
+
+- **Round-1 OCR temp-directory RAII gap.** `extraction::extract_scanned_pdf` created a
+  scratch directory for rasterized page images and cleaned it up with manual
+  `std::fs::remove_dir_all` calls at each known failure branch — but several operations
+  in between (`Command::output()?`, `std::fs::read_dir(&temp)?`) used the `?` operator,
+  so a failure at any of *those* points (e.g. the OS failing to spawn `pdftoppm.exe` or
+  `tesseract.exe`, not just those processes returning a non-zero exit code) would
+  propagate immediately and leak the directory. Fixed with an `OcrTempDir` RAII guard
+  (mirroring `VerifiedSourceSnapshot`'s existing `Drop`-based cleanup pattern in
+  `source_snapshot.rs`): the directory is removed on drop regardless of which path the
+  function exits through. Covered by a real unit test in `extraction.rs` that forces an
+  early return through `?` and asserts the directory no longer exists afterward.
+- **v2 P1-2, Verified Authority didn't require an approved passage.** `verify_authority`
+  only ever required `source_document_version_id` to be set — an authority could be
+  "verified" by attaching an entire unrelated document, without anyone having read or
+  stood behind any specific passage of it. `legal_authority_passages` already existed in
+  the schema (`source_page_id`, `passage_text`, `passage_sha256`, `approved`) but no
+  command ever read or wrote it. Fixed by extracting `verify_authority`'s logic (which
+  can't be tested directly — see the v1 P0-6 note above about `tauri::State`) into a new
+  `authorities` module: `add_passage` requires the quoted text to appear verbatim, after
+  `extraction::normalize_source_text`, on the cited page of the authority's own source
+  document — not typed freely; `approve_passage` re-checks that same containment against
+  the page's *current* text at approval time, not just when it was drafted;
+  `verify` now requires at least one approved passage and folds the approved passages'
+  hashes into the integrity hash. `AuthoritiesTab` gained a passage-management panel:
+  pick a source page, read its text, quote a passage, approve it, then verify.
+
+Both covered by real regression tests: `extraction::tests::ocr_temp_dir_is_removed_on_early_return_through_the_question_mark_operator`,
+and four new tests in `integrity_tests.rs` (`adding_an_authority_passage_requires_a_stored_source_document`,
+`adding_an_authority_passage_requires_verbatim_containment_in_the_cited_page`,
+`verifying_an_authority_requires_at_least_one_approved_passage`,
+`approving_a_passage_re_checks_containment_against_the_current_source_text`) — 24/24
+backend tests pass. `npm run build`, `contract:check` (72/72, no drift — three new
+commands: `list_authority_passages`, `add_authority_passage`, `approve_authority_passage`),
+and `qa:static` all pass.
+
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
   `VerifiedSourceSnapshot::create` before any parsing. ✅
@@ -268,7 +314,7 @@ that live check belongs to Gate F.
 - `package-lock.json` and `src-tauri/Cargo.lock` are committed and reviewed. ✅
 - `npm ci` — clean install, 0 vulnerabilities from `npm audit --audit-level=high`. ✅
 - `cargo check --locked` — passes. ✅
-- `cargo test --locked -- --test-threads=1` — 19/19 tests pass (grown from the original
+- `cargo test --locked -- --test-threads=1` — 24/24 tests pass (grown from the original
   4 as Gates F and the external-audit response added real coverage). ✅
 - Build does not modify either lockfile — verified by hashing both files before and
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;

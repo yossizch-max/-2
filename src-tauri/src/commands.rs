@@ -1,5 +1,5 @@
 use crate::{
-    ai, damage, extraction, legal_docs, models, scanner, search, security,
+    ai, authorities, damage, extraction, legal_docs, models, scanner, search, security,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -1015,13 +1015,16 @@ pub fn list_authorities(state: State<'_, AppState>, payload: Value) -> AppResult
     let matter_id=required_string(&payload,"matterId")?;
     state.db.read(|conn|{
         let mut stmt=conn.prepare(
-            "SELECT id,matter_id,citation,title,court,decision_date,status
-             FROM legal_authorities WHERE matter_id=?1 ORDER BY citation"
+            "SELECT id,matter_id,citation,title,court,decision_date,status,source_document_version_id,
+             (SELECT count(*) FROM legal_authority_passages p WHERE p.authority_id=a.id AND p.approved=1)
+             FROM legal_authorities a WHERE matter_id=?1 ORDER BY citation"
         )?;
         let rows=stmt.query_map([matter_id],|r|Ok(json!({
             "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,"citation":r.get::<_,String>(2)?,
             "title":r.get::<_,String>(3)?,"court":r.get::<_,Option<String>>(4)?,
-            "decisionDate":r.get::<_,Option<String>>(5)?,"status":r.get::<_,String>(6)?
+            "decisionDate":r.get::<_,Option<String>>(5)?,"status":r.get::<_,String>(6)?,
+            "sourceDocumentVersionId":r.get::<_,Option<String>>(7)?,
+            "approvedPassageCount":r.get::<_,i64>(8)?
         })))?.collect::<Result<Vec<_>,_>>()?;
         Ok(Value::Array(rows))
     })
@@ -1046,37 +1049,55 @@ pub fn save_authority(state: State<'_, AppState>, payload: Value) -> AppResult<V
 }
 
 #[tauri::command]
+pub fn list_authority_passages(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let authority_id=required_string(&payload,"authorityId")?;
+    state.db.read(|conn|{
+        let mut stmt=conn.prepare(
+            "SELECT p.id,p.source_page_id,p.passage_text,p.issue_tag,p.approved,
+             dp.page_number,
+             (SELECT o.file_name FROM file_occurrences o
+              WHERE o.document_version_id=dp.document_version_id AND o.exists_now=1 LIMIT 1)
+             FROM legal_authority_passages p
+             LEFT JOIN document_pages dp ON dp.id=p.source_page_id
+             WHERE p.matter_id=?1 AND p.authority_id=?2"
+        )?;
+        let rows=stmt.query_map(params![matter_id,authority_id],|r|Ok(json!({
+            "id":r.get::<_,String>(0)?,"sourcePageId":r.get::<_,String>(1)?,
+            "passageText":r.get::<_,String>(2)?,"issueTag":r.get::<_,Option<String>>(3)?,
+            "approved":r.get::<_,i64>(4)?!=0,"page":r.get::<_,Option<i64>>(5)?,
+            "fileName":r.get::<_,Option<String>>(6)?
+        })))?.collect::<Result<Vec<_>,_>>()?;
+        Ok(Value::Array(rows))
+    })
+}
+
+#[tauri::command]
+pub fn add_authority_passage(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let authority_id=required_string(&payload,"authorityId")?;
+    let source_page_id=required_string(&payload,"sourcePageId")?;
+    let passage_text=required_string(&payload,"passageText")?;
+    let issue_tag=payload.get("issueTag").and_then(Value::as_str);
+    let id=authorities::add_passage(&state.db,matter_id,authority_id,source_page_id,passage_text,issue_tag)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn approve_authority_passage(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let authority_id=required_string(&payload,"authorityId")?;
+    let passage_id=required_string(&payload,"passageId")?;
+    authorities::approve_passage(&state.db,matter_id,authority_id,passage_id)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
 pub fn verify_authority(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     let authority_id=required_string(&payload,"authorityId")?;
-    state.db.write(|conn|{
-        let (citation,title,court,decision_date,source_version):(String,String,Option<String>,Option<String>,Option<String>)=conn.query_row(
-            "SELECT citation,title,court,decision_date,source_document_version_id
-             FROM legal_authorities WHERE id=?1 AND matter_id=?2 AND status='draft'",
-            params![authority_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
-        ).map_err(|_|AppError::Validation("authority not verifiable".into()))?;
-        // Source-first: an authority cannot be "verified" without an actual stored
-        // decision/passage backing it. The composite FK on source_document_version_id
-        // already guarantees same-matter when it's set; this just makes it required.
-        let source_version=source_version.ok_or_else(||AppError::Validation(
-            "an authority requires a stored source document before it can be verified".into()
-        ))?;
-        let source_sha:String=conn.query_row(
-            "SELECT content_sha256 FROM document_versions WHERE id=?1 AND matter_id=?2",
-            params![source_version,matter_id],|r|r.get(0)
-        ).map_err(|_|AppError::InvalidSourceReference)?;
-        let integrity_sha=hex::encode(Sha256::digest(format!(
-            "{authority_id}:{citation}:{title}:{}:{}:{source_version}:{source_sha}",
-            court.unwrap_or_default(),decision_date.unwrap_or_default()
-        )));
-        let changed=conn.execute(
-            "UPDATE legal_authorities SET status='verified',verified_at=?3,integrity_sha256=?4
-             WHERE id=?1 AND matter_id=?2 AND status='draft'",
-            params![authority_id,matter_id,Utc::now().to_rfc3339(),integrity_sha]
-        )?;
-        if changed!=1{return Err(AppError::Validation("authority not verifiable".into()));}
-        Ok(json!({"integritySha256":integrity_sha}))
-    })
+    let integrity_sha=authorities::verify(&state.db,matter_id,authority_id)?;
+    Ok(json!({"integritySha256":integrity_sha}))
 }
 
 #[tauri::command]

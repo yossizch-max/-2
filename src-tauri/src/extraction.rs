@@ -15,6 +15,25 @@ use std::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+/// Guards an OCR scratch directory: removed on drop regardless of how the
+/// enclosing function exits (early `?` propagation included), so a failed
+/// pdftoppm/tesseract invocation can no longer leak rasterized page images.
+struct OcrTempDir {
+    path: PathBuf,
+}
+
+impl OcrTempDir {
+    fn create() -> AppResult<Self> {
+        let path = std::env::temp_dir().join("tahrir").join(format!("ocr-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for OcrTempDir {
+    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.path); }
+}
+
 struct Candidate {
     matter_id: String,
     document_version_id: String,
@@ -135,19 +154,17 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
         return Err(AppError::OcrRuntimeMissing);
     }
 
-    let temp = std::env::temp_dir().join("tahrir").join(format!("ocr-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&temp)?;
-    let prefix = temp.join("page");
+    let temp = OcrTempDir::create()?;
+    let prefix = temp.path.join("page");
 
     let raster = Command::new(pdftoppm)
         .args(["-png", "-r", "220"])
         .arg(path).arg(&prefix).output()?;
     if !raster.status.success() {
-        let _ = std::fs::remove_dir_all(&temp);
         return Err(AppError::Validation("pdftoppm failed".into()));
     }
 
-    let mut images: Vec<PathBuf> = std::fs::read_dir(&temp)?
+    let mut images: Vec<PathBuf> = std::fs::read_dir(&temp.path)?
         .filter_map(Result::ok).map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("png"))
         .collect();
@@ -161,7 +178,6 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
             .arg(&tessdata)
             .output()?;
         if !output.status.success() {
-            let _ = std::fs::remove_dir_all(&temp);
             return Err(AppError::Validation(format!("tesseract failed on page {}", index + 1)));
         }
         blocks.push(ExtractedBlock {
@@ -172,7 +188,6 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
             extraction_method: "tesseract",
         });
     }
-    let _ = std::fs::remove_dir_all(&temp);
     Ok(blocks)
 }
 
@@ -222,4 +237,26 @@ pub fn normalize_source_text(input: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ocr_temp_dir_is_removed_on_early_return_through_the_question_mark_operator() {
+        fn fails_partway(marker: &mut Option<PathBuf>) -> AppResult<()> {
+            let temp = OcrTempDir::create()?;
+            *marker = Some(temp.path.clone());
+            assert!(temp.path.exists());
+            Err(AppError::Validation("simulated pdftoppm/tesseract failure".into()))?;
+            unreachable!()
+        }
+
+        let mut marker = None;
+        let result = fails_partway(&mut marker);
+        assert!(result.is_err());
+        let path = marker.expect("temp dir was created before the simulated failure");
+        assert!(!path.exists(), "OcrTempDir must clean up even when the function exits via `?`");
+    }
 }
