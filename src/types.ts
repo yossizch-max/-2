@@ -67,6 +67,20 @@ export type LegalDocument = {
   currentVersionId?: string | null; updatedAt: string;
 };
 
+export type LegalDocumentParagraph = {
+  id: string; index: number; kind: string; bodyText: string;
+  provenanceState: "confirmed" | "needs_review";
+};
+
+export type LegalDocumentSection = {
+  id: string; index: number; heading: string; paragraphs: LegalDocumentParagraph[];
+};
+
+export type LegalDocumentVersionDetail = {
+  id: string; legalDocumentId: string; versionNumber: number;
+  status: "draft" | "approved" | "superseded"; sections: LegalDocumentSection[];
+};
+
 export type Authority = {
   id: string; matterId: string; citation: string; title: string;
   status: "draft" | "verified" | "revoked";

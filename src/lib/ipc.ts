@@ -66,5 +66,11 @@ export const commands = {
   save_legal_document_draft: (payload:Record<string,unknown>={}) => call("save_legal_document_draft",payload),
   approve_legal_document: (payload:Record<string,unknown>={}) => call("approve_legal_document",payload),
   create_legal_document_version: (payload:Record<string,unknown>={}) => call("create_legal_document_version",payload),
+  get_legal_document_version: (payload:Record<string,unknown>={}) => call("get_legal_document_version",payload),
+  fill_legal_document_facts: (payload:Record<string,unknown>={}) => call("fill_legal_document_facts",payload),
+  add_legal_document_paragraph: (payload:Record<string,unknown>={}) => call("add_legal_document_paragraph",payload),
+  update_legal_document_paragraph: (payload:Record<string,unknown>={}) => call("update_legal_document_paragraph",payload),
+  confirm_legal_document_paragraph: (payload:Record<string,unknown>={}) => call("confirm_legal_document_paragraph",payload),
+  delete_legal_document_paragraph: (payload:Record<string,unknown>={}) => call("delete_legal_document_paragraph",payload),
   export_legal_document: (payload:Record<string,unknown>={}) => call("export_legal_document",payload),
 };

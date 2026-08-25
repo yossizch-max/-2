@@ -12,11 +12,12 @@ succeeds in CI and produces an unsigned installer with OCR included (see Gate E 
 artifact link) — signing, release manifest and rollback package are still outstanding.
 F: a real automated test (`cargo test gate_f_partial`) now covers every step of the
 24-step manual checklist that is platform-independent business logic (matter/scan/hash,
-fail-closed source-tamper rejection, search, fact verification, damage lock, legal-doc
-approval, export+audit, DB reopen) — genuinely executed, not mocked. What's left needs a
+fail-closed source-tamper rejection, full-text search, fact verification, damage lock,
+legal-document authoring — template sections, auto-fill from verified facts, manual
+paragraph add/edit/confirm/delete, approval, starting a new version from an approved
+one — export+audit, DB reopen) — genuinely executed, not mocked. What's left needs a
 human on a real Windows machine with Gate E's installer: real OCR, real AI provider
-calls, and two features (new legal-document versions, DOCX export) that don't exist in
-this reconstruction yet.**
+calls, and DOCX export, which doesn't exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -225,7 +226,7 @@ Per-step outcome:
     covered for real; the AI-proposal review half needs #11 first
 13. Change source and prove stale propagation — ⚠️ re-extraction rejection is the same
     mechanism as #3, covered for real; the `document_versions.stale` column itself is
-    never actually set by any of the 62 commands in this reconstruction — a real
+    never actually set by any of the 68 commands in this reconstruction — a real
     product gap, flagged here rather than silently worked around in the test
 14. Create and lock damage calculation — ✅ real, including the immutability trigger
 15. Create legal draft — ✅ real

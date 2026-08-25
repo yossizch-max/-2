@@ -2,15 +2,17 @@
 
 This document distinguishes reconstructed executable handlers from command contracts that remain intentionally fail-closed.
 
-Total command contract: **62** (the original alpha.16 61-command contract plus
-`create_legal_document_version`, added after Gate F testing surfaced it as a real product gap —
-see "Gaps found and fixed during Gate F" below)
+Total command contract: **68** (the original alpha.16 61-command contract plus
+`create_legal_document_version`, `get_legal_document_version`, `fill_legal_document_facts`,
+`add_legal_document_paragraph`, `update_legal_document_paragraph`,
+`confirm_legal_document_paragraph` and `delete_legal_document_paragraph` — see "Gaps found and
+fixed during Gate F" and "Legal-document authoring efficiency pass" below)
 
-Wired handlers: **62**
+Wired handlers: **68**
 
 Fail-closed historical endpoints: **0**
 
-All 62 commands in the Tauri contract have real handlers backed by the SQLCipher schema
+All 68 commands in the Tauri contract have real handlers backed by the SQLCipher schema
 (`src-tauri/migrations/001_schema_v12.sql`, 33 user tables). None return
 `RECONSTRUCTED_COMMAND_NOT_YET_WIRED` any longer.
 
@@ -64,3 +66,34 @@ While fixing the second gap, also fixed a related bug directly in its path: `app
 updated `legal_document_versions.status` but never `legal_documents.status`, so the parent
 document's status shown in the UI stayed `draft` forever even after approval. `approve_version`
 now updates both in the same transaction.
+
+## Legal-document authoring efficiency pass
+
+Requested directly: the pleadings/claims generator (`LegalDocumentsTab`) worked but every
+document started from a blank version with no way to populate or edit it beyond the API. Three
+changes closed that gap:
+
+- **Fixed section templates per document kind.** `legal_docs::create_draft` now seeds a real
+  section skeleton depending on `kind` (`מכתב דרישה`/`כתב תביעה`/`כתב הגנה ותגובה` each get their
+  own headings), always ending in a fixed `FACTS_SECTION_HEADING` ("עובדות מאומתות") section that
+  the fact autofill below targets.
+- **Auto-fill from verified facts.** `legal_docs::fill_from_verified_facts` (command
+  `fill_legal_document_facts`) appends one already-`confirmed`, source-grounded paragraph per
+  matter fact with `status='valid'` into the facts section — grounded via a real
+  `legal_document_sources` row pointing at the `verified_fact_id`, not just copied text. It's
+  idempotent: re-running only picks up facts verified since the last run, it never duplicates a
+  fact already linked into the version.
+- **In-app paragraph editing.** `get_legal_document_version` returns a version's full
+  section/paragraph tree; `add_legal_document_paragraph` / `update_legal_document_paragraph` /
+  `confirm_legal_document_paragraph` / `delete_legal_document_paragraph` let a lawyer draft, edit,
+  approve-for-inclusion and remove paragraphs directly in `LegalDocumentsTab`'s new editor view,
+  without leaving the app. All four (and the autofill) reject any version whose `status` isn't
+  `draft` in application code — this matters because the schema's immutability triggers guard
+  `legal_document_versions` and `legal_document_sources`, but **not**
+  `legal_document_paragraphs` itself, so the draft-only check in `legal_docs.rs` is the only thing
+  actually stopping an approved version's paragraphs from being edited. Editing a paragraph's text
+  always resets its `provenance_state` to `needs_review`, so `approve_version`'s existing
+  all-paragraphs-confirmed gate forces an explicit re-confirm before a next approval.
+
+Covered for real by `gate_f_partial.rs`: template seeding, autofill (including its idempotency),
+and the add/edit/confirm/delete cycle for a manually-added paragraph.

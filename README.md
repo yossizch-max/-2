@@ -54,7 +54,7 @@ Backend:
 - deterministic damage core in integer cents
 - legal-document approval immutability
 - search
-- 62-command Tauri contract
+- 68-command Tauri contract
 
 ## Important reconstruction status
 
@@ -62,7 +62,7 @@ The package contains a complete architectural source tree. It is a **developer r
 historical alpha.16 command *internals* (exact original logic/behavior) could not be recovered
 from the missing source.
 
-All 62 commands in the Tauri contract now have real, DB-backed handlers (see
+All 68 commands in the Tauri contract now have real, DB-backed handlers (see
 `docs/MISSING_IMPLEMENTATION_MATRIX.md` for the specific design decisions made while wiring them).
 Where a real implementation would require something this reconstruction doesn't have — a
 DOCX/PDF converter, for example — the command fails closed with a stable error

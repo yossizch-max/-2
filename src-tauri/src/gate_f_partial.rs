@@ -246,33 +246,67 @@ fn gate_f_partial_real_flow() {
         "SELECT current_version_id FROM legal_documents WHERE id=?1", [&legal_doc_id], |r| r.get(0)
     ).map_err(AppError::Db)).unwrap();
 
-    // Add one confirmed paragraph grounded in the verified fact above, so approval
-    // exercises a real (non-degenerate) provenance check and export produces real text.
-    let section_id = Uuid::new_v4().to_string();
-    let paragraph_id = Uuid::new_v4().to_string();
-    db.write(|conn| {
-        let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO legal_document_sections(id,matter_id,legal_document_version_id,section_index,heading)
-             VALUES(?1,?2,?3,0,'עובדות')",
-            params![section_id, matter_id, legal_version_id],
-        )?;
-        tx.execute(
-            "INSERT INTO legal_document_paragraphs(
-                id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,
-                body_text,provenance_state
-             ) VALUES(?1,?2,?3,?4,0,'fact','התובע אושפז בבית החולים הדסה עין כרם.','confirmed')",
-            params![paragraph_id, matter_id, legal_version_id, section_id],
-        )?;
-        tx.execute(
-            "INSERT INTO legal_document_sources(
-                id,matter_id,legal_document_version_id,paragraph_id,source_kind,verified_fact_id
-             ) VALUES(?1,?2,?3,?4,'verified_fact',?5)",
-            params![Uuid::new_v4().to_string(), matter_id, legal_version_id, paragraph_id, fact_id],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }).unwrap();
+    // create_draft seeds a fixed template of sections (per document kind), ending in
+    // the FACTS_SECTION_HEADING section - confirm the template landed for real.
+    let seeded_section_count: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM legal_document_sections WHERE legal_document_version_id=?1",
+        [&legal_version_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert!(seeded_section_count >= 2, "create_draft should seed a real section template, not an empty document");
+
+    // Auto-fill the draft from the matter's verified facts (the "מילוי אוטומטי מעובדות
+    // מאומתות" feature) rather than hand-inserting a paragraph - this exercises the
+    // real fill_from_verified_facts path end to end, including its idempotency.
+    let added_first_pass = legal_docs::fill_from_verified_facts(&db, &matter_id, &legal_version_id).unwrap();
+    assert_eq!(added_first_pass, 1, "the one verified fact created above should be auto-filled in");
+    let added_second_pass = legal_docs::fill_from_verified_facts(&db, &matter_id, &legal_version_id).unwrap();
+    assert_eq!(added_second_pass, 0, "re-running the fill must not duplicate an already-linked fact");
+
+    let (facts_section_id, paragraph_id): (String, String) = db.read(|conn| conn.query_row(
+        "SELECT s.id,p.id FROM legal_document_sections s
+         JOIN legal_document_paragraphs p ON p.section_id=s.id
+         WHERE s.legal_document_version_id=?1 AND s.heading=?2",
+        params![legal_version_id, legal_docs::FACTS_SECTION_HEADING], |r| Ok((r.get(0)?, r.get(1)?))
+    ).map_err(AppError::Db)).unwrap();
+    let auto_filled_body: String = db.read(|conn| conn.query_row(
+        "SELECT body_text FROM legal_document_paragraphs WHERE id=?1", [&paragraph_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert!(auto_filled_body.contains("הדסה"), "auto-filled paragraph should carry the fact's actual content");
+    assert_eq!(
+        db.read(|conn| conn.query_row(
+            "SELECT provenance_state FROM legal_document_paragraphs WHERE id=?1", [&paragraph_id], |r| r.get::<_, String>(0)
+        ).map_err(AppError::Db)).unwrap(),
+        "confirmed",
+        "a fact-grounded auto-filled paragraph should already be confirmed, not pending review"
+    );
+
+    // Manual paragraph editing: add a free-text paragraph, edit it (which must drop it
+    // back to needs_review), confirm it, then delete it - the real add/update/confirm/
+    // delete-paragraph commands' underlying logic, not just the auto-fill path.
+    let manual_paragraph_id = legal_docs::add_paragraph(
+        &db, &matter_id, &legal_version_id, &facts_section_id, "טיוטה ראשונית לפסקה."
+    ).unwrap();
+    assert_eq!(
+        db.read(|conn| conn.query_row(
+            "SELECT provenance_state FROM legal_document_paragraphs WHERE id=?1", [&manual_paragraph_id], |r| r.get::<_, String>(0)
+        ).map_err(AppError::Db)).unwrap(),
+        "needs_review",
+        "a freshly added manual paragraph must not be pre-confirmed"
+    );
+    legal_docs::update_paragraph(&db, &matter_id, &legal_version_id, &manual_paragraph_id, "נוסח מתוקן של הפסקה.").unwrap();
+    legal_docs::confirm_paragraph(&db, &matter_id, &legal_version_id, &manual_paragraph_id).unwrap();
+    assert_eq!(
+        db.read(|conn| conn.query_row(
+            "SELECT body_text,provenance_state FROM legal_document_paragraphs WHERE id=?1",
+            [&manual_paragraph_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        ).map_err(AppError::Db)).unwrap(),
+        ("נוסח מתוקן של הפסקה.".to_string(), "confirmed".to_string())
+    );
+    legal_docs::delete_paragraph(&db, &matter_id, &legal_version_id, &manual_paragraph_id).unwrap();
+    let manual_paragraph_gone: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM legal_document_paragraphs WHERE id=?1", [&manual_paragraph_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(manual_paragraph_gone, 0);
 
     // --- Step 18: approve immutable version ---
     let approval_sha = legal_docs::approve_version(&db, &matter_id, &legal_version_id).unwrap();

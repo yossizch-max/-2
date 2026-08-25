@@ -1019,6 +1019,84 @@ pub fn create_legal_document_version(state: State<'_, AppState>, payload: Value)
 }
 
 #[tauri::command]
+pub fn get_legal_document_version(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let version_id=required_string(&payload,"versionId")?;
+    state.db.read(|conn|{
+        let (legal_document_id,version_number,status):(String,i64,String)=conn.query_row(
+            "SELECT legal_document_id,version_number,status FROM legal_document_versions WHERE id=?1 AND matter_id=?2",
+            params![version_id,matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(|_|AppError::NotFound("legal document version".into()))?;
+
+        struct Section{id:String,index:i64,heading:String}
+        let mut section_stmt=conn.prepare(
+            "SELECT id,section_index,heading FROM legal_document_sections
+             WHERE legal_document_version_id=?1 ORDER BY section_index"
+        )?;
+        let sections=section_stmt.query_map(params![version_id],|r|Ok(Section{
+            id:r.get(0)?,index:r.get(1)?,heading:r.get(2)?
+        }))?.collect::<Result<Vec<_>,_>>()?;
+
+        let mut paragraph_stmt=conn.prepare(
+            "SELECT id,paragraph_index,paragraph_kind,body_text,provenance_state
+             FROM legal_document_paragraphs WHERE section_id=?1 ORDER BY paragraph_index"
+        )?;
+        let mut out_sections=Vec::with_capacity(sections.len());
+        for s in sections {
+            let paragraphs=paragraph_stmt.query_map(params![s.id],|r|Ok(json!({
+                "id":r.get::<_,String>(0)?,"index":r.get::<_,i64>(1)?,"kind":r.get::<_,String>(2)?,
+                "bodyText":r.get::<_,String>(3)?,"provenanceState":r.get::<_,String>(4)?
+            })))?.collect::<Result<Vec<_>,_>>()?;
+            out_sections.push(json!({
+                "id":s.id,"index":s.index,"heading":s.heading,"paragraphs":paragraphs
+            }));
+        }
+
+        Ok(json!({
+            "id":version_id,"legalDocumentId":legal_document_id,"versionNumber":version_number,
+            "status":status,"sections":out_sections
+        }))
+    })
+}
+
+#[tauri::command]
+pub fn fill_legal_document_facts(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;let version_id=required_string(&payload,"versionId")?;
+    Ok(json!({"added":legal_docs::fill_from_verified_facts(&state.db,matter_id,version_id)?}))
+}
+
+#[tauri::command]
+pub fn add_legal_document_paragraph(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;let version_id=required_string(&payload,"versionId")?;
+    let section_id=required_string(&payload,"sectionId")?;let body_text=required_string(&payload,"bodyText")?;
+    Ok(json!({"id":legal_docs::add_paragraph(&state.db,matter_id,version_id,section_id,body_text)?}))
+}
+
+#[tauri::command]
+pub fn update_legal_document_paragraph(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;let version_id=required_string(&payload,"versionId")?;
+    let paragraph_id=required_string(&payload,"paragraphId")?;let body_text=required_string(&payload,"bodyText")?;
+    legal_docs::update_paragraph(&state.db,matter_id,version_id,paragraph_id,body_text)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn confirm_legal_document_paragraph(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;let version_id=required_string(&payload,"versionId")?;
+    let paragraph_id=required_string(&payload,"paragraphId")?;
+    legal_docs::confirm_paragraph(&state.db,matter_id,version_id,paragraph_id)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn delete_legal_document_paragraph(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;let version_id=required_string(&payload,"versionId")?;
+    let paragraph_id=required_string(&payload,"paragraphId")?;
+    legal_docs::delete_paragraph(&state.db,matter_id,version_id,paragraph_id)?;
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
 pub fn export_legal_document(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     let version_id=required_string(&payload,"legalDocumentVersionId")?;

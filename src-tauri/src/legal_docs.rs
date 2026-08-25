@@ -4,6 +4,22 @@ use rusqlite::params;
 use sha2::{Digest,Sha256};
 use uuid::Uuid;
 
+/// The trailing template section every document kind gets, used as the fixed
+/// insertion point for `fill_from_verified_facts`.
+pub const FACTS_SECTION_HEADING:&str="עובדות מאומתות";
+
+const TEMPLATE_DEMAND:&[&str]=&["רקע ועובדות","עילת החבות","הנזק והפיצוי המבוקש","דרישה סופית לתשלום",FACTS_SECTION_HEADING];
+const TEMPLATE_CLAIM:&[&str]=&["הצדדים","העובדות","העילות המשפטיות","הנזק","הסעדים המבוקשים",FACTS_SECTION_HEADING];
+const TEMPLATE_RESPONSE:&[&str]=&["כללי","תמצית טענות ההגנה","מענה לפרק העובדות","מענה לפרק הנזק",FACTS_SECTION_HEADING];
+
+fn template_sections(kind:&str)->&'static [&'static str]{
+    match kind {
+        "claim"=>TEMPLATE_CLAIM,
+        "response"=>TEMPLATE_RESPONSE,
+        _=>TEMPLATE_DEMAND,
+    }
+}
+
 pub fn create_draft(db:&DbState,matter_id:&str,title:&str,kind:&str)->AppResult<String>{
     let document_id=Uuid::new_v4().to_string();
     let version_id=Uuid::new_v4().to_string();
@@ -22,10 +38,190 @@ pub fn create_draft(db:&DbState,matter_id:&str,title:&str,kind:&str)->AppResult<
              ) VALUES(?1,?2,?3,1,'draft',?4,?5)",
             params![version_id,matter_id,document_id,hex::encode(Sha256::digest(b"empty")),now]
         )?;
+        for (index,heading) in template_sections(kind).iter().enumerate(){
+            tx.execute(
+                "INSERT INTO legal_document_sections(
+                    id,matter_id,legal_document_version_id,section_index,heading
+                 ) VALUES(?1,?2,?3,?4,?5)",
+                params![Uuid::new_v4().to_string(),matter_id,version_id,index as i64,heading]
+            )?;
+        }
         tx.commit()?;
         Ok(())
     })?;
     Ok(document_id)
+}
+
+fn require_draft(conn:&rusqlite::Connection,matter_id:&str,version_id:&str)->AppResult<()>{
+    let status:String=conn.query_row(
+        "SELECT status FROM legal_document_versions WHERE id=?1 AND matter_id=?2",
+        params![version_id,matter_id],|r|r.get(0)
+    ).map_err(|_|AppError::NotFound("legal document version".into()))?;
+    if status!="draft"{
+        return Err(AppError::Validation("only a draft version can be edited".into()));
+    }
+    Ok(())
+}
+
+/// Appends one confirmed, source-grounded paragraph per verified fact that isn't
+/// already linked into this version, into the fixed FACTS_SECTION_HEADING section
+/// (created if missing). Idempotent: re-running only adds newly verified facts.
+pub fn fill_from_verified_facts(db:&DbState,matter_id:&str,version_id:&str)->AppResult<i64>{
+    db.write(|conn|{
+        let tx=conn.transaction()?;
+        require_draft(&tx,matter_id,version_id)?;
+
+        let section_id:String=match tx.query_row(
+            "SELECT id FROM legal_document_sections WHERE legal_document_version_id=?1 AND heading=?2",
+            params![version_id,FACTS_SECTION_HEADING],|r|r.get(0)
+        ){
+            Ok(id)=>id,
+            Err(_)=>{
+                let next_index:i64=tx.query_row(
+                    "SELECT coalesce(max(section_index),-1)+1 FROM legal_document_sections WHERE legal_document_version_id=?1",
+                    params![version_id],|r|r.get(0)
+                )?;
+                let new_id=Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO legal_document_sections(
+                        id,matter_id,legal_document_version_id,section_index,heading
+                     ) VALUES(?1,?2,?3,?4,?5)",
+                    params![new_id,matter_id,version_id,next_index,FACTS_SECTION_HEADING]
+                )?;
+                new_id
+            }
+        };
+
+        let already_linked:Vec<String>={
+            let mut stmt=tx.prepare(
+                "SELECT DISTINCT verified_fact_id FROM legal_document_sources
+                 WHERE legal_document_version_id=?1 AND verified_fact_id IS NOT NULL"
+            )?;
+            let rows=stmt.query_map(params![version_id],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()?;
+            rows
+        };
+
+        let facts:Vec<(String,String,String,String)>={
+            let mut stmt=tx.prepare(
+                "SELECT id,subject,predicate,value_text FROM verified_facts
+                 WHERE matter_id=?1 AND status='valid' ORDER BY verified_at"
+            )?;
+            let rows=stmt.query_map(params![matter_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?
+                .collect::<Result<Vec<_>,_>>()?;
+            rows
+        };
+
+        let mut next_index:i64=tx.query_row(
+            "SELECT coalesce(max(paragraph_index),-1)+1 FROM legal_document_paragraphs WHERE section_id=?1",
+            params![section_id],|r|r.get(0)
+        )?;
+
+        let mut added=0i64;
+        for (fact_id,subject,predicate,value_text) in facts {
+            if already_linked.iter().any(|id|id==&fact_id){continue;}
+            let paragraph_id=Uuid::new_v4().to_string();
+            let body_text=format!("{subject} {predicate}: {value_text}");
+            tx.execute(
+                "INSERT INTO legal_document_paragraphs(
+                    id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,body_text,provenance_state
+                 ) VALUES(?1,?2,?3,?4,?5,'fact',?6,'confirmed')",
+                params![paragraph_id,matter_id,version_id,section_id,next_index,body_text]
+            )?;
+            tx.execute(
+                "INSERT INTO legal_document_sources(
+                    id,matter_id,legal_document_version_id,paragraph_id,source_kind,verified_fact_id
+                 ) VALUES(?1,?2,?3,?4,'verified_fact',?5)",
+                params![Uuid::new_v4().to_string(),matter_id,version_id,paragraph_id,fact_id]
+            )?;
+            next_index+=1;
+            added+=1;
+        }
+
+        tx.commit()?;
+        Ok(added)
+    })
+}
+
+pub fn add_paragraph(db:&DbState,matter_id:&str,version_id:&str,section_id:&str,body_text:&str)->AppResult<String>{
+    let paragraph_id=Uuid::new_v4().to_string();
+    db.write(|conn|{
+        require_draft(conn,matter_id,version_id)?;
+        let section_version:String=conn.query_row(
+            "SELECT legal_document_version_id FROM legal_document_sections WHERE id=?1 AND matter_id=?2",
+            params![section_id,matter_id],|r|r.get(0)
+        ).map_err(|_|AppError::NotFound("legal document section".into()))?;
+        if section_version!=version_id{
+            return Err(AppError::Validation("section does not belong to this version".into()));
+        }
+        let next_index:i64=conn.query_row(
+            "SELECT coalesce(max(paragraph_index),-1)+1 FROM legal_document_paragraphs WHERE section_id=?1",
+            params![section_id],|r|r.get(0)
+        )?;
+        conn.execute(
+            "INSERT INTO legal_document_paragraphs(
+                id,matter_id,legal_document_version_id,section_id,paragraph_index,paragraph_kind,body_text,provenance_state
+             ) VALUES(?1,?2,?3,?4,?5,'manual',?6,'needs_review')",
+            params![paragraph_id,matter_id,version_id,section_id,next_index,body_text]
+        )?;
+        Ok(())
+    })?;
+    Ok(paragraph_id)
+}
+
+fn paragraph_version_status(conn:&rusqlite::Connection,matter_id:&str,version_id:&str,paragraph_id:&str)->AppResult<String>{
+    conn.query_row(
+        "SELECT v.status FROM legal_document_versions v
+         JOIN legal_document_paragraphs p ON p.legal_document_version_id=v.id
+         WHERE p.id=?1 AND p.matter_id=?2 AND v.id=?3",
+        params![paragraph_id,matter_id,version_id],|r|r.get(0)
+    ).map_err(|_|AppError::NotFound("legal document paragraph".into()))
+}
+
+/// Editing a paragraph's text always drops it back to 'needs_review' - the DB schema
+/// has no immutability trigger on legal_document_paragraphs itself (only on
+/// legal_document_versions/legal_document_sources), so `require_draft` is what
+/// actually stops this from touching an approved version.
+pub fn update_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:&str,body_text:&str)->AppResult<()>{
+    db.write(|conn|{
+        let status=paragraph_version_status(conn,matter_id,version_id,paragraph_id)?;
+        if status!="draft"{
+            return Err(AppError::Validation("only a draft version can be edited".into()));
+        }
+        conn.execute(
+            "UPDATE legal_document_paragraphs SET body_text=?1,provenance_state='needs_review'
+             WHERE id=?2 AND matter_id=?3",
+            params![body_text,paragraph_id,matter_id]
+        )?;
+        Ok(())
+    })
+}
+
+pub fn confirm_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:&str)->AppResult<()>{
+    db.write(|conn|{
+        let status=paragraph_version_status(conn,matter_id,version_id,paragraph_id)?;
+        if status!="draft"{
+            return Err(AppError::Validation("only a draft version can be edited".into()));
+        }
+        conn.execute(
+            "UPDATE legal_document_paragraphs SET provenance_state='confirmed' WHERE id=?1 AND matter_id=?2",
+            params![paragraph_id,matter_id]
+        )?;
+        Ok(())
+    })
+}
+
+pub fn delete_paragraph(db:&DbState,matter_id:&str,version_id:&str,paragraph_id:&str)->AppResult<()>{
+    db.write(|conn|{
+        let status=paragraph_version_status(conn,matter_id,version_id,paragraph_id)?;
+        if status!="draft"{
+            return Err(AppError::Validation("only a draft version can be edited".into()));
+        }
+        conn.execute(
+            "DELETE FROM legal_document_paragraphs WHERE id=?1 AND matter_id=?2",
+            params![paragraph_id,matter_id]
+        )?;
+        Ok(())
+    })
 }
 
 pub fn approve_version(db:&DbState,matter_id:&str,version_id:&str)->AppResult<String>{
