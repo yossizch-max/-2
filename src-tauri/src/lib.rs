@@ -4,6 +4,8 @@ mod damage;
 mod db;
 mod error;
 mod extraction;
+#[cfg(test)]
+mod gate_f_partial;
 mod legal_docs;
 mod models;
 mod scanner;

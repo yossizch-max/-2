@@ -22,7 +22,7 @@ impl DbState {
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
-    fn open_keyed(path: &PathBuf, key: &str) -> AppResult<Connection> {
+    pub(crate) fn open_keyed(path: &PathBuf, key: &str) -> AppResult<Connection> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "key", format!("x'{key}'"))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -44,6 +44,13 @@ impl DbState {
         let conn = Self::open_keyed(&self.path, &self.key)?;
         f(&conn)
     }
+
+    /// Test-only: the raw DB encryption key, so a test can reopen a raw connection
+    /// to the same file directly (bypassing the OS keyring lookup) to verify data
+    /// persistence independently of whether this environment's keyring backend
+    /// itself persists across process/entry instances.
+    #[cfg(test)]
+    pub(crate) fn test_key(&self) -> &str { &self.key }
 }
 
 #[cfg(test)]

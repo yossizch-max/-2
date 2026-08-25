@@ -10,7 +10,13 @@ real documents remains, which needs a human running the packaged app. D's automa
 checks verified, one real WCAG AA failure found and fixed. E: a real Windows build now
 succeeds in CI and produces an unsigned installer with OCR included (see Gate E for the
 artifact link) — signing, release manifest and rollback package are still outstanding.
-F remains fully blocked — see that gate for what's missing.**
+F: a real automated test (`cargo test gate_f_partial`) now covers every step of the
+24-step manual checklist that is platform-independent business logic (matter/scan/hash,
+fail-closed source-tamper rejection, search, fact verification, damage lock, legal-doc
+approval, export+audit, DB reopen) — genuinely executed, not mocked. What's left needs a
+human on a real Windows machine with Gate E's installer: real OCR, real AI provider
+calls, and two features (new legal-document versions, DOCX export) that don't exist in
+this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -151,33 +157,89 @@ resolved after the repo owner updated the GitHub App's permissions **and** the
 workflow file was merged to `main` (GitHub only discovers `workflow_dispatch`
 workflows that exist on the default branch).
 
-## Gate F, end-to-end synthetic acceptance — blocked, cannot be completed from this session
-This requires a running, packaged desktop app (Gate E's output) on Windows, real
-scanned Hebrew/Arabic/English PDFs, a locally-configured AI provider, and a human doing
-each step below by hand. None of that exists in this headless Linux dev container.
-Do this after Gates C and E are actually closed.
+## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
-1. Create/open Matter.
-2. Scan/index files.
-3. Change source after hash and prove extraction refuses it.
-4. OCR Hebrew scanned PDF.
-5. OCR Arabic scanned PDF.
-6. OCR English scanned PDF.
-7. Extract native PDF.
-8. Search text and open source.
-9. Configure local provider.
-10. Configure OpenAI with synthetic data and explicit egress approval.
-11. Run AI review.
-12. Approve/reject fact proposal.
-13. Change source and prove stale propagation.
-14. Create and lock damage calculation.
-15. Create legal draft.
-16. Edit as a new version.
-17. Confirm paragraph provenance.
-18. Approve immutable version.
-19. Export DOCX.
-20. Export PDF or show `PDF_CONVERTER_UNAVAILABLE`.
-21. Close/reopen and verify audit.
-22. Test missing key recovery.
-23. Test upgrade from supported older DB.
-24. Confirm no client-content temp files remain.
+The full 24-step checklist below needs a running packaged Windows app, real scanned
+Hebrew/Arabic/English PDFs, a live AI provider, and a human clicking through the GUI —
+most of that genuinely cannot exist in this headless Linux session. But a meaningful
+subset is pure, platform-independent business logic, and rather than leave that
+untested, `src-tauri/src/gate_f_partial.rs` (`cargo test gate_f_partial`, passing)
+exercises it **for real** — actual `DbState`, actual SQLite/SQLCipher schema and
+triggers, actual `scanner`/`extraction`/`search`/`damage`/`legal_docs` modules, no
+mocking — end to end: create a matter → bind a folder → scan → hash → tamper with the
+source and confirm extraction fails closed (`SourceShaMismatch`, zero pages written) →
+restore and extract for real → search by matter/file/fact → verify a fact grounded in
+the extracted page → calculate and lock a damage total (and confirm the
+locked-calculation trigger really blocks further mutation) → draft a legal document,
+add a confirmed-provenance paragraph, approve it (and confirm the
+approved-version trigger really blocks mutation) → export as text and confirm the
+export-audit trigger is really append-only → reopen the encrypted DB file and confirm
+the matter/export/damage rows are still there.
+
+While building this test, it surfaced that this sandbox's `keyring` backend doesn't
+actually persist an entry across separate `Entry` instances (a `set` immediately
+followed by a fresh `get` fails with "No matching entry found") — confirmed directly,
+not assumed. That's an environment limitation (the real target, Windows' OS Credential
+Manager, does persist), not a TAHRIR bug — but it does mean step 21's DB-reopen and
+step 22's "missing key recovery" get real coverage of two different things:
+`DbState::open`ing a second time in this environment genuinely can't retrieve the key,
+so it correctly fails closed with `RecoveryRequired` — the test asserts exactly that,
+which **is** step 22's fail-closed path exercised for real, incidentally. Actual data
+persistence (what step 21 is really asking) is verified separately, by reopening the
+same encrypted file directly with the already-known key.
+
+Per-step outcome:
+
+1. Create/open Matter — ✅ real (`gate_f_partial.rs`)
+2. Scan/index files — ✅ real (`scanner::scan_metadata` + `hash_pending`)
+3. Change source after hash, extraction refuses it — ✅ real (`SourceShaMismatch`,
+   zero `document_pages` written)
+4. OCR Hebrew scanned PDF — ❌ needs the real Tesseract/Poppler Windows `.exe` binaries
+   actually executing; this container can't run Windows PE binaries
+5. OCR Arabic scanned PDF — ❌ same as #4
+6. OCR English scanned PDF — ❌ same as #4
+7. Extract native PDF — ⚠️ proxied with `.txt` extraction instead (real code path,
+   wrong file format — real PDF text extraction shells out to `pdftotext.exe`, also
+   blocked by #4's reasoning)
+8. Search text and open source — ✅ real (`search::search`, by matter/file/fact — there
+   is no full-text index over extracted page content in this reconstruction, discovered
+   while writing this test, not assumed)
+9. Configure local provider — ❌ needs a live local OpenAI-compatible endpoint
+10. Configure OpenAI with synthetic data and explicit egress approval — ❌ needs live
+    network access to a real provider
+11. Run AI review — ❌ same as #10
+12. Approve/reject fact proposal — ⚠️ the direct "commit a verified fact" half is
+    covered for real; the AI-proposal review half needs #11 first
+13. Change source and prove stale propagation — ⚠️ re-extraction rejection is the same
+    mechanism as #3, covered for real; the `document_versions.stale` column itself is
+    never actually set by any of the 61 commands in this reconstruction — a real
+    product gap, flagged here rather than silently worked around in the test
+14. Create and lock damage calculation — ✅ real, including the immutability trigger
+15. Create legal draft — ✅ real
+16. Edit as a new version — ❌ **not implemented**: no command in the 61-command
+    contract creates a new `legal_document_versions` row from an approved one. A real
+    product gap, not a test gap.
+17. Confirm paragraph provenance — ✅ real (a 'confirmed' paragraph is required for
+    approval to succeed; the test exercises this rather than using a degenerate
+    zero-paragraph draft)
+18. Approve immutable version — ✅ real, including the immutability trigger
+19. Export DOCX — ⚠️ only the `.txt` export path is implemented and tested for real;
+    DOCX export doesn't exist as a feature yet
+20. Export PDF or show `PDF_CONVERTER_UNAVAILABLE` — ⚠️ the guard exists in
+    `commands::export_legal_document` (verified by reading the source: any
+    `outputKind != "txt"` returns `PdfConverterUnavailable`) but couldn't be executed
+    directly — it lives behind a `tauri::State` with no public constructor outside a
+    running Tauri app
+21. Close/reopen and verify audit — ✅ real, see the keyring note above for how the
+    two sub-concerns were separated
+22. Test missing key recovery — ✅ real, incidentally, see the keyring note above
+23. Test upgrade from supported older DB — N/A: there is no earlier real DB to upgrade
+    from for a fresh reconstruction
+24. Confirm no client-content temp files remain — ✅ real
+    (`VerifiedSourceSnapshot`'s `Drop` impl; the test asserts the snapshot directory
+    is empty afterward)
+
+**Still needed to actually close this gate:** a human, on a real Windows machine, with
+Gate E's packaged installer and real scanned documents, doing steps 4-6, 9-11, and
+confirming 7/19/20's real (non-`.txt`) paths — plus building steps 16/17's missing
+features first if they're wanted.
