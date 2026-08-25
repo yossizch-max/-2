@@ -25,4 +25,7 @@ const result={
   extra
 };
 console.log(JSON.stringify(result,null,2));
-if(missing.length || extra.length || invokes.size!==61 || commands.size!==61) process.exit(1);
+// missing/extra empty already implies invokes and commands are the same set (and
+// therefore the same size) - no need to also hardcode an expected count here, which
+// would just have to be bumped by hand every time a command is added or removed.
+if(missing.length || extra.length) process.exit(1);
