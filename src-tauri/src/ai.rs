@@ -1,6 +1,7 @@
 use crate::{
     db::DbState,
     error::{AppError,AppResult},
+    retrieval,
     security::get_ai_secret,
 };
 use chrono::Utc;
@@ -50,26 +51,15 @@ fn load_profile(db:&DbState,profile_id:&str)->AppResult<Profile>{
     ).map_err(AppError::Db))
 }
 
-pub fn plan_context(db:&DbState,matter_id:&str,capability:&str)->AppResult<Value>{
-    let sources:Vec<Value>=db.read(|conn|{
-        let mut stmt=conn.prepare(
-            "SELECT p.id,v.id,p.page_number,p.anchor_kind,p.text_sha256,p.display_text
-             FROM document_pages p
-             JOIN document_versions v ON v.id=p.document_version_id
-             WHERE p.matter_id=?1 AND v.stale=0
-             ORDER BY v.created_at DESC,p.page_number,p.block_index LIMIT 80"
-        )?;
-        let rows=stmt.query_map([matter_id],|r|Ok(json!({
-            "sourceId":r.get::<_,String>(0)?,
-            "documentVersionId":r.get::<_,String>(1)?,
-            "page":r.get::<_,Option<i64>>(2)?,
-            "anchorKind":r.get::<_,String>(3)?,
-            "textSha256":r.get::<_,String>(4)?,
-            "text":r.get::<_,String>(5)?
-        })))?.collect::<Result<Vec<_>,_>>()?;
-        Ok(rows)
-    })?;
-    Ok(json!({"matterId":matter_id,"capability":capability,"sources":sources}))
+/// Phase B, milestone B5a: thin wrapper over `retrieval::build_context_manifest` -
+/// the real focused-retrieval pipeline (FTS5 candidate search, deterministic
+/// ranking, neighbor expansion, context windowing, char budget, an auditable
+/// self-hashed manifest) lives there, directly testable in `integrity_tests.rs`.
+/// `query` is optional so a capability with no natural keyword focus (today, only
+/// `extract_facts` exists) can still resolve to a sensible default.
+pub fn plan_context(db:&DbState,matter_id:&str,capability:&str,query:Option<&str>)->AppResult<Value>{
+    let manifest=retrieval::build_context_manifest(db,matter_id,capability,query)?;
+    Ok(serde_json::to_value(manifest)?)
 }
 
 fn extract_output_text(response:&Value)->AppResult<String>{
@@ -105,7 +95,7 @@ fn validate_source_ids(proposal:&Value,allowed:&HashSet<String>)->AppResult<()>{
 }
 
 pub fn run_capability(
-    db:&DbState,matter_id:&str,capability:&str,profile_id:&str,external_egress_approved:bool
+    db:&DbState,matter_id:&str,capability:&str,profile_id:&str,external_egress_approved:bool,query:Option<&str>
 )->AppResult<String>{
     let profile=load_profile(db,profile_id)?;
     if !profile.enabled{return Err(AppError::Validation("AI provider disabled".into()));}
@@ -127,15 +117,20 @@ pub fn run_capability(
         "https://api.openai.com/v1/responses".to_string()
     };
 
-    let context=plan_context(db,matter_id,capability)?;
+    let context=plan_context(db,matter_id,capability,query)?;
     let sources=context.get("sources").and_then(Value::as_array)
         .ok_or_else(||AppError::Validation("context sources missing".into()))?;
     let allowed:HashSet<String>=sources.iter()
         .filter_map(|s|s["sourceId"].as_str().map(ToOwned::to_owned)).collect();
     if allowed.is_empty(){return Err(AppError::Validation("no grounded source context".into()));}
 
-    let context_bytes=serde_json::to_vec(&context)?;
-    let context_sha=hex::encode(Sha256::digest(&context_bytes));
+    // The manifest carries its own canonical integrity hash (retrieval.rs -
+    // ManifestPayload, hashed over a type that structurally excludes the hash
+    // field itself) - reuse it directly rather than computing a second, redundant
+    // hash of a blob that would now include that hash inside itself.
+    let context_sha=context.get("manifestSha256").and_then(Value::as_str)
+        .ok_or_else(||AppError::Validation("context manifest missing its own integrity hash".into()))?
+        .to_string();
     let run_id=Uuid::new_v4().to_string();
 
     db.write(|conn|{
@@ -204,7 +199,11 @@ pub fn run_capability(
             params![
                 proposal_id,run_id,matter_id,capability,
                 serde_json::to_string(&proposal)?,
-                serde_json::to_string(&context["sources"])?
+                // The FULL ContextManifest, not just its `sources` array:
+                // structured_json.sourceIds is "what the model cited"; this column
+                // is "what was allowed and sent" - two different things that must
+                // never be conflated into one field.
+                serde_json::to_string(&context)?
             ]
         )?;
         tx.execute(

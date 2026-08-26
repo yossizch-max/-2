@@ -61,8 +61,14 @@ confirmed at run #20, commit `7bdb60a`, then a user code review of B4 found and 
 integrity gaps (verified evidence deletable via SQL, `stale` resettable, verify not
 checking source-version staleness, multiple verified successors possible, a weak
 integrity hash), confirmed at run #21, commit `55616b9` (see "Phase B, milestone B4"
-below for the full writeup). **B1 through the B4 hardening-fix are now all confirmed on
-real Windows CI.** What's left needs a human on a real Windows machine with a fresh
+below for the full writeup). **B1 through the B4 hardening-fix are all confirmed on
+real Windows CI.** B5a (Focused AI Retrieval — replaces `ai.rs::plan_context`'s old flat,
+unranked, recency-only, capability-blind 80-row query with a real matter-scoped, FTS5-
+backed retrieval pipeline: deterministic ranking, page-level neighbor expansion,
+deterministic windowing of oversized sources instead of dropping them, and an auditable,
+canonically-hashed `ContextManifest`) is complete locally (127/127 tests) but **has not
+yet had its own Windows CI run** — see "Phase B, milestone B5a" below for the full
+writeup. What's left needs a human on a real Windows machine with a fresh
 installer: real OCR, real AI provider calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
@@ -833,8 +839,130 @@ sqlite3 (applied 3x): 49 tables, 35 indexes, 52 triggers, `user_version=17`
 [run #20](https://github.com/yossizch-max/-2/actions/runs/32932125926), commit
 `7bdb60a` (103/103 tests), and this hardening-fix commit at
 [run #21](https://github.com/yossizch-max/-2/actions/runs/32933104625), commit
-`55616b9` (106/106 tests). B4 is now fully CI-confirmed on Gate C/E. B5-B6 remain
-deliberately unattempted, each still pending its own planning pass.
+`55616b9` (106/106 tests). B4 is fully CI-confirmed on Gate C/E.
+
+## Phase B, milestone B5a — Focused AI Retrieval (2026-08-26)
+
+Fifth milestone of the Phase B roadmap: a **pure retrieval-infrastructure pass** - no
+ledger writes, no embeddings, local-first - that replaces `ai.rs::plan_context`'s old
+behavior (a flat query for the 80 most recent non-stale pages, `capability` accepted
+but never used to filter anything, no ranking or neighbor context at all) with a real,
+auditable retrieval pipeline, before B5b ever writes an AI-sourced proposal into the B4
+ledgers.
+
+- **New migration `007_retrieval_context_v18.sql`** adds a local FTS5 index
+  (`document_pages_fts`) over `document_pages.normalized_text` - no new application
+  table (`rusqlite` 0.37 has no `fts5` Cargo feature; the bundled SQLCipher build this
+  project already uses is compiled with `SQLITE_ENABLE_FTS5` on, confirmed at runtime,
+  not assumed, by a permanent `fts5_is_available_in_this_sqlite_build` test that runs on
+  every `cargo test --locked` including real Windows CI). Kept in sync via 3 triggers on
+  `document_pages` (insert / update-of-`normalized_text` / delete) with **zero changes
+  to `extraction.rs`** - the delete trigger alone correctly handles cascaded deletes too,
+  since SQLite fires a child row's own triggers even for an `ON DELETE CASCADE`
+  (verified empirically during the B4 hardening pass), so no guard table is needed here
+  the way `ledger_delete_guard` is needed for B4's tables. One idempotent, incremental
+  backfill statement covers every `document_pages` row that predates the migration.
+  `unicode61 remove_diacritics 2` is documented honestly as targeting Latin-script
+  diacritics only - real Unicode-aware word-boundary tokenization works today, but there
+  is no Hebrew stemmer and no guaranteed nikud normalization, stated plainly rather than
+  oversold.
+- **New `src-tauri/src/retrieval.rs` module**, `build_context_manifest(db, matter_id,
+  capability, query) -> ContextManifest`:
+  - **Safe FTS5 query compilation** - free text is never handed raw to `MATCH`.
+    `compile_fts_query` tokenizes on non-alphanumeric boundaries (Unicode-aware, so
+    Hebrew/Arabic text passes through with no special-casing), phrase-quotes each term
+    (embedded quotes escaped by doubling) and OR-joins them, so FTS5 query-syntax
+    operators a lawyer might accidentally type (quotes, `AND`/`OR`/`NOT`, parens,
+    `NEAR`, `*`, `^`) can never be interpreted as query syntax - parameter binding alone
+    stops SQL injection but not FTS5 syntax errors.
+  - **`matter_id` and `document_versions.stale=0` are re-applied against the live
+    `document_pages`/`document_versions` tables at every stage**, including neighbor
+    expansion - the FTS index is never trusted as authoritative for filtering, only as a
+    candidate-search accelerator.
+  - **Explicit deterministic sort tuple, never a blended score**: `bm25` ascending
+    (lower = more relevant), category-boosted as a tie-break only (can never outrank a
+    real text match), version recency, `page_number`, `block_index`, `source_id` as a
+    final determinism tie-break.
+  - **Page-level neighbor expansion**: for each of the top-10 ranked
+    `anchor_kind='page'` candidates, adjacent `page_number±1` rows are pulled live
+    (re-checked against both hard filters) and tagged `includedVia:"neighbor"` plus
+    `neighborOfSourceId` recording *which* anchor pulled it in - not just that it was a
+    neighbor. A page reachable both as a genuine match and as another match's neighbor
+    is recorded once, as `"match"` - guaranteed by building the ordered candidate list
+    as all ranked matches first, then all neighbors, never interleaved.
+  - **Oversized sources are windowed, never silently dropped**: a source at or under
+    8,000 chars is always sent whole (`textMode:"full"`). A larger single-row
+    `anchor_kind='document'` source (a large DOCX/TXT) is deterministically windowed to
+    4,000 chars, centered on the first char-index match of any query term (or
+    start-of-text with no query) - same input always produces the same
+    `windowStart`/`windowEnd`/`windowSha256` - while the manifest still carries the
+    source's real, unchanged `sourceId`/`textSha256` for its full original text.
+    `approve_proposal`'s existing re-validation still checks the live full source, never
+    the window.
+  - **Budget enforcement is char-based**, not row-count-based: sources are walked in
+    rank order, each included if its already-decided full/window text still fits the
+    remaining budget, skipped (never truncated) if not, continuing to try smaller
+    sources after it.
+  - **`ContextManifest` carries a canonical, non-circular `manifest_sha256`** - hashed
+    over a payload type with no hash field of its own, then the result is attached to
+    the public struct, so a struct can never include its own hash inside the bytes being
+    hashed. `retrieval_version` is a fixed literal (`"b5a-v1"`) with no timestamp
+    anywhere in the hashed payload, so identical inputs on the same DB always produce a
+    byte-identical manifest and hash, every run.
+  - **`capability_profile` is a mechanism, not content** - this milestone deliberately
+    only populates `extract_facts` (today's one real capability, `default_query: None`,
+    since general fact-extraction has no natural keyword focus - with no explicit query
+    it honestly degrades to the old recency-ordered candidate list). No placeholder
+    entries for `extract_medical_event`/`extract_wage_record`/`extract_liability_fact` -
+    their query/category profiles are a B5b decision, not B5a's to make.
+- **`ai.rs` changes**: `plan_context` is now a thin wrapper over
+  `retrieval::build_context_manifest`. Both `plan_ai_context` (preview) and
+  `run_ai_capability` (the real run) gained an optional `query` payload field, both
+  threading it to the *same* underlying call, so preview and the real run can never
+  diverge onto different candidate sets. `ai_runs.context_manifest_sha256` now reuses
+  the manifest's own canonical hash directly instead of computing a second, redundant
+  hash of the serialized context blob. `ai_proposals.source_manifest_json` now stores
+  the **entire `ContextManifest`** (what was allowed and sent), not just its `sources`
+  array - `structured_json.sourceIds` already records what the model *cited*, a
+  genuinely different thing that must not be conflated with what it was *given*.
+- **Frontend**: `FactsAITab.tsx` gained one optional free-text query input ("מיקוד
+  לחיפוש") wired through to `run_ai_capability` - the smallest real change that lets a
+  lawyer actually exercise the new ranking today.
+
+**Two review passes shaped this design before it shipped.** A first planning pass was
+sent back with 8 real defects plus 2 scope adjustments before any code was written: a
+mistaken belief that `rusqlite` needed an `"fts5"` Cargo feature (corrected to a runtime
+probe test instead); a missing post-upgrade backfill of pre-existing pages (would have
+made every existing matter look empty to retrieval right after the upgrade); a
+naive `table_count += 1` migration assertion (FTS5's own shadow tables would have broken
+it); unsafe raw-text-to-`MATCH` query construction; an overclaimed Hebrew-nikud-handling
+claim about `remove_diacritics 2`; a flat "never include a partial source" policy that
+would have silently dropped exactly the case that matters most (a large DOCX); a
+circular manifest-hash bug; a thinner audit trail than the review wanted
+(`neighborOfSourceId`, storing the full manifest not just `sources`); preview/run
+divergence risk; and B5b capability-profile content leaking into a B5a-scoped milestone.
+Every point above already reflects the fix, not the original draft.
+
+10 new integration tests (cross-matter isolation, stale exclusion even when it would
+rank first, relevance-beats-recency, neighbor expansion with correct
+`neighborOfSourceId`, oversized-document windowing that is never skipped plus
+deterministic across runs, full-pipeline determinism, char-based budget enforcement,
+empty/no-match behavior, every manifest source resolves to a real live page,
+preview/run parity) plus 8 new unit tests in `retrieval.rs` (ranking tie-break rules,
+FTS query compilation incl. Hebrew/Arabic/quotes/parens/embedded-quote-escaping,
+deterministic windowing) - 127/127 total. `cargo check/test --locked`, `npm run build`,
+`contract:check` (106/106, no drift - only new optional payload fields, no new
+commands), `qa:static` (now also checking migration 007's virtual table/sync-triggers/
+idempotent-backfill and that `retrieval.rs` never `MATCH`es a raw, uncompiled query) all
+pass. Migration re-verified idempotent via direct sqlite3 (applied 3x): 49 real
+application tables + 6 FTS5 shadow tables, 35 indexes, 55 triggers, `user_version=18`,
+integrity ok, `fk_check` clean; insert/update/direct-delete/cascade-delete-via-matter
+sync and post-migration backfill of pre-existing rows were all verified against a live
+in-memory DB, not merely asserted.
+
+**This commit has not yet had its own Windows CI run.** B5b (AI Autopilot → Ledger
+Proposals) and B6 (Case Health) remain deliberately unattempted, each still pending its
+own planning pass.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls

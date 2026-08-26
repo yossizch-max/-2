@@ -109,7 +109,7 @@
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, ledger, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, scanner, workstreams};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, ledger, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, retrieval, scanner, workstreams};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -750,6 +750,62 @@ fn new_document_with_page(db: &DbState, matter_id: &str, page_text: &str) -> (St
                 display_text,normalized_text,text_sha256,extraction_method,created_at
              ) VALUES(?1,?2,?3,1,'page',0,?4,?4,'x','native_text',?5)",
             params![page_id, matter_id, version_id, page_text, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+    (version_id, page_id)
+}
+
+// --- Phase B, B5a: Focused AI Retrieval test helpers ---
+
+fn new_document_with_pages(db: &DbState, matter_id: &str, created_at: &str, page_texts: &[&str]) -> (String, Vec<String>) {
+    let document_id = Uuid::new_v4().to_string();
+    let version_id = Uuid::new_v4().to_string();
+    let mut page_ids = Vec::new();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at) VALUES(?1,?2,'מסמך',?3,?3)",
+            params![document_id, matter_id, created_at],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,created_at) VALUES(?1,?2,?3,'x',?4)",
+            params![version_id, document_id, matter_id, created_at],
+        ).map_err(AppError::Db)?;
+        for (i, text) in page_texts.iter().enumerate() {
+            let page_id = Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO document_pages(
+                    id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                    display_text,normalized_text,text_sha256,extraction_method,created_at
+                 ) VALUES(?1,?2,?3,?4,'page',0,?5,?5,'x','native_text',?6)",
+                params![page_id, matter_id, version_id, (i + 1) as i64, text, created_at],
+            ).map_err(AppError::Db)?;
+            page_ids.push(page_id);
+        }
+        Ok(())
+    }).unwrap();
+    (version_id, page_ids)
+}
+
+fn new_whole_document(db: &DbState, matter_id: &str, created_at: &str, text: &str) -> (String, String) {
+    let document_id = Uuid::new_v4().to_string();
+    let version_id = Uuid::new_v4().to_string();
+    let page_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at) VALUES(?1,?2,'מסמך',?3,?3)",
+            params![document_id, matter_id, created_at],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,created_at) VALUES(?1,?2,?3,'x',?4)",
+            params![version_id, document_id, matter_id, created_at],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES(?1,?2,?3,NULL,'document',0,?4,?4,'x','native_text',?5)",
+            params![page_id, matter_id, version_id, text, created_at],
         ).map_err(AppError::Db)?;
         Ok(())
     }).unwrap();
@@ -1847,4 +1903,200 @@ fn deleting_a_matter_cascades_to_its_ledger_entries_and_sources_even_when_verifi
         ).map_err(AppError::Db)).unwrap();
         assert_eq!(rows, 0, "{table} must cascade-delete with its matter");
     }
+}
+
+// --- Phase B, B5a: Focused AI Retrieval ---
+
+#[test]
+fn cross_matter_isolation_in_retrieval() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_a = new_matter(&db, "B5a test: matter A");
+    let matter_b = new_matter(&db, "B5a test: matter B");
+    let now = Utc::now().to_rfc3339();
+    let (_va, pages_a) = new_document_with_pages(&db, &matter_a, &now, &["תאונת דרכים חמורה בכביש הראשי"]);
+    let (_vb, pages_b) = new_document_with_pages(&db, &matter_b, &now, &["תאונת דרכים חמורה בכביש הראשי"]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_a, "extract_facts", Some("תאונת דרכים")).unwrap();
+    let ids: Vec<&str> = manifest.sources.iter().map(|s| s.source_id.as_str()).collect();
+    assert!(ids.contains(&pages_a[0].as_str()), "matter A's own matching page must appear");
+    assert!(!ids.contains(&pages_b[0].as_str()), "matter B's page must never appear in matter A's retrieval, even with identical matching text");
+}
+
+#[test]
+fn stale_candidates_are_excluded_even_when_they_would_rank_first() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: stale exclusion");
+    let now = Utc::now().to_rfc3339();
+    let (stale_version, stale_pages) = new_document_with_pages(&db, &matter_id, &now,
+        &["שבר שבר שבר שבר שבר בפרק כף היד"]);
+    let (_v2, weak_pages) = new_document_with_pages(&db, &matter_id, &now,
+        &["מסמך ארוך עם התייחסות חד פעמית בלבד לנושא שבר בכף היד ותוכן נוסף רב שאינו קשור כלל"]);
+    db.write(|conn| conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1", [&stale_version]).map_err(AppError::Db)).unwrap();
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("שבר")).unwrap();
+    let ids: Vec<&str> = manifest.sources.iter().map(|s| s.source_id.as_str()).collect();
+    assert!(!ids.contains(&stale_pages[0].as_str()), "a stale page must never appear even though it would otherwise be the strongest match");
+    assert!(ids.contains(&weak_pages[0].as_str()), "the non-stale page must still appear");
+}
+
+#[test]
+fn a_relevant_old_document_outranks_a_newer_more_weakly_relevant_one() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: relevance beats recency");
+    let old_time = "2020-01-01T00:00:00Z";
+    let new_time = "2026-01-01T00:00:00Z";
+    let (_v1, old_pages) = new_document_with_pages(&db, &matter_id, old_time,
+        &["שבר שבר שבר שבר שבר בפרק כף היד, אירוע תאונה"]);
+    let (_v2, new_pages) = new_document_with_pages(&db, &matter_id, new_time,
+        &["מסמך חדש ועדכני העוסק בעיקר בנושאים אחרים לגמרי עם אזכור בודד בלבד של שבר"]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("שבר")).unwrap();
+    let position = |id: &str| manifest.sources.iter().position(|s| s.source_id == id).unwrap();
+    assert!(position(&old_pages[0]) < position(&new_pages[0]),
+        "the older but more strongly relevant document must rank ahead of the newer, weakly relevant one - relevance must dominate recency");
+}
+
+#[test]
+fn neighbor_expansion_pulls_adjacent_pages_with_correct_neighbor_of_source_id() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: neighbor expansion");
+    let now = Utc::now().to_rfc3339();
+    let (_v, pages) = new_document_with_pages(&db, &matter_id, &now, &[
+        "עמוד ראשון ללא התאמה",
+        "עמוד שני ללא התאמה",
+        "עמוד שלישי עם המונח הייחודי קטמורפיזם",
+        "עמוד רביעי ללא התאמה",
+        "עמוד חמישי ללא התאמה",
+    ]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("קטמורפיזם")).unwrap();
+    let matched = manifest.sources.iter().find(|s| s.source_id == pages[2]).expect("the matched page must be included");
+    assert_eq!(matched.included_via, "match");
+
+    let neighbor2 = manifest.sources.iter().find(|s| s.source_id == pages[1]).expect("page 2 (neighbor of the match) must be included");
+    assert_eq!(neighbor2.included_via, "neighbor");
+    assert_eq!(neighbor2.neighbor_of_source_id.as_deref(), Some(pages[2].as_str()));
+
+    let neighbor4 = manifest.sources.iter().find(|s| s.source_id == pages[3]).expect("page 4 (neighbor of the match) must be included");
+    assert_eq!(neighbor4.included_via, "neighbor");
+    assert_eq!(neighbor4.neighbor_of_source_id.as_deref(), Some(pages[2].as_str()));
+
+    assert!(!manifest.sources.iter().any(|s| s.source_id == pages[0]), "page 1 is not adjacent to the match and must not appear");
+    assert!(!manifest.sources.iter().any(|s| s.source_id == pages[4]), "page 5 is not adjacent to the match and must not appear");
+}
+
+#[test]
+fn oversized_document_is_windowed_not_skipped_and_windowing_is_deterministic() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: windowing");
+    let now = Utc::now().to_rfc3339();
+    let filler_before: String = "א ".repeat(3000);
+    let filler_after: String = "ב ".repeat(3000);
+    let text = format!("{filler_before}מונחייחודילחיפוש {filler_after}");
+    let (_v, page_id) = new_whole_document(&db, &matter_id, &now, &text);
+
+    let manifest1 = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("מונחייחודילחיפוש")).unwrap();
+    assert_eq!(manifest1.sources.len(), 1, "the oversized document must still be included, not silently dropped");
+    let source1 = &manifest1.sources[0];
+    assert_eq!(source1.source_id, page_id);
+    assert_eq!(source1.text_mode, "window");
+    assert!(source1.text.contains("מונחייחודילחיפוש"), "the window must actually contain the matched term");
+    assert!(source1.window_start.is_some() && source1.window_end.is_some() && source1.window_sha256.is_some());
+
+    let manifest2 = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("מונחייחודילחיפוש")).unwrap();
+    let source2 = &manifest2.sources[0];
+    assert_eq!(source1.window_start, source2.window_start, "windowing must be deterministic across runs");
+    assert_eq!(source1.window_end, source2.window_end);
+    assert_eq!(source1.window_sha256, source2.window_sha256);
+    assert_eq!(manifest1.manifest_sha256, manifest2.manifest_sha256, "the whole manifest must be byte-identical across runs with identical inputs");
+}
+
+#[test]
+fn retrieval_is_fully_deterministic_across_repeated_runs() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: determinism");
+    let now = Utc::now().to_rfc3339();
+    new_document_with_pages(&db, &matter_id, &now, &["ניתוח משפטי של אחריות בנזיקין", "עוד עמוד עם אחריות בנזיקין ותוכן דומה"]);
+
+    let m1 = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("אחריות בנזיקין")).unwrap();
+    let m2 = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("אחריות בנזיקין")).unwrap();
+    assert_eq!(m1.manifest_sha256, m2.manifest_sha256, "identical inputs must always produce a byte-identical manifest hash");
+    assert_eq!(
+        m1.sources.iter().map(|s| s.source_id.clone()).collect::<Vec<_>>(),
+        m2.sources.iter().map(|s| s.source_id.clone()).collect::<Vec<_>>(),
+        "source ordering must be identical across runs"
+    );
+}
+
+#[test]
+fn budget_enforcement_is_char_based_and_never_exceeded() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: budget");
+    let now = Utc::now().to_rfc3339();
+    let page_text = "תוכן".repeat(50);
+    new_document_with_pages(&db, &matter_id, &now, &[&page_text, &page_text, &page_text]);
+
+    // no query -> fallback candidates ordered by recency; a tiny budget that can
+    // only fit roughly one page's worth of text must force a strict prefix.
+    let page_len = page_text.chars().count() as i64;
+    let tiny_budget = page_len + 10;
+    let manifest = retrieval::build_context_manifest_with_budget(&db, &matter_id, "extract_facts", None, tiny_budget).unwrap();
+    assert!(manifest.budget_chars_used <= tiny_budget, "budget_chars_used must never exceed the limit");
+    assert!(manifest.sources.len() < 3, "a tiny budget must force a strict prefix of the available pages, not all of them");
+    assert_eq!(manifest.budget_chars_limit, tiny_budget);
+}
+
+#[test]
+fn a_query_with_no_matches_returns_an_empty_manifest() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: no hits");
+    let now = Utc::now().to_rfc3339();
+    new_document_with_pages(&db, &matter_id, &now, &["תוכן שאינו קשור כלל לשאילתה"]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", Some("מונחשלאקייםבשוםמקום")).unwrap();
+    assert!(manifest.sources.is_empty(), "zero FTS matches must yield an empty sources array, not an error or a fallback dump");
+    assert_eq!(manifest.budget_chars_used, 0);
+}
+
+#[test]
+fn every_manifest_source_resolves_to_a_real_live_page() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: sources resolve");
+    let now = Utc::now().to_rfc3339();
+    new_document_with_pages(&db, &matter_id, &now, &["תוכן לבדיקה כללית", "תוכן נוסף לבדיקה"]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", None).unwrap();
+    assert!(!manifest.sources.is_empty());
+    for s in &manifest.sources {
+        let exists: i64 = db.read(|conn| conn.query_row(
+            "SELECT count(*) FROM document_pages WHERE id=?1 AND matter_id=?2",
+            params![s.source_id, matter_id], |r| r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(exists, 1, "every manifest source must resolve to a real, live document_pages row");
+    }
+}
+
+#[test]
+fn ai_plan_context_wrapper_matches_the_underlying_manifest() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B5a test: wrapper parity");
+    let now = Utc::now().to_rfc3339();
+    new_document_with_pages(&db, &matter_id, &now, &["תוכן לבדיקת עטיפה"]);
+
+    let manifest = retrieval::build_context_manifest(&db, &matter_id, "extract_facts", None).unwrap();
+    let wrapped = ai::plan_context(&db, &matter_id, "extract_facts", None).unwrap();
+    assert_eq!(
+        wrapped["manifestSha256"].as_str().unwrap(), manifest.manifest_sha256,
+        "ai::plan_context must be a pure passthrough of retrieval::build_context_manifest - preview and run must never diverge"
+    );
 }

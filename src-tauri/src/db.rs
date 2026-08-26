@@ -23,6 +23,7 @@ impl DbState {
         conn.execute_batch(include_str!("../migrations/004_matter_workstreams_v15.sql"))?;
         conn.execute_batch(include_str!("../migrations/005_matter_requirements_v16.sql"))?;
         conn.execute_batch(include_str!("../migrations/006_matter_ledgers_v17.sql"))?;
+        conn.execute_batch(include_str!("../migrations/007_retrieval_context_v18.sql"))?;
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
@@ -65,6 +66,28 @@ mod tests {
     const MIGRATION_004: &str = include_str!("../migrations/004_matter_workstreams_v15.sql");
     const MIGRATION_005: &str = include_str!("../migrations/005_matter_requirements_v16.sql");
     const MIGRATION_006: &str = include_str!("../migrations/006_matter_ledgers_v17.sql");
+    const MIGRATION_007: &str = include_str!("../migrations/007_retrieval_context_v18.sql");
+
+    /// Phase B, milestone B5a step 0: FTS5 is not a Cargo feature on rusqlite - the
+    /// bundled SQLCipher build this project already links (`bundled-sqlcipher-
+    /// vendored-openssl`) either has SQLITE_ENABLE_FTS5 compiled in or it doesn't,
+    /// and the only way to know is to ask the actual library at runtime. This test
+    /// runs on every `cargo test --locked`, including the real Windows CI runner -
+    /// not just once locally - so a toolchain regression here is caught immediately,
+    /// before retrieval.rs's migration/module are ever written on top of it.
+    #[test]
+    fn fts5_is_available_in_this_sqlite_build() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let enabled: i64 = conn.query_row(
+            "SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(enabled, 1, "this SQLite build must have FTS5 compiled in for B5a's retrieval pipeline to work");
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE t USING fts5(x);
+             INSERT INTO t(x) VALUES('hello world');
+             SELECT * FROM t WHERE t MATCH 'hello';"
+        ).unwrap();
+    }
 
     #[test]
     fn migration_is_idempotent_across_repeated_app_launches() {
@@ -75,6 +98,7 @@ mod tests {
         conn.execute_batch(MIGRATION_004).unwrap();
         conn.execute_batch(MIGRATION_005).unwrap();
         conn.execute_batch(MIGRATION_006).unwrap();
+        conn.execute_batch(MIGRATION_007).unwrap();
         // A real app re-runs the full schema on every launch against an
         // already-initialized database; every statement must tolerate that.
         conn.execute_batch(MIGRATION_001).unwrap();
@@ -83,13 +107,19 @@ mod tests {
         conn.execute_batch(MIGRATION_004).unwrap();
         conn.execute_batch(MIGRATION_005).unwrap();
         conn.execute_batch(MIGRATION_006).unwrap();
+        conn.execute_batch(MIGRATION_007).unwrap();
+        // Counted excluding document_pages_fts and its own FTS5-internal shadow
+        // tables (_data/_idx/_docsize/_config/_content) - their exact number is an
+        // FTS5 implementation detail, not something to hardcode a guess for here;
+        // see fts5_migration_creates_index_backfills_and_stays_in_sync below for
+        // the FTS5-specific assertions instead.
         let table_count: i64 = conn.query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'document_pages_fts%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 49);
+        assert_eq!(table_count, 49, "the 49 real application tables must be unaffected by FTS5's own shadow tables");
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(user_version, 17);
+        assert_eq!(user_version, 18);
     }
 
     #[test]
@@ -233,5 +263,129 @@ mod tests {
             "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
         ).unwrap();
         assert_eq!(matter_survived, "existing matter");
+    }
+
+    #[test]
+    fn a_v17_database_upgrades_cleanly_to_v18_and_backfills_pre_existing_pages() {
+        // simulates an install that already has 001-006 applied, WITH a real
+        // document_pages row already indexed on disk, before the app is upgraded to
+        // a build that also ships 007 - the whole point of the backfill INSERT in
+        // 007_retrieval_context_v18.sql is that a page written before this migration
+        // ever ran must still be searchable afterward, not just pages written from
+        // this point onward (which the triggers alone would cover).
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
+        let matter_id = "m1";
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,'existing matter','generic_civil','active','intake','x','x')",
+            [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at)
+             VALUES('doc1',?1,'x','x','x')", [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,stale,created_at)
+             VALUES('v1','doc1',?1,'x',0,'x')", [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES('p1',?1,'v1',1,'page',0,'x','גלגל מפוצץ ברכב','x','native_text','x')",
+            [matter_id],
+        ).unwrap();
+
+        conn.execute_batch(MIGRATION_007).unwrap();
+
+        let fts_table_exists: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='document_pages_fts'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(fts_table_exists, 1, "document_pages_fts must exist after migration 007");
+        for trigger in ["trg_document_pages_fts_insert", "trg_document_pages_fts_update", "trg_document_pages_fts_delete"] {
+            let exists: i64 = conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?1", [trigger], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(exists, 1, "{trigger} must exist after migration 007");
+        }
+        let backfilled: String = conn.query_row(
+            "SELECT page_id FROM document_pages_fts WHERE document_pages_fts MATCH 'גלגל'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(backfilled, "p1", "a page written before migration 007 ran must be found via FTS after the backfill");
+
+        // re-running the migration must be a true no-op on the already-backfilled row
+        conn.execute_batch(MIGRATION_007).unwrap();
+        let row_count: i64 = conn.query_row(
+            "SELECT count(*) FROM document_pages_fts WHERE page_id='p1'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(row_count, 1, "the backfill INSERT must be idempotent, never duplicating an already-indexed page");
+
+        let matter_survived: String = conn.query_row(
+            "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(matter_survived, "existing matter");
+    }
+
+    #[test]
+    fn document_pages_fts_stays_in_sync_via_triggers_for_new_insert_update_and_delete() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
+        conn.execute_batch(MIGRATION_007).unwrap();
+        let matter_id = "m1";
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,'m','generic_civil','active','intake','x','x')", [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,matter_id,logical_title,created_at,updated_at)
+             VALUES('doc1',?1,'x','x','x')", [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO document_versions(id,document_id,matter_id,content_sha256,stale,created_at)
+             VALUES('v1','doc1',?1,'x',0,'x')", [matter_id],
+        ).unwrap();
+
+        // INSERT sync
+        conn.execute(
+            "INSERT INTO document_pages(
+                id,matter_id,document_version_id,page_number,anchor_kind,block_index,
+                display_text,normalized_text,text_sha256,extraction_method,created_at
+             ) VALUES('p1',?1,'v1',1,'page',0,'x','שבר בפרק כף היד','x','native_text','x')",
+            [matter_id],
+        ).unwrap();
+        let found: i64 = conn.query_row(
+            "SELECT count(*) FROM document_pages_fts WHERE document_pages_fts MATCH 'שבר'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(found, 1, "a newly-inserted page must be indexed immediately via the AFTER INSERT trigger");
+
+        // UPDATE sync
+        conn.execute("UPDATE document_pages SET normalized_text='טקסט שונה לחלוטין' WHERE id='p1'", []).unwrap();
+        let old_gone: i64 = conn.query_row(
+            "SELECT count(*) FROM document_pages_fts WHERE document_pages_fts MATCH 'שבר'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(old_gone, 0, "the AFTER UPDATE trigger must refresh the indexed text, not leave the old text still matchable");
+        let new_found: i64 = conn.query_row(
+            "SELECT count(*) FROM document_pages_fts WHERE document_pages_fts MATCH 'שונה'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(new_found, 1, "the AFTER UPDATE trigger must make the new text matchable");
+
+        // DELETE sync
+        conn.execute("DELETE FROM document_pages WHERE id='p1'", []).unwrap();
+        let deleted: i64 = conn.query_row(
+            "SELECT count(*) FROM document_pages_fts WHERE page_id='p1'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(deleted, 0, "the AFTER DELETE trigger must remove the FTS row when its source page is deleted");
     }
 }

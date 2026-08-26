@@ -104,3 +104,25 @@ pub struct LedgerSource {
     pub document_version_id: String, pub document_page_id: String,
     pub display_quote: String, pub source_text_sha256: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestSource {
+    pub source_id: String, pub document_version_id: String, pub page: Option<i64>,
+    pub anchor_kind: String, pub text_sha256: String, pub text: String,
+    pub text_mode: String, // "full" | "window"
+    pub window_start: Option<i64>, pub window_end: Option<i64>, pub window_sha256: Option<String>,
+    pub bm25_score: Option<f64>, pub category_boosted: bool,
+    pub included_via: String, // "match" | "neighbor"
+    pub neighbor_of_source_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextManifest {
+    pub retrieval_version: String,
+    pub matter_id: String, pub capability: String, pub query_terms: String,
+    pub sources: Vec<ManifestSource>,
+    pub budget_chars_used: i64, pub budget_chars_limit: i64,
+    pub manifest_sha256: String,
+}

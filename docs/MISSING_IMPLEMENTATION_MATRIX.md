@@ -334,3 +334,46 @@ verified successors (fixed with a partial `UNIQUE(matter_id,supersedes_entry_id)
 WHERE status='verified'` index); and the integrity hash covered only the source
 hashes, not the entry's own domain fields (fixed with a generic per-row snapshot). See
 `docs/RELEASE_GATES.md`'s "Phase B, milestone B4" section for the full writeup.
+
+## Phase B, milestone B5a — Focused AI Retrieval (2026-08-26)
+
+Fifth milestone of the roadmap: a pure retrieval-infrastructure pass - no ledger
+writes, no embeddings, local-first - replacing `ai.rs::plan_context`'s old flat,
+unranked, recency-only, capability-blind 80-row query with a real, auditable pipeline
+in a new `src-tauri/src/retrieval.rs` module. New migration
+`007_retrieval_context_v18.sql` adds a local FTS5 index (`document_pages_fts`) over
+`document_pages.normalized_text`, kept in sync via triggers on `document_pages` with
+zero changes to `extraction.rs`, plus an idempotent backfill for rows that predate the
+migration - no `rusqlite` Cargo feature needed, FTS5 is already compiled into the
+bundled SQLCipher build, confirmed at runtime by a permanent test that runs on every
+`cargo test --locked` including real Windows CI. Free text is never handed raw to
+`MATCH` - each term is tokenized, phrase-quoted, and OR-joined before compilation, so
+FTS5 query-syntax operators a lawyer might type can never be interpreted as query
+syntax. Ranking is an explicit deterministic sort tuple (bm25, then category as a
+tie-break only, then recency, page, block, id) - never a blended arbitrary-scale score.
+`matter_id`/staleness are re-applied against the live tables at every stage, including
+neighbor expansion - the FTS index is never trusted as authoritative for filtering.
+Page-level neighbor expansion pulls adjacent pages with a recorded
+`neighborOfSourceId`. An oversized single-row `anchor_kind='document'` source (a large
+DOCX) is never dropped for exceeding the budget - it's deterministically windowed
+instead, while the manifest still carries the source's real, unchanged
+`sourceId`/`textSha256` for its full text. `ContextManifest` carries a canonical,
+non-circular `manifest_sha256` so identical inputs always hash identically across
+runs. Both `plan_ai_context` (preview) and `run_ai_capability` (the real run) thread an
+optional `query` to the same underlying call, so preview and the real run can never
+diverge. `capability_profile` is a mechanism only - this milestone deliberately
+populates just `extract_facts`, with no placeholder query/category profiles for
+capabilities B5b hasn't designed yet. `FactsAITab.tsx` gained one optional free-text
+query input wired through to `run_ai_capability`.
+
+A first planning pass on this milestone was sent back with 8 real defects plus 2 scope
+adjustments before any code was written (a mistaken `fts5` Cargo-feature belief, a
+missing post-upgrade backfill, a naive shadow-table-count assertion, unsafe raw-MATCH
+query construction, an overclaimed Hebrew-nikud claim, a "drop oversized sources"
+policy replaced with deterministic windowing, a circular manifest-hash bug, a thinner
+audit trail, preview/run divergence risk, and B5b content leaking into a B5a-scoped
+milestone) - the shipped design above reflects every fix. 127/127 tests total
+(10 new integration tests, 8 new unit tests). See `docs/RELEASE_GATES.md`'s "Phase B,
+milestone B5a" section for the full writeup. This commit has not yet had its own
+Windows CI run. B5b–B6 remain deliberately unattempted, each still pending its own
+planning pass.

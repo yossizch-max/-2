@@ -15,6 +15,7 @@ mod legal_rules;
 mod matter_profile;
 mod models;
 mod requirements;
+mod retrieval;
 mod scanner;
 mod search;
 mod security;

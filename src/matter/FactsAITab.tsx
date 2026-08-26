@@ -16,6 +16,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const enabledProfiles=profiles?.filter(p=>p.enabled)??[];
 
   const [profileId,setProfileId]=useState("");
+  const [query,setQuery]=useState("");
   const [egressApproved,setEgressApproved]=useState(false);
   const [runId,setRunId]=useState<string|null>(null);
   const [busy,setBusy]=useState(false);
@@ -43,7 +44,8 @@ export function FactsAITab({matterId}:{matterId:string}) {
     setBusy(true);setRunError(null);
     try{
       const res=await commands.run_ai_capability({
-        matterId, capability:CAPABILITY, profileId, externalEgressApproved:egressApproved
+        matterId, capability:CAPABILITY, profileId, externalEgressApproved:egressApproved,
+        query: query.trim()||undefined
       }) as {runId:string};
       setRunId(res.runId);
     }catch(e){ setRunError(String(e)); }
@@ -82,6 +84,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
           <option value="">בחר ספק...</option>
           {enabledProfiles.map(p=><option key={p.id} value={p.id}>{p.providerKind} · {p.model||"—"}</option>)}
         </select></label>
+        <label>מיקוד לחיפוש (אופציונלי)<input type="text" value={query} onChange={e=>setQuery(e.target.value)} placeholder="לדוגמה: שבר בכף היד"/></label>
         {selectedProfile?.providerKind==="openai" && <label style={{display:"flex",alignItems:"center",gap:8,flexDirection:"row"}}>
           <input type="checkbox" checked={egressApproved} onChange={e=>setEgressApproved(e.target.checked)}/>
           מאשר שליחת חומר התיק החוצה להרצה זו

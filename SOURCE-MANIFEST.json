@@ -1,11 +1,11 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-26",
-  "regenerated_against_commit": "55616b98daff13530227f4a234485a595f1d764a",
+  "regenerated_against_commit": "b7884df676f1c034f206e0d0863050888180d9ff",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
-  "file_count": 101,
+  "file_count": 103,
   "files": [
     {
       "path": ".github/workflows/windows-release-gate.yml",
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 21272,
-      "sha256": "c37603c476333cb4cbd08ab2dac63c9b84ff9026d0cc9afce3a871ecf6bb04f2"
+      "size": 28587,
+      "sha256": "49fefe91d6515f31216d2a029532b2e4cf4b74daec36e7aeeb1f9a32b2ec2570"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 3910,
-      "sha256": "ff1acccce324d0f3f86cae42af4be13dd33824d403cb462754dde4abf4c513e8"
+      "size": 5255,
+      "sha256": "01aca1947c10884707d5f32828b849c887100f5319863155e672ad201782e666"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "fbdee9ab0975680f7551d1dba2ae4d8803ba5948711bd39955389d50a1eb6f6e"
+      "sha256": "60f1b988ff1e52826c0ddc5dc82244c1ffdeee97635390f30496542444176589"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 24235,
-      "sha256": "7192fecb6871f1bcc5d289dcdc6750226605356bdff51f6c370eba88fe908e13"
+      "size": 27415,
+      "sha256": "d12eaebfd773cab50bf258c1f412ab7518e09265098d6d55e4fae432be2f1b99"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 81064,
-      "sha256": "afb3a9a4f05d58d4691c7c400367cd12a011f08aeb11a8a0e585afa3f61971c8"
+      "size": 90669,
+      "sha256": "cecfb3eb59d30e16adea421dfaf65ef44c22f1b7ca004ea5db4f19079472f5b2"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -119,8 +119,8 @@
     },
     {
       "path": "scripts/static-qa.mjs",
-      "size": 2715,
-      "sha256": "bdc14478e833a898d72e465e2e93f895d8c06ca7887f6e479fc97e617df39e5e"
+      "size": 3673,
+      "sha256": "b2d30ff24cc30e8214a84c10ae0062a126ce428d88c8b3f84aebd0a7f91b2be1"
     },
     {
       "path": "scripts/vendor-ocr-runtime.ps1",
@@ -203,6 +203,11 @@
       "sha256": "f823e6aa083bb419f3f1c7fdc792a82d0be3acb4cd1dae3a48b9acafcf8c76f8"
     },
     {
+      "path": "src-tauri/migrations/007_retrieval_context_v18.sql",
+      "size": 2950,
+      "sha256": "a8cce922659661d11431b590ccc7a52d462a4e2944ec08fe86a772cb167a05c3"
+    },
+    {
       "path": "src-tauri/resources/ocr/README.md",
       "size": 640,
       "sha256": "9cbb7dfec5f41b051e1e9877db2c44fbcf60a6d26e303f4676dbe4912b1b8792"
@@ -224,8 +229,8 @@
     },
     {
       "path": "src-tauri/src/ai.rs",
-      "size": 13384,
-      "sha256": "c79147ca84b14d7fe458e159f1aa9e63cfef0ed8bc38b79442aadf84f27e4af6"
+      "size": 13815,
+      "sha256": "1b8dd61854626a2cc5ca430afce6219e7072ba21e1b8cc7995e7d822fe7359dc"
     },
     {
       "path": "src-tauri/src/authorities.rs",
@@ -234,8 +239,8 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "size": 86336,
-      "sha256": "9dfbae978cc344d49ae4d22e21f6eda8d3d0a6464b7dedbf73c27c1d7689517b"
+      "size": 86468,
+      "sha256": "0b23b1329487915531d1f59c18e0db841128fd7d98dea90774c0a7994d91d18c"
     },
     {
       "path": "src-tauri/src/damage.rs",
@@ -244,8 +249,8 @@
     },
     {
       "path": "src-tauri/src/db.rs",
-      "size": 11898,
-      "sha256": "aeeb29f3f337ca46a578486174b29c2f15721ba6a060132c5cb95d6e43bb9d9b"
+      "size": 20561,
+      "sha256": "9ee60531d24b836a6ec678113b9d212c4ac7f7d98affe29746bbc66635694ab0"
     },
     {
       "path": "src-tauri/src/error.rs",
@@ -264,8 +269,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 104608,
-      "sha256": "4e2dacb513186549878d802fc6ea6bbb1bdc2db29e3cbf28e1b451c2608e932a"
+      "size": 118791,
+      "sha256": "10003a311db7c23a175ed8fc14f64b82ecb92f9eccacaad7033f9bc76d532032"
     },
     {
       "path": "src-tauri/src/ledger.rs",
@@ -284,8 +289,8 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "size": 5931,
-      "sha256": "9139c5b82c642b6234ead1399af5bae9a52eb4dfead526834a20699ae59ae8aa"
+      "size": 5946,
+      "sha256": "5b60e930992c98eb94562537fb3fd7046e0bb9ab0db2724f62a9e1aff81c2511"
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -299,13 +304,18 @@
     },
     {
       "path": "src-tauri/src/models.rs",
-      "size": 4465,
-      "sha256": "45e9ff1ecc25b17ee2cf9eebc86ea54ef646051c9a001e177ed2dcb931f674fb"
+      "size": 5401,
+      "sha256": "4e6c08d5ffa527b7f10b82fbdea9009a801b2ef95f86930d1ff64f92fd92c954"
     },
     {
       "path": "src-tauri/src/requirements.rs",
       "size": 10033,
       "sha256": "1e028a09a36963452595e86656b9f22ead7eacc25c79b094f2d42ae8e6989978"
+    },
+    {
+      "path": "src-tauri/src/retrieval.rs",
+      "size": 21690,
+      "sha256": "eea770d32f471ec1205f3ad0f9abf0021dd77f870f2dc3dab54885ecd6c763c6"
     },
     {
       "path": "src-tauri/src/scanner.rs",
@@ -399,8 +409,8 @@
     },
     {
       "path": "src/matter/FactsAITab.tsx",
-      "size": 6454,
-      "sha256": "1213eed808212d278b7db1fdd94b05eaf46711183386ec40f630188852f8a9f6"
+      "size": 6723,
+      "sha256": "f1912ced159a41095fad7ea6bd08f3dd9f58e5232e62e793cd34ca95118c34cb"
     },
     {
       "path": "src/matter/LedgersTab.tsx",

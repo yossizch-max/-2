@@ -998,7 +998,8 @@ pub fn plan_ai_context(state: State<'_, AppState>, payload: Value) -> AppResult<
     let _=&state;
     {
     let matter_id=required_string(&payload,"matterId")?; let capability=required_string(&payload,"capability")?;
-    ai::plan_context(&state.db,matter_id,capability)
+    let query=payload.get("query").and_then(Value::as_str);
+    ai::plan_context(&state.db,matter_id,capability,query)
 }
 }
 
@@ -1008,7 +1009,8 @@ pub fn run_ai_capability(state: State<'_, AppState>, payload: Value) -> AppResul
     {
     let matter_id=required_string(&payload,"matterId")?;let capability=required_string(&payload,"capability")?;
     let profile_id=required_string(&payload,"profileId")?;let approved=payload.get("externalEgressApproved").and_then(Value::as_bool).unwrap_or(false);
-    Ok(json!({"runId":ai::run_capability(&state.db,matter_id,capability,profile_id,approved)?}))
+    let query=payload.get("query").and_then(Value::as_str);
+    Ok(json!({"runId":ai::run_capability(&state.db,matter_id,capability,profile_id,approved,query)?}))
 }
 }
 
