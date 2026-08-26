@@ -47,22 +47,23 @@ client ever depended on its shape) prompted renaming two fields for room to grow
 with structured party fields, and widening/relabeling the case-type taxonomy (see
 "Phase B, milestone B1" below for the full writeup), confirmed on real Windows CI at
 run #16, commit `6e89cd0`. B2 (Workstreams + Matter Packs — per-matter status tracks
-auto-seeded from case type, reconciled non-destructively on change) is implemented (see
-"Phase B, milestone B2" below); B3 (Missing Evidence Matrix — the same reconcile idiom
-applied to a document checklist, see "Phase B, milestone B3" below) was also implemented
-on top of it, then a user code review of B3 found and fixed a genuine semantic gap
-(`priority` could contradict a lawyer-collected item's status — split into
-`relevance`/`priority`, no migration needed, see "Phase B, milestone B3" for the full
-writeup). B4 (Medical/Wage/Liability Ledgers — evidence-grounded, lawyer-verified
-records with a `draft → verified` lifecycle and correction-by-supersession, copying
-`legal_authorities`' verbatim-containment-checked source-grounding pattern) is also
-implemented, then a user code review of B4 found and fixed 5 integrity gaps (verified
-evidence deletable via SQL, `stale` resettable, verify not checking source-version
-staleness, multiple verified successors possible, a weak integrity hash — see "Phase B,
-milestone B4" below for the full writeup). **None of B2, B3, the B3 review-fix, B4, or
-the B4 hardening-fix is yet reconfirmed on Windows CI** — that run is still needed
-before Gate C/E can be called current again. What's left needs a human on a real
-Windows machine with a fresh installer: real OCR, real AI provider calls, and
+auto-seeded from case type, reconciled non-destructively on change) was confirmed on
+real Windows CI at run #17, commit `0be99a9` (see "Phase B, milestone B2" below); B3
+(Missing Evidence Matrix — the same reconcile idiom applied to a document checklist)
+was confirmed at run #18, commit `94f7c63`, then a user code review of B3 found and
+fixed a genuine semantic gap (`priority` could contradict a lawyer-collected item's
+status — split into `relevance`/`priority`, no migration needed), confirmed at run #19,
+commit `958f372` (see "Phase B, milestone B3" below for the full writeup). B4
+(Medical/Wage/Liability Ledgers — evidence-grounded, lawyer-verified records with a
+`draft → verified` lifecycle and correction-by-supersession, copying
+`legal_authorities`' verbatim-containment-checked source-grounding pattern) was
+confirmed at run #20, commit `7bdb60a`, then a user code review of B4 found and fixed 5
+integrity gaps (verified evidence deletable via SQL, `stale` resettable, verify not
+checking source-version staleness, multiple verified successors possible, a weak
+integrity hash), confirmed at run #21, commit `55616b9` (see "Phase B, milestone B4"
+below for the full writeup). **B1 through the B4 hardening-fix are now all confirmed on
+real Windows CI.** What's left needs a human on a real Windows machine with a fresh
+installer: real OCR, real AI provider calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
 
@@ -632,9 +633,7 @@ cascade delete, plus 3 pure unit tests for the allowlists/defaults) - 75/75 tota
 re-verified idempotent via direct sqlite3 (applied 3x): 41 tables, 28 indexes, 37
 triggers, `user_version=15`, integrity ok, `fk_check` clean.
 
-**Not yet reconfirmed on Windows CI** - its run (#17) was queued right before B3 landed
-on top of it; that run is still needed before this milestone can be called current on
-Gate C/E.
+**Confirmed on real Windows CI at [run #17](https://github.com/yossizch-max/-2/actions/runs/32926614574), commit `0be99a9`** - 75/75 tests passed on the real runner.
 
 ## Phase B, milestone B3 — Missing Evidence Matrix (2026-08-25)
 
@@ -716,10 +715,12 @@ seeding test - 89/89 total. `cargo check/test --locked`, `npm run build`,
 `contract:check` (96/96, no drift), `qa:static` all pass. Migration re-verified
 idempotent (still 42 tables/29 indexes/37 triggers/`user_version=16` - unchanged).
 
-**Neither the original B3 commit (`94f7c63`) nor this review-fix commit has been
-reconfirmed on Windows CI yet** - that run is still needed before this milestone can
-be called current on Gate C/E. B4-B6 remain deliberately unattempted, each still
-pending its own planning pass.
+**Both confirmed on real Windows CI**: the original B3 commit at
+[run #18](https://github.com/yossizch-max/-2/actions/runs/32929039159), commit
+`94f7c63` (86/86 tests), and this review-fix commit at
+[run #19](https://github.com/yossizch-max/-2/actions/runs/32930093339), commit
+`958f372` (89/89 tests). B4-B6 remain deliberately unattempted, each still pending its
+own planning pass.
 
 ## Phase B, milestone B4 — Medical/Wage/Liability Ledgers (2026-08-26)
 
@@ -828,10 +829,12 @@ a 7th table in this migration) all pass. Migration re-verified idempotent via di
 sqlite3 (applied 3x): 49 tables, 35 indexes, 52 triggers, `user_version=17`
 (unchanged), integrity ok, `fk_check` clean.
 
-**Neither the original B4 commit (`7bdb60a`) nor this hardening-fix commit has been
-reconfirmed on Windows CI yet** - that run is still needed before this milestone can
-be called current on Gate C/E. B5-B6 remain deliberately unattempted, each still
-pending its own planning pass.
+**Both confirmed on real Windows CI**: the original B4 commit at
+[run #20](https://github.com/yossizch-max/-2/actions/runs/32932125926), commit
+`7bdb60a` (103/103 tests), and this hardening-fix commit at
+[run #21](https://github.com/yossizch-max/-2/actions/runs/32933104625), commit
+`55616b9` (106/106 tests). B4 is now fully CI-confirmed on Gate C/E. B5-B6 remain
+deliberately unattempted, each still pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
