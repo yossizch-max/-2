@@ -7,6 +7,7 @@ mod damage;
 mod db;
 mod error;
 mod extraction;
+mod fact_conflicts;
 #[cfg(test)]
 mod gate_f_partial;
 #[cfg(test)]
@@ -125,6 +126,8 @@ pub fn run() {
             commands::list_verified_facts,
             commands::verify_fact,
             commands::invalidate_fact,
+            fact_conflicts::list_fact_conflicts,
+            fact_conflicts::resolve_fact_conflict,
             commands::list_damage_calculations,
             commands::save_damage_calculation,
             commands::calculate_damage,
