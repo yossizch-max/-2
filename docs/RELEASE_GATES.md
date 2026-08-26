@@ -45,11 +45,10 @@ run #15, commit `16a31b3` — then a design review of that same milestone (befor
 client ever depended on its shape) prompted renaming two fields for room to grow
 (`primary_event_date`/`primary_court_name`), replacing a single contact-details blob
 with structured party fields, and widening/relabeling the case-type taxonomy (see
-"Phase B, milestone B1" below for the full writeup). **That review-fix commit is not
-yet reconfirmed on Windows CI** — that run is still needed before Gate C/E can be
-called current again. What's left needs a human on a real Windows machine with a fresh
-installer: real OCR, real AI provider calls, and DOCX export, which doesn't exist in
-this reconstruction yet.**
+"Phase B, milestone B1" below for the full writeup), confirmed on real Windows CI at
+run #16, commit `6e89cd0`. What's left needs a human on a real Windows machine with a
+fresh installer: real OCR, real AI provider calls, and DOCX export, which doesn't
+exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
 reconstruction that hasn't passed Gates C or F must not be used for real client work.
@@ -564,9 +563,9 @@ migration's idempotency (still 40 tables/27 indexes/37 triggers/`user_version=14
 
 The original B1 commit (`16a31b3`, before this review pass) was confirmed on real
 Windows CI at [run #15](https://github.com/yossizch-max/-2/actions/runs/32892388064) -
-65/65 tests passed on the real runner. **The review-fix commit above is not yet
-reconfirmed on Windows CI** - that run is still needed before this milestone can be
-called current on Gate C/E.
+65/65 tests passed on the real runner. The review-fix commit (`6e89cd0`) was then
+confirmed at [run #16](https://github.com/yossizch-max/-2/actions/runs/32901003830) -
+66/66 tests passed on the real runner. B1 is now fully CI-confirmed on Gate C/E.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
@@ -596,7 +595,7 @@ that live check belongs to Gate F.
   after `npm ci` + `cargo check --locked` + `cargo test --locked` + `npm run build`;
   identical. ✅
 
-## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #15)
+## Gate C, Windows OCR runtime — succeeded end-to-end (run #6, reconfirmed on current source at run #16)
 
 `config/ocr-runtime.json` now pins a real, verified manifest (not the old fail-closed
 placeholder): Tesseract 5.4.0.20240606 (UB-Mannheim, Apache-2.0), Poppler 24.08.0-0
@@ -720,31 +719,29 @@ Still remaining:
 ## Gate E, real Windows build — partially closed
 `.github/workflows/windows-release-gate.yml` ran successfully end-to-end on a real
 `windows-2025` GitHub Actions runner, most recently reconfirmed on the current source:
-[run #15](https://github.com/yossizch-max/-2/actions/runs/32892388064), commit
-`16a31b3`, 2026-08-25 (rounds 2/3, the follow-up fixes, Phase A, and its hardening pass
-were separately confirmed at
+[run #16](https://github.com/yossizch-max/-2/actions/runs/32901003830), commit
+`6e89cd0`, 2026-08-25 (rounds 2/3, the follow-up fixes, Phase A, its hardening pass, and
+the original B1 shape were separately confirmed at
 [run #10](https://github.com/yossizch-max/-2/actions/runs/32851140829) commit `7a3ec11`,
 [run #11](https://github.com/yossizch-max/-2/actions/runs/32854305830) commit `721cc03`,
 [run #12](https://github.com/yossizch-max/-2/actions/runs/32866131285) commit `d0cdb3e`,
 [run #13](https://github.com/yossizch-max/-2/actions/runs/32877320049) commit `64b7066`,
-and [run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747) commit
-`d7b3ae6`, all same day). Build took ~33 minutes total (no cross-run cache: everything,
-including SQLCipher/OpenSSL, compiles from source every run). Run #15 confirmed the
-*original* B1 column shape (`event_date`/`court_name`/a single `contact_details` blob);
-the design-review follow-up commit that renames/restructures those fields (see "Phase
-B, milestone B1") has not had its own run yet.
+[run #14](https://github.com/yossizch-max/-2/actions/runs/32885155747) commit `d7b3ae6`,
+and [run #15](https://github.com/yossizch-max/-2/actions/runs/32892388064) commit
+`16a31b3`, all same day). Build took ~33 minutes total (no cross-run cache: everything,
+including SQLCipher/OpenSSL, compiles from source every run).
 
 - Node/npm versions recorded (in the run log) ✅
 - rustc/cargo versions recorded (in the run log) ✅
 - frontend release build ✅
 - Rust locked compile (`cargo check --locked`) ✅
-- Rust locked tests (`cargo test --locked`, 65/65 as of run #15, up from 58 at run #14 as
-  the Phase B milestone B1 regression tests were added) ✅
+- Rust locked tests (`cargo test --locked`, 66/66 as of run #16, up from 65 at run #15 as
+  the B1 design-review-fix test updates were added) ✅
 - NSIS bundle ✅ — produced and uploaded as the `tahrir-windows-installer-unsigned`
   Actions artifact. First produced without OCR at 5.4MB (run #3); as of
   [run #6](https://github.com/yossizch-max/-2/actions/runs/32813326367) it includes the
-  full OCR runtime (see Gate C) at 61.4MB, and [run #15]
-  (https://github.com/yossizch-max/-2/actions/runs/32892388064) reconfirms the artifact
+  full OCR runtime (see Gate C) at 61.4MB, and [run #16]
+  (https://github.com/yossizch-max/-2/actions/runs/32901003830) reconfirms the artifact
   on the current source. Each run's artifact expires 14 days after that run.
 - Windows code signing — ❌ not done. Needs a human with a real code-signing
   certificate; nothing in this repo can substitute for that.
