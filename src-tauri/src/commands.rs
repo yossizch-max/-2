@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
+    ai, authorities, damage, extraction, ledger, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
     workstreams,
     error::{AppError,AppResult}, AppState
 };
@@ -433,6 +433,120 @@ pub fn update_matter_requirement(state: State<'_, AppState>, payload: Value) -> 
     let notes=payload.get("notes").and_then(Value::as_str);
     state.db.write(|conn|requirements::update_status(conn,matter_id,requirement_key,status,notes))?;
     Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn create_medical_event(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let treatment_summary=required_string(&payload,"treatmentSummary")?;
+    let event_date=payload.get("eventDate").and_then(Value::as_str);
+    let provider_name=payload.get("providerName").and_then(Value::as_str);
+    let supersedes_entry_id=payload.get("supersedesEntryId").and_then(Value::as_str);
+    let id=ledger::create_medical_event(&state.db,matter_id,event_date,provider_name,treatment_summary,supersedes_entry_id)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn create_wage_record(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let gross_amount_cents=payload.get("grossAmountCents").and_then(Value::as_i64)
+        .ok_or_else(||AppError::Validation("grossAmountCents required".into()))?;
+    let period_start=payload.get("periodStart").and_then(Value::as_str);
+    let period_end=payload.get("periodEnd").and_then(Value::as_str);
+    let employer_name=payload.get("employerName").and_then(Value::as_str);
+    let supersedes_entry_id=payload.get("supersedesEntryId").and_then(Value::as_str);
+    let id=ledger::create_wage_record(&state.db,matter_id,period_start,period_end,employer_name,gross_amount_cents,supersedes_entry_id)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn create_liability_fact(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let description=required_string(&payload,"description")?;
+    let claim_basis=payload.get("claimBasis").and_then(Value::as_str);
+    let liable_party_name=payload.get("liablePartyName").and_then(Value::as_str);
+    let supersedes_entry_id=payload.get("supersedesEntryId").and_then(Value::as_str);
+    let id=ledger::create_liability_fact(&state.db,matter_id,claim_basis,liable_party_name,description,supersedes_entry_id)?;
+    Ok(json!({"id":id}))
+}
+
+/// Kind-dispatched: only a `draft` entry can be edited, and each kind has its own
+/// field set, so the payload carries whichever fields are relevant to `kind`.
+#[tauri::command]
+pub fn update_ledger_entry_draft(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let entry_id=required_string(&payload,"entryId")?;
+    let kind=required_string(&payload,"kind")?;
+    match kind {
+        "medical" => {
+            let treatment_summary=required_string(&payload,"treatmentSummary")?;
+            let event_date=payload.get("eventDate").and_then(Value::as_str);
+            let provider_name=payload.get("providerName").and_then(Value::as_str);
+            ledger::update_draft_medical_event(&state.db,matter_id,entry_id,event_date,provider_name,treatment_summary)?;
+        }
+        "wage" => {
+            let gross_amount_cents=payload.get("grossAmountCents").and_then(Value::as_i64)
+                .ok_or_else(||AppError::Validation("grossAmountCents required".into()))?;
+            let period_start=payload.get("periodStart").and_then(Value::as_str);
+            let period_end=payload.get("periodEnd").and_then(Value::as_str);
+            let employer_name=payload.get("employerName").and_then(Value::as_str);
+            ledger::update_draft_wage_record(&state.db,matter_id,entry_id,period_start,period_end,employer_name,gross_amount_cents)?;
+        }
+        "liability" => {
+            let description=required_string(&payload,"description")?;
+            let claim_basis=payload.get("claimBasis").and_then(Value::as_str);
+            let liable_party_name=payload.get("liablePartyName").and_then(Value::as_str);
+            ledger::update_draft_liability_fact(&state.db,matter_id,entry_id,claim_basis,liable_party_name,description)?;
+        }
+        _ => return Err(AppError::Validation(format!("unknown ledger kind \"{kind}\""))),
+    }
+    Ok(json!({"ok":true}))
+}
+
+#[tauri::command]
+pub fn add_ledger_source(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let kind=ledger::LedgerKind::parse(required_string(&payload,"kind")?)?;
+    let entry_id=required_string(&payload,"entryId")?;
+    let source_page_id=required_string(&payload,"sourcePageId")?;
+    let quote_text=required_string(&payload,"quoteText")?;
+    let id=ledger::add_source(&state.db,kind,matter_id,entry_id,source_page_id,quote_text)?;
+    Ok(json!({"id":id}))
+}
+
+#[tauri::command]
+pub fn verify_ledger_entry(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let kind=ledger::LedgerKind::parse(required_string(&payload,"kind")?)?;
+    let entry_id=required_string(&payload,"entryId")?;
+    let integrity_sha256=ledger::verify_entry(&state.db,kind,matter_id,entry_id)?;
+    Ok(json!({"integritySha256":integrity_sha256}))
+}
+
+#[tauri::command]
+pub fn list_medical_events(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(ledger::list_medical_events(&state.db,matter_id)?)?)
+}
+
+#[tauri::command]
+pub fn list_wage_records(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(ledger::list_wage_records(&state.db,matter_id)?)?)
+}
+
+#[tauri::command]
+pub fn list_liability_facts(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(ledger::list_liability_facts(&state.db,matter_id)?)?)
+}
+
+#[tauri::command]
+pub fn list_ledger_entry_sources(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let kind=ledger::LedgerKind::parse(required_string(&payload,"kind")?)?;
+    let entry_id=required_string(&payload,"entryId")?;
+    Ok(serde_json::to_value(ledger::list_entry_sources(&state.db,kind,matter_id,entry_id)?)?)
 }
 
 #[tauri::command]

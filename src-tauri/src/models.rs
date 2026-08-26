@@ -66,3 +66,41 @@ pub struct MatterRequirement {
     pub relevance: String, pub priority: Option<String>,
     pub notes: Option<String>, pub created_at: String, pub updated_at: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MedicalEvent {
+    pub id: String, pub matter_id: String, pub event_date: Option<String>,
+    pub provider_name: Option<String>, pub treatment_summary: String,
+    pub status: String, pub stale: bool, pub superseded: bool,
+    pub supersedes_entry_id: Option<String>, pub integrity_sha256: Option<String>,
+    pub verified_at: Option<String>, pub created_at: String, pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WageRecord {
+    pub id: String, pub matter_id: String, pub period_start: Option<String>,
+    pub period_end: Option<String>, pub employer_name: Option<String>, pub gross_amount_cents: i64,
+    pub status: String, pub stale: bool, pub superseded: bool,
+    pub supersedes_entry_id: Option<String>, pub integrity_sha256: Option<String>,
+    pub verified_at: Option<String>, pub created_at: String, pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LiabilityFact {
+    pub id: String, pub matter_id: String, pub claim_basis: Option<String>,
+    pub liable_party_name: Option<String>, pub description: String,
+    pub status: String, pub stale: bool, pub superseded: bool,
+    pub supersedes_entry_id: Option<String>, pub integrity_sha256: Option<String>,
+    pub verified_at: Option<String>, pub created_at: String, pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerSource {
+    pub id: String, pub matter_id: String, pub entry_id: String,
+    pub document_version_id: String, pub document_page_id: String,
+    pub display_quote: String, pub source_text_sha256: String,
+}

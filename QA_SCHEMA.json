@@ -1,8 +1,8 @@
 {
-  "user_version": 16,
-  "tables": 42,
-  "indexes": 29,
-  "triggers": 37,
+  "user_version": 17,
+  "tables": 48,
+  "indexes": 32,
+  "triggers": 46,
   "integrity": "ok",
   "foreign_key_check": [],
   "locked_damage_mutation_blocked": true,
@@ -17,7 +17,11 @@
   "matter_profile_and_parties_cascade_delete_with_matter": true,
   "matter_workstreams_cascade_delete_with_matter": true,
   "matter_requirements_cascade_delete_with_matter": true,
+  "verified_ledger_entry_fields_immutable_but_stale_carve_out_works": true,
+  "verified_ledger_entry_sources_immutable": true,
+  "matter_ledgers_cascade_delete_with_matter_even_when_verified": true,
+  "cross_matter_ledger_supersession_blocked": true,
   "regenerated_at": "2026-08-26",
-  "regenerated_against_parent_commit": "94f7c63a9af5409c126b21eff5ad837d4dbf99fe",
-  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql, all applied in order (real, not estimated) - schema unchanged by the B3 relevance/priority review fix (pure Rust/TS read-model logic, no migration)"
+  "regenerated_against_parent_commit": "958f37206563bb35f2ce886786a1f8a18d43d806",
+  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql + 006_matter_ledgers_v17.sql, all applied in order (real, not estimated). Phase B milestone B4 (Medical/Wage/Liability Ledgers) added 6 tables, 3 indexes, 9 triggers - deliberately no delete-blocking trigger on the new tables (unlike damage_calculations), since SQLite fires a child row's own BEFORE DELETE trigger even for an ON DELETE CASCADE from its parent FK, verified empirically; the UPDATE-blocking trigger (with a carved-out `stale` column) is what actually enforces 'a correction is never a silent edit'"
 }

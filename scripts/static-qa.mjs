@@ -13,6 +13,7 @@ const sqlRulesInfra=read("src-tauri/migrations/002_legal_rules_infrastructure_v1
 const sqlMatterProfile=read("src-tauri/migrations/003_matter_profile_v14.sql");
 const sqlWorkstreams=read("src-tauri/migrations/004_matter_workstreams_v15.sql");
 const sqlRequirements=read("src-tauri/migrations/005_matter_requirements_v16.sql");
+const sqlLedgers=read("src-tauri/migrations/006_matter_ledgers_v17.sql");
 const snapshot=read("src-tauri/src/source_snapshot.rs");
 const extraction=read("src-tauri/src/extraction.rs");
 const ai=read("src-tauri/src/ai.rs");
@@ -30,6 +31,7 @@ const checks={
   twoTablesInMatterProfile:(sqlMatterProfile.match(/CREATE TABLE /g)||[]).length===2,
   oneTableInMatterWorkstreams:(sqlWorkstreams.match(/CREATE TABLE /g)||[]).length===1,
   oneTableInMatterRequirements:(sqlRequirements.match(/CREATE TABLE /g)||[]).length===1,
+  sixTablesInMatterLedgers:(sqlLedgers.match(/CREATE TABLE /g)||[]).length===6,
   ocrSourceMismatch:snapshot.includes("SourceShaMismatch"),
   ocrReverify:extraction.includes("snapshot.verify_unchanged()"),
   docxDocumentAnchoring:extraction.includes('anchor_kind: "document"')&&extraction.includes("page_number: None"),

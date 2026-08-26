@@ -109,7 +109,7 @@
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, scanner, workstreams};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, ledger, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, scanner, workstreams};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -367,6 +367,32 @@ fn changed_source_gets_a_new_version_under_the_same_document_and_cascades_stale(
         Ok(())
     }).unwrap();
 
+    // also ground a VERIFIED B4 ledger entry in the same original version's page, so
+    // its stale-cascade (medical_events, scanner.rs) can be checked alongside the
+    // pre-existing verified_facts one
+    let entry_id = Uuid::new_v4().to_string();
+    db.write(|conn| {
+        // insert as draft first - the source-immutability trigger on
+        // medical_event_sources blocks INSERT once the parent is already verified, so
+        // the entry must still be draft when its source is attached, then verified
+        // afterward (mirroring the real create -> add_source -> verify_entry order).
+        conn.execute(
+            "INSERT INTO medical_events(id,matter_id,treatment_summary,status,created_at,updated_at)
+             VALUES(?1,?2,'x','draft',?3,?3)",
+            params![entry_id, matter_id, now],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "INSERT INTO medical_event_sources(id,matter_id,entry_id,document_version_id,document_page_id,display_quote,source_text_sha256)
+             VALUES(?1,?2,?3,?4,?5,'x','x')",
+            params![Uuid::new_v4().to_string(), matter_id, entry_id, old_version_id, page_id],
+        ).map_err(AppError::Db)?;
+        conn.execute(
+            "UPDATE medical_events SET status='verified',verified_at=?2 WHERE id=?1",
+            params![entry_id, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+
     // the source legitimately changes
     fs::write(&file_path, "REPLACED content, materially different from the original").unwrap();
     scanner::scan_metadata(&db, &dirs.office).unwrap();
@@ -398,6 +424,11 @@ fn changed_source_gets_a_new_version_under_the_same_document_and_cascades_stale(
         "SELECT stale FROM verified_facts WHERE id=?1", [&fact_id], |r| r.get(0)
     ).map_err(AppError::Db)).unwrap();
     assert_eq!(fact_stale, 1, "a fact grounded in the superseded version must cascade to stale");
+
+    let ledger_entry_stale: i64 = db.read(|conn| conn.query_row(
+        "SELECT stale FROM medical_events WHERE id=?1", [&entry_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(ledger_entry_stale, 1, "a verified ledger entry grounded in the superseded version must cascade to stale too - it stays immutable and correctable only via supersession, never silently re-verified in place");
 }
 
 #[test]
@@ -1536,4 +1567,206 @@ fn deleting_a_matter_cascades_to_its_requirements() {
         "SELECT count(*) FROM matter_requirements WHERE matter_id=?1", [&matter_id], |r| r.get(0)
     ).map_err(AppError::Db)).unwrap();
     assert_eq!(requirement_rows, 0, "matter_requirements must cascade-delete with its matter");
+}
+
+// --- Phase B, B4: Medical/Wage/Liability Ledgers ---
+
+#[test]
+fn a_draft_medical_event_can_be_created_and_edited() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: draft create/edit");
+
+    let entry_id = ledger::create_medical_event(
+        &db, &matter_id, Some("2026-01-05"), Some("ד\"ר כהן"), "שבר בפרק כף היד", None,
+    ).unwrap();
+    let entries = ledger::list_medical_events(&db, &matter_id).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].status, "draft");
+
+    ledger::update_draft_medical_event(&db, &matter_id, &entry_id, Some("2026-01-06"), Some("ד\"ר לוי"), "שבר בפרק כף היד השמאלית").unwrap();
+    let entries = ledger::list_medical_events(&db, &matter_id).unwrap();
+    assert_eq!(entries[0].event_date, Some("2026-01-06".to_string()));
+    assert_eq!(entries[0].provider_name, Some("ד\"ר לוי".to_string()));
+}
+
+#[test]
+fn adding_a_source_rejects_a_quote_not_present_verbatim_on_the_page() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: containment check");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+
+    let result = ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "טקסט שלא מופיע בעמוד");
+    assert!(result.is_err(), "a quote not present verbatim on the cited page must be rejected");
+
+    let result = ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד");
+    assert!(result.is_ok(), "a quote actually present on the page (after normalization) must be accepted");
+}
+
+#[test]
+fn verify_entry_requires_at_least_one_source() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: verify needs a source");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+
+    let result = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id);
+    assert!(result.is_err(), "an entry with zero sources must fail closed on verify");
+}
+
+#[test]
+fn verify_entry_re_checks_containment_and_fails_if_the_page_changed_since_the_source_was_added() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: re-check at verify time");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+
+    db.write(|conn| conn.execute(
+        "UPDATE document_pages SET normalized_text='טקסט שונה לחלוטין.' WHERE id=?1", [&page_id]
+    ).map_err(AppError::Db)).unwrap();
+
+    let result = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id);
+    assert!(result.is_err(), "verify must re-check containment against the page's current text, not trust what was true when the source was added");
+}
+
+#[test]
+fn a_verified_ledger_entrys_fields_are_immutable_but_stale_can_still_be_flipped() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: verified immutability");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id).unwrap();
+
+    let mutate_field = db.write(|conn| conn.execute(
+        "UPDATE medical_events SET treatment_summary='HACKED' WHERE id=?1", [&entry_id]
+    ).map_err(AppError::Db));
+    assert!(mutate_field.is_err(), "trigger must block editing a verified entry's fields");
+
+    let re_edit_via_app = ledger::update_draft_medical_event(&db, &matter_id, &entry_id, None, None, "ניסיון עריכה");
+    assert!(re_edit_via_app.is_err(), "update_draft_medical_event must refuse a non-draft entry");
+
+    let add_source_after_verify = ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "שבר");
+    assert!(add_source_after_verify.is_err(), "a verified entry must not accept new sources");
+
+    let flip_stale = db.write(|conn| conn.execute(
+        "UPDATE medical_events SET stale=1 WHERE id=?1", [&entry_id]
+    ).map_err(AppError::Db));
+    assert!(flip_stale.is_ok(), "the stale flag must remain flippable on a verified entry - it is the one carved-out column");
+}
+
+#[test]
+fn a_verified_entrys_sources_cannot_be_edited_directly() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: source immutability");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    let source_id = ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id).unwrap();
+
+    let mutate_source = db.write(|conn| conn.execute(
+        "UPDATE medical_event_sources SET display_quote='HACKED' WHERE id=?1", [&source_id]
+    ).map_err(AppError::Db));
+    assert!(mutate_source.is_err(), "trigger must block editing a source of a verified entry");
+}
+
+#[test]
+fn a_pending_draft_correction_does_not_yet_mark_the_old_entry_superseded() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: pending correction");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let old_id = ledger::create_medical_event(&db, &matter_id, Some("2026-01-05"), None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &old_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &old_id).unwrap();
+
+    // a correction that itself hasn't been verified yet must not hide/supersede the
+    // old (still authoritative) row - only a VERIFIED correction actually replaces it.
+    ledger::create_medical_event(&db, &matter_id, Some("2026-01-05"), None, "שבר מרוסק בפרק כף היד", Some(&old_id)).unwrap();
+
+    let entries = ledger::list_medical_events(&db, &matter_id).unwrap();
+    let old_entry = entries.iter().find(|e| e.id == old_id).unwrap();
+    assert!(!old_entry.superseded, "an unverified draft correction must not yet mark the old entry as superseded");
+}
+
+#[test]
+fn supersede_creates_a_new_row_and_leaves_the_old_verified_one_untouched() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: supersession");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let old_id = ledger::create_medical_event(&db, &matter_id, Some("2026-01-05"), None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &old_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &old_id).unwrap();
+
+    let new_id = ledger::create_medical_event(&db, &matter_id, Some("2026-01-05"), None, "שבר מרוסק בפרק כף היד", Some(&old_id)).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &new_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &new_id).unwrap();
+
+    let entries = ledger::list_medical_events(&db, &matter_id).unwrap();
+    let old_entry = entries.iter().find(|e| e.id == old_id).unwrap();
+    let new_entry = entries.iter().find(|e| e.id == new_id).unwrap();
+    assert_eq!(old_entry.treatment_summary, "שבר", "the old verified row must never be mutated by a correction");
+    assert!(old_entry.superseded, "the old row must be reported as superseded once its correction is itself verified");
+    assert_eq!(new_entry.treatment_summary, "שבר מרוסק בפרק כף היד");
+    assert!(!new_entry.superseded, "the current, verified correction must not itself show as superseded");
+}
+
+#[test]
+fn only_a_verified_entry_can_be_superseded() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: supersede requires verified");
+    let draft_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+
+    let result = ledger::create_medical_event(&db, &matter_id, None, None, "תיקון", Some(&draft_id));
+    assert!(result.is_err(), "a draft entry cannot be superseded - only a verified one");
+}
+
+#[test]
+fn cross_matter_supersession_is_blocked() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_a = new_matter(&db, "B4 test: matter A");
+    let matter_b = new_matter(&db, "B4 test: matter B");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_a, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_a = ledger::create_medical_event(&db, &matter_a, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_a, &entry_a, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_a, &entry_a).unwrap();
+
+    let result = ledger::create_medical_event(&db, &matter_b, None, None, "תיקון חוצה תיקים", Some(&entry_a));
+    assert!(result.is_err(), "supersession must be scoped to the same matter - the composite FK must reject a cross-matter reference");
+}
+
+#[test]
+fn deleting_a_matter_cascades_to_its_ledger_entries_and_sources_even_when_verified() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: cascade delete");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id).unwrap();
+    ledger::create_wage_record(&db, &matter_id, None, None, None, 100, None).unwrap();
+    ledger::create_liability_fact(&db, &matter_id, None, None, "תיאור", None).unwrap();
+
+    // deleting a matter must cascade even to a VERIFIED ledger entry - a delete-blocking
+    // trigger (like the one on damage_calculations) would break this, since SQLite fires
+    // a child row's own BEFORE DELETE trigger even for an ON DELETE CASCADE from its
+    // parent FK; that's exactly why these tables deliberately have no such trigger.
+    let delete_result = db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db));
+    assert!(delete_result.is_ok(), "deleting a matter must cascade even when it has a verified ledger entry");
+
+    for table in ["medical_events", "medical_event_sources", "wage_records", "liability_facts"] {
+        let rows: i64 = db.read(|conn| conn.query_row(
+            &format!("SELECT count(*) FROM {table} WHERE matter_id=?1"), [&matter_id], |r| r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(rows, 0, "{table} must cascade-delete with its matter");
+    }
 }

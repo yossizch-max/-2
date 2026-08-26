@@ -251,3 +251,35 @@ export type MatterRequirement = {
   relevance: string; priority?: string | null;
   notes?: string | null; createdAt: string; updatedAt: string;
 };
+
+export const LEDGER_STATUS_LABELS: Record<string, string> = {
+  draft: "טיוטה",
+  verified: "מאומת",
+};
+
+export type LedgerSource = {
+  id: string; matterId: string; entryId: string; documentVersionId: string;
+  documentPageId: string; displayQuote: string; sourceTextSha256: string;
+};
+
+export type MedicalEvent = {
+  id: string; matterId: string; eventDate?: string | null; providerName?: string | null;
+  treatmentSummary: string; status: string; stale: boolean; superseded: boolean;
+  supersedesEntryId?: string | null; integritySha256?: string | null; verifiedAt?: string | null;
+  createdAt: string; updatedAt: string;
+};
+
+export type WageRecord = {
+  id: string; matterId: string; periodStart?: string | null; periodEnd?: string | null;
+  employerName?: string | null; grossAmountCents: number;
+  status: string; stale: boolean; superseded: boolean;
+  supersedesEntryId?: string | null; integritySha256?: string | null; verifiedAt?: string | null;
+  createdAt: string; updatedAt: string;
+};
+
+export type LiabilityFact = {
+  id: string; matterId: string; claimBasis?: string | null; liablePartyName?: string | null;
+  description: string; status: string; stale: boolean; superseded: boolean;
+  supersedesEntryId?: string | null; integritySha256?: string | null; verifiedAt?: string | null;
+  createdAt: string; updatedAt: string;
+};

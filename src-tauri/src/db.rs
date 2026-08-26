@@ -22,6 +22,7 @@ impl DbState {
         conn.execute_batch(include_str!("../migrations/003_matter_profile_v14.sql"))?;
         conn.execute_batch(include_str!("../migrations/004_matter_workstreams_v15.sql"))?;
         conn.execute_batch(include_str!("../migrations/005_matter_requirements_v16.sql"))?;
+        conn.execute_batch(include_str!("../migrations/006_matter_ledgers_v17.sql"))?;
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
@@ -63,6 +64,7 @@ mod tests {
     const MIGRATION_003: &str = include_str!("../migrations/003_matter_profile_v14.sql");
     const MIGRATION_004: &str = include_str!("../migrations/004_matter_workstreams_v15.sql");
     const MIGRATION_005: &str = include_str!("../migrations/005_matter_requirements_v16.sql");
+    const MIGRATION_006: &str = include_str!("../migrations/006_matter_ledgers_v17.sql");
 
     #[test]
     fn migration_is_idempotent_across_repeated_app_launches() {
@@ -72,6 +74,7 @@ mod tests {
         conn.execute_batch(MIGRATION_003).unwrap();
         conn.execute_batch(MIGRATION_004).unwrap();
         conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
         // A real app re-runs the full schema on every launch against an
         // already-initialized database; every statement must tolerate that.
         conn.execute_batch(MIGRATION_001).unwrap();
@@ -79,13 +82,14 @@ mod tests {
         conn.execute_batch(MIGRATION_003).unwrap();
         conn.execute_batch(MIGRATION_004).unwrap();
         conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
         let table_count: i64 = conn.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 42);
+        assert_eq!(table_count, 48);
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(user_version, 16);
+        assert_eq!(user_version, 17);
     }
 
     #[test]
@@ -191,6 +195,40 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(requirements_table_exists, 1);
+        let matter_survived: String = conn.query_row(
+            "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(matter_survived, "existing matter");
+    }
+
+    #[test]
+    fn a_v16_database_upgrades_cleanly_to_v17_without_touching_matters() {
+        // simulates an install that already has 001-005 applied (with real matter data)
+        // before the app is upgraded to a build that also ships 006 - the ledger
+        // tables' seeding (there is none - ledger entries are always created
+        // explicitly by a lawyer, never auto-seeded like workstreams/requirements) is
+        // irrelevant here; this migration alone must leave pre-existing matter rows
+        // completely untouched.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        let matter_id = "m1";
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,'existing matter','generic_civil','active','intake','x','x')",
+            [matter_id],
+        ).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
+        let ledger_tables_exist: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
+             ('medical_events','medical_event_sources','wage_records','wage_record_sources',
+              'liability_facts','liability_fact_sources')",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(ledger_tables_exist, 6);
         let matter_survived: String = conn.query_row(
             "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
         ).unwrap();

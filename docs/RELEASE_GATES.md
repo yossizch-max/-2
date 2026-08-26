@@ -53,10 +53,13 @@ applied to a document checklist, see "Phase B, milestone B3" below) was also imp
 on top of it, then a user code review of B3 found and fixed a genuine semantic gap
 (`priority` could contradict a lawyer-collected item's status — split into
 `relevance`/`priority`, no migration needed, see "Phase B, milestone B3" for the full
-writeup). **Neither B2, B3, nor the B3 review-fix is yet reconfirmed on Windows CI** —
-that run is still needed before Gate C/E can be called current again. What's left needs
-a human on a real Windows machine with a fresh installer: real OCR, real AI provider
-calls, and
+writeup). B4 (Medical/Wage/Liability Ledgers — evidence-grounded, lawyer-verified
+records with a `draft → verified` lifecycle and correction-by-supersession, copying
+`legal_authorities`' verbatim-containment-checked source-grounding pattern) is also
+implemented (see "Phase B, milestone B4" below). **None of B2, B3, the B3 review-fix,
+or B4 is yet reconfirmed on Windows CI** — that run is still needed before Gate C/E can
+be called current again. What's left needs a human on a real Windows machine with a
+fresh installer: real OCR, real AI provider calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
 
@@ -713,6 +716,83 @@ idempotent (still 42 tables/29 indexes/37 triggers/`user_version=16` - unchanged
 **Neither the original B3 commit (`94f7c63`) nor this review-fix commit has been
 reconfirmed on Windows CI yet** - that run is still needed before this milestone can
 be called current on Gate C/E. B4-B6 remain deliberately unattempted, each still
+pending its own planning pass.
+
+## Phase B, milestone B4 — Medical/Wage/Liability Ledgers (2026-08-26)
+
+Fourth milestone of the Phase B roadmap: three parallel per-matter ledgers -
+`medical_events`, `wage_records`, `liability_facts` - TAHRIR's first *evidence-
+grounded, lawyer-verified* structured records, as opposed to B1-B3's plain office-
+workflow bookkeeping. A ledger entry records what a cited document *says* (a medical
+record, a pay stub, a police report), verified by a lawyer against the actual source
+text - never a legal conclusion TAHRIR itself asserts. `liability_facts` is deliberately
+named/framed as a ledger of grounded facts bearing on liability, not a determination -
+consistent with the standing rule that no Israeli substantive law is encoded without a
+real lawyer's validation.
+
+- **New migration `006_matter_ledgers_v17.sql`**: three parent tables plus their own
+  source-grounding child tables (`medical_event_sources`/`wage_record_sources`/
+  `liability_fact_sources`), copying `legal_authorities`/`legal_authority_passages`'
+  shape exactly - composite `FOREIGN KEY(entry_id,matter_id) REFERENCES
+  <table>(id,matter_id)` against a parent `UNIQUE(id,matter_id)`, this schema's standard
+  cross-matter-leak guard. No DB `CHECK` on free-text fields; `gross_amount_cents` does
+  get a `CHECK(>=0)`, matching `damage_calculations`' own cents-field convention.
+- **Lifecycle is `draft → verified`, correction-by-supersession, never a status
+  mutation** - unlike `legal_authorities`' terminal-only `verified`. `verify_entry`
+  requires at least one source (fails closed) and re-checks verbatim containment fresh
+  against each source's *current* page text right before flipping status - the same
+  recheck-at-terminal-transition discipline used by `authorities::verify`,
+  `legal_rules::approve_ruleset`, and `ai::approve_proposal`. A correction never mutates
+  the old verified row: it `INSERT`s a brand-new row whose `supersedes_entry_id` points
+  back at the old one (a composite self-FK, structurally blocking cross-matter
+  supersession the same way `legal_document_versions.damage_calculation_id`'s composite
+  FK does). "Is this entry superseded" is computed at read time (does some *other*
+  **verified** row point at me?) - matching B3's relevance/priority and B2's
+  default-workstream idiom of deriving state at read time rather than persisting it. A
+  pending, unverified draft correction deliberately does **not** yet mark the old entry
+  superseded - only a verified correction actually replaces it.
+- **DB-level immutability once verified**, copying `damage_calculations`' rigor (not
+  `legal_authority_passages`' weaker one): a `BEFORE UPDATE` trigger blocks any field
+  change on a verified row, with **one deliberate carve-out** - `stale` - so
+  `scanner.rs`'s staleness cascade (extended here alongside its pre-existing
+  `verified_facts` line) can still flip it when a cited document changes underneath a
+  verified entry. Matching `BEFORE INSERT/UPDATE` triggers on the source child tables
+  close a gap `legal_authority_passages` itself still has (no such trigger at all).
+- **Deliberately NO delete-blocking trigger**, unlike `damage_calculations` - verified
+  empirically that SQLite fires a child row's own `BEFORE DELETE` trigger even when the
+  row is removed via an `ON DELETE CASCADE` from its parent FK, so a no-delete trigger
+  here would make deleting a matter with any verified ledger entry raise `ABORT`
+  instead of cascading, breaking a real, exposed feature (`delete_matter` via the
+  Matters page) for no real benefit - this app never exposes a "delete a ledger entry"
+  command in the first place. The `UPDATE`-blocking trigger above is what actually
+  enforces "a correction is never a silent edit"; it is unaffected by this, since
+  `UPDATE` is never part of a cascade.
+- **One shared Rust engine** (`ledger.rs`, a `LedgerKind` enum dispatching table names -
+  hardcoded, never user-controlled) implements `add_source`/`verify_entry`/
+  `list_entry_sources`/supersession-validation generically across all three kinds;
+  each kind gets its own small typed `create_*`/`update_draft_*`/`list_*` function and
+  `models.rs` struct, avoiding tripling the trickiest logic while keeping each ledger's
+  domain fields flat/typed (not a JSON blob), matching this schema's dominant idiom.
+- New **"פנקסים" (Ledgers)** tab in `MatterWorkspace.tsx` (`LedgersTab.tsx`): three
+  sections, each with a creation/correction form, a source-attachment control reusing
+  the document/page-picker pattern from `AuthoritiesTab.tsx`, and verify/correct
+  actions.
+- **No AI-proposal integration in this pass** - deliberately deferred to B5b per the
+  already-agreed roadmap, which will write into these same tables once it lands.
+
+14 new backend tests (draft create/edit, containment rejection, verify-requires-a-
+source, re-check-at-verify-time, verified-immutability with the `stale` carve-out,
+source-immutability, supersession lifecycle including the pending-draft-correction
+case, cross-matter-supersession-blocked, cascade-delete-even-when-verified, plus 2 pure
+unit tests on `LedgerKind`) plus one existing scanner test extended to also assert the
+new stale-cascade - 103/103 total. `cargo check/test --locked`, `npm run build`,
+`contract:check` (106/106, no drift), `qa:static` (now also checking
+`sixTablesInMatterLedgers`) all pass. Migration re-verified idempotent via direct
+sqlite3 (applied 3x): 48 tables, 32 indexes, 46 triggers, `user_version=17`, integrity
+ok, `fk_check` clean.
+
+**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
+can be called current on Gate C/E. B5-B6 remain deliberately unattempted, each still
 pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review

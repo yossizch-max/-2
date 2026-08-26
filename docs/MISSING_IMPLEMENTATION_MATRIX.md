@@ -299,3 +299,25 @@ needed - the overloaded value was split into `relevance` (`applicable`/
 `priority` (`Option<String>`, only meaningful when relevant), both still computed at
 read time and never persisted. See `docs/RELEASE_GATES.md`'s "Phase B, milestone B3"
 section for the full writeup.
+
+## Phase B, milestone B4 — Medical/Wage/Liability Ledgers (2026-08-26)
+
+Fourth milestone of the roadmap: three parallel per-matter ledgers -
+`medical_events`/`wage_records`/`liability_facts` - TAHRIR's first evidence-grounded,
+lawyer-verified structured records. Each has its own source-grounding child table
+copying `legal_authorities`/`legal_authority_passages`' verbatim-containment-checked
+shape. Lifecycle is `draft → verified` with correction-by-supersession (never a status
+mutation): a correction `INSERT`s a brand-new row referencing the old one via
+`supersedes_entry_id`, the old verified row is never touched, and "superseded" is
+computed at read time. A verified entry's fields are immutable at the DB level via a
+trigger with one carved-out column (`stale`, so `scanner.rs`'s staleness cascade can
+still flip it) - deliberately with no delete-blocking trigger, since SQLite fires a
+child row's `BEFORE DELETE` trigger even for a parent's `ON DELETE CASCADE`, which
+would otherwise break deleting a matter with a verified ledger entry. `liability_facts`
+is named/framed as a ledger of grounded facts bearing on liability, not a legal
+determination TAHRIR asserts. One shared Rust engine (`ledger.rs`) implements the
+common source-grounding/verify/supersession logic across all three kinds; no
+AI-proposal integration in this pass - deliberately deferred to B5b. New "פנקסים" tab
+in `MatterWorkspace.tsx` (`LedgersTab.tsx`). See `docs/RELEASE_GATES.md`'s "Phase B,
+milestone B4" section for the full writeup. B5–B6 remain deliberately unattempted,
+each still pending its own planning pass.

@@ -294,6 +294,28 @@ fn rehash_changed_versions(db: &DbState, matter_id: &str) -> AppResult<usize> {
                  )",
                 [&old_version_id],
             )?;
+            // A verified ledger entry (Phase B, milestone B4) whose cited document
+            // changes underneath it goes stale the same way a verified fact does -
+            // but stays immutable and correctable only via supersession, never
+            // silently re-verified in place.
+            tx.execute(
+                "UPDATE medical_events SET stale=1 WHERE id IN (
+                    SELECT entry_id FROM medical_event_sources WHERE document_version_id=?1
+                 )",
+                [&old_version_id],
+            )?;
+            tx.execute(
+                "UPDATE wage_records SET stale=1 WHERE id IN (
+                    SELECT entry_id FROM wage_record_sources WHERE document_version_id=?1
+                 )",
+                [&old_version_id],
+            )?;
+            tx.execute(
+                "UPDATE liability_facts SET stale=1 WHERE id IN (
+                    SELECT entry_id FROM liability_fact_sources WHERE document_version_id=?1
+                 )",
+                [&old_version_id],
+            )?;
             tx.commit()?;
             Ok(())
         })?;

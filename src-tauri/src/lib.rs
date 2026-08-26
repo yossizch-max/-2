@@ -9,6 +9,7 @@ mod extraction;
 mod gate_f_partial;
 #[cfg(test)]
 mod integrity_tests;
+mod ledger;
 mod legal_docs;
 mod legal_rules;
 mod matter_profile;
@@ -75,6 +76,16 @@ pub fn run() {
             commands::update_matter_workstream,
             commands::list_matter_requirements,
             commands::update_matter_requirement,
+            commands::create_medical_event,
+            commands::create_wage_record,
+            commands::create_liability_fact,
+            commands::update_ledger_entry_draft,
+            commands::add_ledger_source,
+            commands::verify_ledger_entry,
+            commands::list_medical_events,
+            commands::list_wage_records,
+            commands::list_liability_facts,
+            commands::list_ledger_entry_sources,
             commands::list_documents,
             commands::get_document,
             commands::list_document_versions,
