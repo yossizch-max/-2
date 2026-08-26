@@ -10,7 +10,7 @@ use crate::{
     error::{AppError, AppResult},
     requirements, workstreams, AppState,
 };
-use chrono::{NaiveDate, Utc};
+use chrono::{Local, NaiveDate, Utc};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
@@ -124,8 +124,20 @@ fn ledger_count(conn: &Connection, table: &str, matter_id: &str, stale_only: boo
 }
 
 pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnapshot> {
-    let now = Utc::now();
-    let today = now.date_naive();
+    let as_of = Utc::now().to_rfc3339();
+    // Calendar-day obligations are interpreted in the Windows machine's local date,
+    // not UTC. This prevents the case-health classification from moving a day early
+    // or late around local midnight. The deterministic core below accepts `today`
+    // explicitly so boundary behavior is testable without depending on the clock.
+    compute_for_date(db, matter_id, Local::now().date_naive(), &as_of)
+}
+
+fn compute_for_date(
+    db: &DbState,
+    matter_id: &str,
+    today: NaiveDate,
+    as_of: &str,
+) -> AppResult<CaseHealthSnapshot> {
     db.read(|conn| {
         let case_type: String = conn
             .query_row("SELECT matter_type FROM matters WHERE id=?1", [matter_id], |r| r.get(0))
@@ -246,7 +258,8 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             .collect();
 
         let stale_verified_facts: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM verified_facts WHERE matter_id=?1 AND status='valid' AND stale=1",
+            "SELECT COUNT(*) FROM verified_facts
+             WHERE matter_id=?1 AND status='valid' AND stale=1 AND superseded_by IS NULL",
             [matter_id],
             |r| r.get(0),
         )?;
@@ -263,9 +276,13 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
         )?;
         let unresolved_fact_conflicts: Vec<String> = {
             let mut stmt = conn.prepare(
-                "SELECT id FROM fact_conflicts
-                 WHERE matter_id=?1 AND status='unresolved'
-                 ORDER BY created_at,id",
+                "SELECT c.id FROM fact_conflicts c
+                 JOIN verified_facts a
+                   ON a.id=c.fact_a_id AND a.matter_id=c.matter_id AND a.status='valid'
+                 JOIN verified_facts b
+                   ON b.id=c.fact_b_id AND b.matter_id=c.matter_id AND b.status='valid'
+                 WHERE c.matter_id=?1 AND c.status='unresolved'
+                 ORDER BY c.created_at,c.id",
             )?;
             stmt.query_map([matter_id], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?
         };
@@ -406,7 +423,7 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             matter_id: matter_id.to_string(),
             score,
             band: band.to_string(),
-            as_of: now.to_rfc3339(),
+            as_of: as_of.to_string(),
             factors,
             next_best_action: action,
         })
@@ -483,8 +500,9 @@ mod tests {
         let db = DbState::open(root.join("app.db")).unwrap();
         let matter_a = seeded_matter(&db, "generic_civil");
         let matter_b = seeded_matter(&db, "generic_civil");
-        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
-        let future = (Utc::now().date_naive() + chrono::Duration::days(30)).to_string();
+        let local_today = Local::now().date_naive();
+        let overdue = (local_today - chrono::Duration::days(1)).to_string();
+        let future = (local_today + chrono::Duration::days(30)).to_string();
         let now = Utc::now().to_rfc3339();
         db.write(|conn| {
             conn.execute(
@@ -609,7 +627,7 @@ mod tests {
         let matter_id = seeded_matter(&db, "generic_civil");
         collect_default_office_requirements(&db, &matter_id);
         insert_fact_conflict(&db, &matter_id, "unresolved", "2026-01-01T00:00:00Z");
-        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
+        let overdue = (Local::now().date_naive() - chrono::Duration::days(1)).to_string();
         let now = Utc::now().to_rfc3339();
         db.write(|conn| {
             conn.execute(
@@ -634,8 +652,9 @@ mod tests {
         let db = DbState::open(root.join("app.db")).unwrap();
         let matter_id = seeded_matter(&db, "generic_civil");
         collect_default_office_requirements(&db, &matter_id);
-        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
-        let future = (Utc::now().date_naive() + chrono::Duration::days(30)).to_string();
+        let local_today = Local::now().date_naive();
+        let overdue = (local_today - chrono::Duration::days(1)).to_string();
+        let future = (local_today + chrono::Duration::days(30)).to_string();
         let now = Utc::now().to_rfc3339();
         let replacement_id = Uuid::new_v4().to_string();
         db.write(|conn| {
@@ -673,7 +692,7 @@ mod tests {
         let db = DbState::open(root.join("app.db")).unwrap();
         let matter_id = seeded_matter(&db, "generic_civil");
         collect_default_office_requirements(&db, &matter_id);
-        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
+        let overdue = (Local::now().date_naive() - chrono::Duration::days(1)).to_string();
         let now = Utc::now().to_rfc3339();
         db.write(|conn| {
             conn.execute(
@@ -721,6 +740,106 @@ mod tests {
         assert!(!snapshot.factors.iter().any(|f| f.code == "stale_verified_ledgers"));
         assert_eq!(snapshot.score, 100);
         assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalidated_fact_removes_phantom_conflict_from_health() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let conflict_id = insert_fact_conflict(&db, &matter_id, "unresolved", "2026-01-01T00:00:00Z");
+        db.write(|conn| {
+            let fact_a: String = conn.query_row(
+                "SELECT fact_a_id FROM fact_conflicts WHERE id=?1 AND matter_id=?2",
+                params![conflict_id, matter_id],
+                |r| r.get(0),
+            )?;
+            conn.execute(
+                "UPDATE verified_facts SET status='invalidated' WHERE id=?1 AND matter_id=?2",
+                params![fact_a, matter_id],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "unresolved_fact_conflicts"));
+        assert_eq!(snapshot.score, 100);
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn superseded_verified_fact_is_not_counted_stale() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let old_fact = Uuid::new_v4().to_string();
+        let successor = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,stale,verified_at)
+                 VALUES(?1,?2,'new','says','fresh','valid',0,?3)",
+                params![successor, matter_id, now],
+            )?;
+            conn.execute(
+                "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,stale,verified_at,superseded_by)
+                 VALUES(?1,?2,'old','says','stale','valid',1,?3,?4)",
+                params![old_fact, matter_id, now, successor],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "stale_verified_facts"));
+        assert_eq!(snapshot.score, 100);
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn injected_calendar_date_controls_deadline_boundary_deterministically() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'Boundary deadline','2026-01-02','committed','test','2026-01-01T00:00:00Z')",
+                params![Uuid::new_v4().to_string(), matter_id],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let before = compute_for_date(
+            &db,
+            &matter_id,
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            "test-before",
+        ).unwrap();
+        assert_eq!(before.next_best_action.code, "prepare_upcoming_deadline");
+        assert!(before.factors.iter().any(|f| f.code == "due_soon_committed_deadlines"));
+        assert!(!before.factors.iter().any(|f| f.code == "overdue_committed_deadlines"));
+
+        let after = compute_for_date(
+            &db,
+            &matter_id,
+            NaiveDate::from_ymd_opt(2026, 1, 3).unwrap(),
+            "test-after",
+        ).unwrap();
+        assert_eq!(after.next_best_action.code, "resolve_overdue_deadline");
+        assert!(after.factors.iter().any(|f| f.code == "overdue_committed_deadlines"));
+
         drop(db);
         let _ = fs::remove_dir_all(root);
     }
