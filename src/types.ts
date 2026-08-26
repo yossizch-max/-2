@@ -64,9 +64,28 @@ export type SourceExcerpt = {
   excerpt: string; truncated: boolean;
 };
 
+export type AiStructuredProposal = {
+  sourceIds?: string[];
+  subject?: string;
+  predicate?: string;
+  value?: string;
+  eventDate?: string | null;
+  providerName?: string | null;
+  treatmentSummary?: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  employerName?: string | null;
+  grossAmountCents?: number;
+  claimBasis?: string | null;
+  liablePartyName?: string | null;
+  description?: string;
+  explanation?: string | null;
+};
+
 export type AiProposal = {
   id: string; proposalKind: string;
-  structured: {subject?: string; predicate?: string; value?: string; sourceIds?: string[]};
+  structured: AiStructuredProposal;
+  sourceManifestSha256?: string | null;
   status: "pending" | "approved" | "rejected" | "needs_revision";
   reviewedAt?: string | null; reviewNote?: string | null;
   sourceExcerpts: SourceExcerpt[];

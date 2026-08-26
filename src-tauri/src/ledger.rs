@@ -59,6 +59,14 @@ impl LedgerKind {
         }
     }
 
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Medical => "medical",
+            Self::Wage => "wage",
+            Self::Liability => "liability",
+        }
+    }
+
     fn table(&self) -> &'static str {
         match self {
             Self::Medical => "medical_events",
@@ -104,8 +112,8 @@ fn validate_supersedes(conn: &Connection, table: &str, matter_id: &str, old_entr
 /// Requires the parent entry to be `draft`, and the quoted text to appear verbatim
 /// (after normalization) on the cited source page - same rule as
 /// `authorities::add_passage`, reused via `extraction::normalize_source_text`.
-pub fn add_source(
-    db: &DbState, kind: LedgerKind, matter_id: &str, entry_id: &str,
+pub(crate) fn add_source_in_tx(
+    conn: &Connection, kind: LedgerKind, matter_id: &str, entry_id: &str,
     source_page_id: &str, quote_text: &str,
 ) -> AppResult<String> {
     if quote_text.trim().is_empty() {
@@ -114,39 +122,43 @@ pub fn add_source(
     let table = kind.table();
     let source_table = kind.source_table();
     let id = Uuid::new_v4().to_string();
-    db.write(|conn| {
-        let status: String = conn.query_row(
-            &format!("SELECT status FROM {table} WHERE id=?1 AND matter_id=?2"),
-            params![entry_id, matter_id], |r| r.get(0),
-        ).map_err(|_| AppError::NotFound("ledger entry".into()))?;
-        if status != "draft" {
-            return Err(AppError::Validation("only a draft ledger entry can have sources added".into()));
-        }
+    let status: String = conn.query_row(
+        &format!("SELECT status FROM {table} WHERE id=?1 AND matter_id=?2"),
+        params![entry_id, matter_id], |r| r.get(0),
+    ).map_err(|_| AppError::NotFound("ledger entry".into()))?;
+    if status != "draft" {
+        return Err(AppError::Validation("only a draft ledger entry can have sources added".into()));
+    }
 
-        let (document_version_id, page_normalized): (String, String) = conn.query_row(
-            "SELECT document_version_id,normalized_text FROM document_pages WHERE id=?1 AND matter_id=?2",
-            params![source_page_id, matter_id], |r| Ok((r.get(0)?, r.get(1)?)),
-        ).map_err(|_| AppError::InvalidSourceReference)?;
+    let (document_version_id, page_normalized): (String, String) = conn.query_row(
+        "SELECT document_version_id,normalized_text FROM document_pages WHERE id=?1 AND matter_id=?2",
+        params![source_page_id, matter_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| AppError::InvalidSourceReference)?;
 
-        let normalized_quote = extraction::normalize_source_text(quote_text);
-        if normalized_quote.is_empty() || !page_normalized.contains(&normalized_quote) {
-            return Err(AppError::Validation(
-                "the quoted text was not found verbatim on the cited source page".into()
-            ));
-        }
-        let source_text_sha256 = hex::encode(Sha256::digest(normalized_quote.as_bytes()));
+    let normalized_quote = extraction::normalize_source_text(quote_text);
+    if normalized_quote.is_empty() || !page_normalized.contains(&normalized_quote) {
+        return Err(AppError::Validation(
+            "the quoted text was not found verbatim on the cited source page".into()
+        ));
+    }
+    let source_text_sha256 = hex::encode(Sha256::digest(normalized_quote.as_bytes()));
 
-        conn.execute(
-            &format!(
-                "INSERT INTO {source_table}(
-                    id,matter_id,entry_id,document_version_id,document_page_id,display_quote,source_text_sha256
-                 ) VALUES(?1,?2,?3,?4,?5,?6,?7)"
-            ),
-            params![id, matter_id, entry_id, document_version_id, source_page_id, quote_text, source_text_sha256],
-        )?;
-        Ok(())
-    })?;
+    conn.execute(
+        &format!(
+            "INSERT INTO {source_table}(
+                id,matter_id,entry_id,document_version_id,document_page_id,display_quote,source_text_sha256
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7)"
+        ),
+        params![id, matter_id, entry_id, document_version_id, source_page_id, quote_text, source_text_sha256],
+    )?;
     Ok(id)
+}
+
+pub fn add_source(
+    db: &DbState, kind: LedgerKind, matter_id: &str, entry_id: &str,
+    source_page_id: &str, quote_text: &str,
+) -> AppResult<String> {
+    db.write(|conn| add_source_in_tx(conn, kind, matter_id, entry_id, source_page_id, quote_text))
 }
 
 pub fn list_entry_sources(db: &DbState, kind: LedgerKind, matter_id: &str, entry_id: &str) -> AppResult<Vec<LedgerSource>> {
@@ -282,28 +294,34 @@ fn superseded_ids(conn: &Connection, table: &str, matter_id: &str) -> AppResult<
     Ok(ids)
 }
 
-pub fn create_medical_event(
-    db: &DbState, matter_id: &str, event_date: Option<&str>, provider_name: Option<&str>,
-    treatment_summary: &str, supersedes_entry_id: Option<&str>,
+pub(crate) fn create_medical_event_in_tx(
+    conn: &Connection, matter_id: &str, event_date: Option<&str>, provider_name: Option<&str>,
+    treatment_summary: &str, supersedes_entry_id: Option<&str>, now: &str,
 ) -> AppResult<String> {
     if treatment_summary.trim().is_empty() {
         return Err(AppError::Validation("treatment summary required".into()));
     }
     let id = Uuid::new_v4().to_string();
+    if let Some(old_id) = supersedes_entry_id {
+        validate_supersedes(conn, "medical_events", matter_id, old_id)?;
+    }
+    conn.execute(
+        "INSERT INTO medical_events(
+            id,matter_id,event_date,provider_name,treatment_summary,supersedes_entry_id,created_at,updated_at
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
+        params![id, matter_id, event_date, provider_name, treatment_summary, supersedes_entry_id, now],
+    )?;
+    Ok(id)
+}
+
+pub fn create_medical_event(
+    db: &DbState, matter_id: &str, event_date: Option<&str>, provider_name: Option<&str>,
+    treatment_summary: &str, supersedes_entry_id: Option<&str>,
+) -> AppResult<String> {
     let now = Utc::now().to_rfc3339();
     db.write(|conn| {
-        if let Some(old_id) = supersedes_entry_id {
-            validate_supersedes(conn, "medical_events", matter_id, old_id)?;
-        }
-        conn.execute(
-            "INSERT INTO medical_events(
-                id,matter_id,event_date,provider_name,treatment_summary,supersedes_entry_id,created_at,updated_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
-            params![id, matter_id, event_date, provider_name, treatment_summary, supersedes_entry_id, now],
-        )?;
-        Ok(())
-    })?;
-    Ok(id)
+        create_medical_event_in_tx(conn, matter_id, event_date, provider_name, treatment_summary, supersedes_entry_id, &now)
+    })
 }
 
 pub fn update_draft_medical_event(
@@ -343,30 +361,37 @@ pub fn list_medical_events(db: &DbState, matter_id: &str) -> AppResult<Vec<Medic
     })
 }
 
-pub fn create_wage_record(
-    db: &DbState, matter_id: &str, period_start: Option<&str>, period_end: Option<&str>,
-    employer_name: Option<&str>, gross_amount_cents: i64, supersedes_entry_id: Option<&str>,
+pub(crate) fn create_wage_record_in_tx(
+    conn: &Connection, matter_id: &str, period_start: Option<&str>, period_end: Option<&str>,
+    employer_name: Option<&str>, gross_amount_cents: i64, supersedes_entry_id: Option<&str>, now: &str,
 ) -> AppResult<String> {
     if gross_amount_cents < 0 {
         return Err(AppError::Validation("gross amount cannot be negative".into()));
     }
     let id = Uuid::new_v4().to_string();
+    if let Some(old_id) = supersedes_entry_id {
+        validate_supersedes(conn, "wage_records", matter_id, old_id)?;
+    }
+    conn.execute(
+        "INSERT INTO wage_records(
+            id,matter_id,period_start,period_end,employer_name,gross_amount_cents,
+            supersedes_entry_id,created_at,updated_at
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)",
+        params![id, matter_id, period_start, period_end, employer_name, gross_amount_cents,
+            supersedes_entry_id, now],
+    )?;
+    Ok(id)
+}
+
+pub fn create_wage_record(
+    db: &DbState, matter_id: &str, period_start: Option<&str>, period_end: Option<&str>,
+    employer_name: Option<&str>, gross_amount_cents: i64, supersedes_entry_id: Option<&str>,
+) -> AppResult<String> {
     let now = Utc::now().to_rfc3339();
     db.write(|conn| {
-        if let Some(old_id) = supersedes_entry_id {
-            validate_supersedes(conn, "wage_records", matter_id, old_id)?;
-        }
-        conn.execute(
-            "INSERT INTO wage_records(
-                id,matter_id,period_start,period_end,employer_name,gross_amount_cents,
-                supersedes_entry_id,created_at,updated_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)",
-            params![id, matter_id, period_start, period_end, employer_name, gross_amount_cents,
-                supersedes_entry_id, now],
-        )?;
-        Ok(())
-    })?;
-    Ok(id)
+        create_wage_record_in_tx(conn, matter_id, period_start, period_end, employer_name,
+            gross_amount_cents, supersedes_entry_id, &now)
+    })
 }
 
 pub fn update_draft_wage_record(
@@ -407,28 +432,34 @@ pub fn list_wage_records(db: &DbState, matter_id: &str) -> AppResult<Vec<WageRec
     })
 }
 
-pub fn create_liability_fact(
-    db: &DbState, matter_id: &str, claim_basis: Option<&str>, liable_party_name: Option<&str>,
-    description: &str, supersedes_entry_id: Option<&str>,
+pub(crate) fn create_liability_fact_in_tx(
+    conn: &Connection, matter_id: &str, claim_basis: Option<&str>, liable_party_name: Option<&str>,
+    description: &str, supersedes_entry_id: Option<&str>, now: &str,
 ) -> AppResult<String> {
     if description.trim().is_empty() {
         return Err(AppError::Validation("description required".into()));
     }
     let id = Uuid::new_v4().to_string();
+    if let Some(old_id) = supersedes_entry_id {
+        validate_supersedes(conn, "liability_facts", matter_id, old_id)?;
+    }
+    conn.execute(
+        "INSERT INTO liability_facts(
+            id,matter_id,claim_basis,liable_party_name,description,supersedes_entry_id,created_at,updated_at
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
+        params![id, matter_id, claim_basis, liable_party_name, description, supersedes_entry_id, now],
+    )?;
+    Ok(id)
+}
+
+pub fn create_liability_fact(
+    db: &DbState, matter_id: &str, claim_basis: Option<&str>, liable_party_name: Option<&str>,
+    description: &str, supersedes_entry_id: Option<&str>,
+) -> AppResult<String> {
     let now = Utc::now().to_rfc3339();
     db.write(|conn| {
-        if let Some(old_id) = supersedes_entry_id {
-            validate_supersedes(conn, "liability_facts", matter_id, old_id)?;
-        }
-        conn.execute(
-            "INSERT INTO liability_facts(
-                id,matter_id,claim_basis,liable_party_name,description,supersedes_entry_id,created_at,updated_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
-            params![id, matter_id, claim_basis, liable_party_name, description, supersedes_entry_id, now],
-        )?;
-        Ok(())
-    })?;
-    Ok(id)
+        create_liability_fact_in_tx(conn, matter_id, claim_basis, liable_party_name, description, supersedes_entry_id, &now)
+    })
 }
 
 pub fn update_draft_liability_fact(

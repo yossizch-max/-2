@@ -2,9 +2,67 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
-import type { AiProfile, AiRun, VerifiedFact } from "../types";
+import type { AiProfile, AiProposal, AiRun, VerifiedFact } from "../types";
 
-const CAPABILITY = "extract_facts";
+type Capability = "extract_facts" | "extract_medical_event" | "extract_wage_record" | "extract_liability_fact";
+
+const CAPABILITIES: Array<{value: Capability; label: string; buttonLabel: string; placeholder: string}> = [
+  {value: "extract_facts", label: "עובדה כללית", buttonLabel: "הצע עובדה מאומתת", placeholder: "לדוגמה: שבר בכף היד"},
+  {value: "extract_medical_event", label: "אירוע רפואי", buttonLabel: "הצע אירוע רפואי", placeholder: "לדוגמה: אשפוז, אבחנה, טיפול"},
+  {value: "extract_wage_record", label: "רשומת שכר", buttonLabel: "הצע רשומת שכר", placeholder: "לדוגמה: תלוש שכר, מעסיק, היעדרות"},
+  {value: "extract_liability_fact", label: "עובדת חבות", buttonLabel: "הצע עובדת חבות", placeholder: "לדוגמה: עדות, דו\"ח משטרה, תאונה"},
+];
+
+const PROPOSAL_KIND_LABELS: Record<string, string> = {
+  extract_facts: "עובדה כללית",
+  extract_medical_event: "אירוע רפואי",
+  extract_wage_record: "רשומת שכר",
+  extract_liability_fact: "עובדת חבות",
+};
+
+function fieldValue(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return "לא צוין";
+  return String(value);
+}
+
+function formatMoney(cents?: number) {
+  if (typeof cents !== "number") return "לא צוין";
+  return (cents / 100).toLocaleString("he-IL", {style: "currency", currency: "ILS"});
+}
+
+function approvalButtonLabel(kind: string) {
+  return kind === "extract_facts" ? "אשר → צור עובדה מאומתת" : "אשר → צור טיוטת פנקס";
+}
+
+function StructuredPreview({proposal}:{proposal:AiProposal}) {
+  const s = proposal.structured;
+  if (proposal.proposalKind === "extract_medical_event") {
+    return <dl className="profile-fields">
+      <div><dt>תאריך</dt><dd>{fieldValue(s.eventDate)}</dd></div>
+      <div><dt>גורם מטפל</dt><dd>{fieldValue(s.providerName)}</dd></div>
+      <div><dt>תיאור טיפול</dt><dd>{fieldValue(s.treatmentSummary)}</dd></div>
+    </dl>;
+  }
+  if (proposal.proposalKind === "extract_wage_record") {
+    return <dl className="profile-fields">
+      <div><dt>תקופה</dt><dd>{fieldValue(s.periodStart)} - {fieldValue(s.periodEnd)}</dd></div>
+      <div><dt>מעסיק</dt><dd>{fieldValue(s.employerName)}</dd></div>
+      <div><dt>שכר ברוטו</dt><dd>{formatMoney(s.grossAmountCents)}</dd></div>
+    </dl>;
+  }
+  if (proposal.proposalKind === "extract_liability_fact") {
+    return <dl className="profile-fields">
+      <div><dt>בסיס</dt><dd>{fieldValue(s.claimBasis)}</dd></div>
+      <div><dt>צד רלוונטי</dt><dd>{fieldValue(s.liablePartyName)}</dd></div>
+      <div><dt>תיאור עובדתי</dt><dd>{fieldValue(s.description)}</dd></div>
+    </dl>;
+  }
+  return <dl className="profile-fields">
+    <div><dt>נושא</dt><dd>{fieldValue(s.subject)}</dd></div>
+    <div><dt>יחס</dt><dd>{fieldValue(s.predicate)}</dd></div>
+    <div><dt>ערך</dt><dd>{fieldValue(s.value)}</dd></div>
+  </dl>;
+}
 
 export function FactsAITab({matterId}:{matterId:string}) {
   const {data:facts,loading,error,reload}=useCommand(
@@ -15,6 +73,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
   );
   const enabledProfiles=profiles?.filter(p=>p.enabled)??[];
 
+  const [capability,setCapability]=useState<Capability>("extract_facts");
   const [profileId,setProfileId]=useState("");
   const [query,setQuery]=useState("");
   const [egressApproved,setEgressApproved]=useState(false);
@@ -29,6 +88,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
   );
 
   const selectedProfile=enabledProfiles.find(p=>p.id===profileId);
+  const selectedCapability=CAPABILITIES.find(c=>c.value===capability)??CAPABILITIES[0];
 
   const invalidate=async(factId:string)=>{
     await commands.invalidate_fact({factId});
@@ -44,7 +104,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
     setBusy(true);setRunError(null);
     try{
       const res=await commands.run_ai_capability({
-        matterId, capability:CAPABILITY, profileId, externalEgressApproved:egressApproved,
+        matterId, capability, profileId, externalEgressApproved:egressApproved,
         query: query.trim()||undefined
       }) as {runId:string};
       setRunId(res.runId);
@@ -76,21 +136,24 @@ export function FactsAITab({matterId}:{matterId:string}) {
     </section>
     <section className="workspace-card">
       <span className="eyebrow">AI REVIEW</span><h2>הצעות לבדיקה</h2>
-      <p className="quiet">AI אינו כותב עובדה מאומתת ישירות — הוא מציע, ועורך הדין מאשר או דוחה כל הצעה בנפרד.</p>
+      <p className="quiet">AI מציע בלבד; האישור נשאר פעולה של עורך דין.</p>
 
       {enabledProfiles.length===0 && <p className="quiet">אין ספק AI פעיל. יש להגדיר ולהפעיל ספק בעמוד ה-AI תחילה.</p>}
       {enabledProfiles.length>0 && <>
+        <label>סוג הצעה<select value={capability} onChange={e=>setCapability(e.target.value as Capability)}>
+          {CAPABILITIES.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
+        </select></label>
         <label>ספק<select value={profileId} onChange={e=>setProfileId(e.target.value)}>
           <option value="">בחר ספק...</option>
           {enabledProfiles.map(p=><option key={p.id} value={p.id}>{p.providerKind} · {p.model||"—"}</option>)}
         </select></label>
-        <label>מיקוד לחיפוש (אופציונלי)<input type="text" value={query} onChange={e=>setQuery(e.target.value)} placeholder="לדוגמה: שבר בכף היד"/></label>
+        <label>מיקוד לחיפוש (אופציונלי)<input type="text" value={query} onChange={e=>setQuery(e.target.value)} placeholder={selectedCapability.placeholder}/></label>
         {selectedProfile?.providerKind==="openai" && <label style={{display:"flex",alignItems:"center",gap:8,flexDirection:"row"}}>
           <input type="checkbox" checked={egressApproved} onChange={e=>setEgressApproved(e.target.checked)}/>
           מאשר שליחת חומר התיק החוצה להרצה זו
         </label>}
         <button className="btn primary" onClick={runAi} disabled={busy||!profileId}>
-          {busy?"מריץ...":"הפעל בדיקת AI על עובדות התיק"}
+          {busy?"מריץ...":selectedCapability.buttonLabel}
         </button>
       </>}
 
@@ -105,8 +168,14 @@ export function FactsAITab({matterId}:{matterId:string}) {
         {run.proposals.length===0 && run.status==="completed" &&
           <p className="quiet">ה-AI לא הציע עובדות מהמקורות הזמינים בתיק זה.</p>}
         {run.proposals.map(p=><div className="proposal" key={p.id}>
-          <p><strong>{p.structured.subject} · {p.structured.predicate}</strong>: {p.structured.value}</p>
-          <small className="quiet">מבוסס על {p.structured.sourceIds?.length??0} מקור/ות · {p.status}</small>
+          <div className="header-actions">
+            <strong>{PROPOSAL_KIND_LABELS[p.proposalKind]??p.proposalKind}</strong>
+            <StatusBadge tone={p.status==="approved"?"ok":p.status==="rejected"?"risk":"warn"}>{p.status}</StatusBadge>
+          </div>
+          <StructuredPreview proposal={p}/>
+          {p.structured.explanation && <p className="quiet">{p.structured.explanation}</p>}
+          <small className="quiet">מבוסס על {p.structured.sourceIds?.length??0} מקור/ות</small>
+          {p.sourceManifestSha256 && <small className="quiet"> · manifest {p.sourceManifestSha256.slice(0,12)}</small>}
           {p.sourceExcerpts.length>0 && <div className="source-excerpts">
             {p.sourceExcerpts.map(s=><blockquote key={s.sourceId} className="source-excerpt">
               <small className="quiet">{s.fileName??"מקור לא ידוע"}{s.page?` · עמוד ${s.page}`:""}</small>
@@ -114,7 +183,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
             </blockquote>)}
           </div>}
           {p.status==="pending" && <div className="proposal-actions">
-            <button className="primary-lite" disabled={reviewingId===p.id} onClick={()=>review(p.id,"approved")}>אשר → צור עובדה מאומתת</button>
+            <button className="primary-lite" disabled={reviewingId===p.id} onClick={()=>review(p.id,"approved")}>{approvalButtonLabel(p.proposalKind)}</button>
             <button disabled={reviewingId===p.id} onClick={()=>review(p.id,"needs_revision")}>דורש תיקון</button>
             <button disabled={reviewingId===p.id} onClick={()=>review(p.id,"rejected")}>דחה</button>
           </div>}

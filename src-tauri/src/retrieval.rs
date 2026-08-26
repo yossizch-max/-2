@@ -40,16 +40,24 @@ struct CapabilityProfile {
     boosted_categories: &'static [&'static str],
 }
 
-/// Extension point for B5b's own planning pass - deliberately only `extract_facts`
-/// (today's one real capability) is populated. `default_query: None` for it is
-/// itself a decision, not an omission: general fact-extraction has no natural
-/// keyword focus, so with no explicit `query` it honestly degrades to the same
-/// recency-ordered candidate list `plan_context` produced before B5a. No
-/// placeholder entries for `extract_medical_event`/`extract_wage_record`/
-/// `extract_liability_fact` - their query/category profiles are a B5b decision.
+/// Capability-specific retrieval remains a small profile layer over the B5a
+/// pipeline. The categories here are the live document categories exposed by the
+/// app (`general`, `medical`, `court`, `wage`, `correspondence`, `expert_opinion`).
 fn capability_profile(capability: &str) -> CapabilityProfile {
     match capability {
         "extract_facts" => CapabilityProfile { default_query: None, boosted_categories: &[] },
+        "extract_medical_event" => CapabilityProfile {
+            default_query: Some("רפואי אשפוז אבחנה טיפול הדמיה ניתוח מחלה נכות מגבלה תפקודית medical treatment"),
+            boosted_categories: &["medical", "expert_opinion"],
+        },
+        "extract_wage_record" => CapabilityProfile {
+            default_query: Some("שכר תלוש תלושים מעסיק עבודה היעדרות הכנסה משכורת salary payslip employer absence"),
+            boosted_categories: &["wage"],
+        },
+        "extract_liability_fact" => CapabilityProfile {
+            default_query: Some("תאונה אחריות רשלנות משטרה עדות תמונות מומחה הודאה מנגנון סיבה accident liability"),
+            boosted_categories: &["court", "expert_opinion", "correspondence"],
+        },
         _ => CapabilityProfile { default_query: None, boosted_categories: &[] },
     }
 }
@@ -332,6 +340,30 @@ struct ManifestPayload<'a> {
     sources: Vec<ManifestPayloadSource<'a>>, budget_chars_used: i64, budget_chars_limit: i64,
 }
 
+fn canonical_manifest_sha256(
+    retrieval_version: &str, matter_id: &str, capability: &str, query_terms: &str,
+    sources: &[ManifestSource], budget_chars_used: i64, budget_chars_limit: i64,
+) -> AppResult<String> {
+    let payload_sources: Vec<_> = sources.iter().map(ManifestPayloadSource::from_source).collect();
+    let payload = ManifestPayload {
+        retrieval_version, matter_id, capability, query_terms,
+        sources: payload_sources, budget_chars_used, budget_chars_limit,
+    };
+    Ok(hex::encode(Sha256::digest(serde_json::to_vec(&payload)?)))
+}
+
+pub(crate) fn compute_manifest_sha256(manifest: &ContextManifest) -> AppResult<String> {
+    canonical_manifest_sha256(
+        &manifest.retrieval_version,
+        &manifest.matter_id,
+        &manifest.capability,
+        &manifest.query_terms,
+        &manifest.sources,
+        manifest.budget_chars_used,
+        manifest.budget_chars_limit,
+    )
+}
+
 /// Canonical hash defined so it can never be circular: hashed over a payload type
 /// that structurally has no hash field of its own, and excludes raw diagnostic
 /// BM25 values, then the result is attached to the public `ContextManifest`.
@@ -342,12 +374,10 @@ fn build_manifest(
     matter_id: &str, capability: &str, query_terms: &str,
     sources: Vec<ManifestSource>, budget_chars_used: i64, budget_chars_limit: i64,
 ) -> AppResult<ContextManifest> {
-    let payload_sources: Vec<_> = sources.iter().map(ManifestPayloadSource::from_source).collect();
-    let payload = ManifestPayload {
-        retrieval_version: RETRIEVAL_VERSION, matter_id, capability, query_terms,
-        sources: payload_sources, budget_chars_used, budget_chars_limit,
-    };
-    let manifest_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&payload)?));
+    let manifest_sha256 = canonical_manifest_sha256(
+        RETRIEVAL_VERSION, matter_id, capability, query_terms,
+        &sources, budget_chars_used, budget_chars_limit,
+    )?;
     Ok(ContextManifest {
         retrieval_version: RETRIEVAL_VERSION.to_string(),
         matter_id: matter_id.to_string(), capability: capability.to_string(),
@@ -527,8 +557,29 @@ mod tests {
     }
 
     #[test]
+    fn compute_manifest_sha256_matches_the_attached_public_hash() {
+        let manifest = build_manifest("matter", "extract_medical_event", "טיפול", vec![manifest_source("s1", Some(-1.0))], 13, 200).unwrap();
+        assert_eq!(compute_manifest_sha256(&manifest).unwrap(), manifest.manifest_sha256);
+    }
+
+    #[test]
     fn capability_profile_extract_facts_has_no_default_query() {
         let profile = capability_profile("extract_facts");
         assert!(profile.default_query.is_none(), "extract_facts has no natural keyword focus - documented, not an oversight");
+    }
+
+    #[test]
+    fn ledger_capability_profiles_use_domain_queries_and_live_categories() {
+        let medical = capability_profile("extract_medical_event");
+        assert!(medical.default_query.unwrap().contains("טיפול"));
+        assert_eq!(medical.boosted_categories, &["medical", "expert_opinion"]);
+
+        let wage = capability_profile("extract_wage_record");
+        assert!(wage.default_query.unwrap().contains("תלוש"));
+        assert_eq!(wage.boosted_categories, &["wage"]);
+
+        let liability = capability_profile("extract_liability_fact");
+        assert!(liability.default_query.unwrap().contains("תאונה"));
+        assert_eq!(liability.boosted_categories, &["court", "expert_opinion", "correspondence"]);
     }
 }
