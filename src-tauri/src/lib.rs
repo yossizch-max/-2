@@ -1,6 +1,7 @@
 mod ai;
 mod ai_review;
 mod authorities;
+mod case_health;
 mod commands;
 mod damage;
 mod db;
@@ -52,6 +53,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_health,
+            case_health::get_case_health,
             commands::get_settings,
             commands::save_settings,
             commands::choose_folder,
