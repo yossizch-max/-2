@@ -83,6 +83,30 @@ fn compile_fts_query(terms: &[String]) -> Option<String> {
         .collect::<Vec<_>>().join(" OR "))
 }
 
+fn lowercase_chars_with_source_indices(text: &str) -> (Vec<char>, Vec<usize>) {
+    let mut lower = Vec::new();
+    let mut source_indices = Vec::new();
+    for (source_index, ch) in text.chars().enumerate() {
+        for folded in ch.to_lowercase() {
+            lower.push(folded);
+            source_indices.push(source_index);
+        }
+    }
+    (lower, source_indices)
+}
+
+fn earliest_query_term_match(text: &str, terms: &[String]) -> Option<usize> {
+    let (lower, source_indices) = lowercase_chars_with_source_indices(text);
+    terms.iter().filter_map(|term| {
+        let term_lower: Vec<char> = term.chars().flat_map(|ch| ch.to_lowercase()).collect();
+        if term_lower.is_empty() || term_lower.len() > lower.len() { return None; }
+        lower
+            .windows(term_lower.len())
+            .position(|w| w == term_lower.as_slice())
+            .map(|match_index| source_indices[match_index])
+    }).min()
+}
+
 /// Deterministic, reproducible windowing for a source too large to send whole: the
 /// window is centered on the first (char-index-earliest) occurrence of any query
 /// term (case-insensitive), or starts at the beginning of the text when there are
@@ -91,12 +115,7 @@ fn compile_fts_query(terms: &[String]) -> Option<String> {
 /// produces the same `(start, end, window)` - no randomness, no clock.
 fn deterministic_window(text: &str, terms: &[String]) -> (usize, usize, String) {
     let chars: Vec<char> = text.chars().collect();
-    let lower: Vec<char> = text.to_lowercase().chars().collect();
-    let match_start = terms.iter().find_map(|term| {
-        let term_lower: Vec<char> = term.to_lowercase().chars().collect();
-        if term_lower.is_empty() || term_lower.len() > lower.len() { return None; }
-        lower.windows(term_lower.len()).position(|w| w == term_lower.as_slice())
-    }).unwrap_or(0);
+    let match_start = earliest_query_term_match(text, terms).unwrap_or(0);
     let half = WINDOW_SIZE_CHARS / 2;
     let raw_start = match_start.saturating_sub(half);
     let end = (raw_start + WINDOW_SIZE_CHARS).min(chars.len());
@@ -269,24 +288,64 @@ fn assemble_manifest_sources(
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManifestPayloadSource<'a> {
+    source_id: &'a str,
+    document_version_id: &'a str,
+    page: Option<i64>,
+    anchor_kind: &'a str,
+    text_sha256: &'a str,
+    text: &'a str,
+    text_mode: &'a str,
+    window_start: Option<i64>,
+    window_end: Option<i64>,
+    window_sha256: Option<&'a str>,
+    category_boosted: bool,
+    included_via: &'a str,
+    neighbor_of_source_id: Option<&'a str>,
+}
+
+impl<'a> ManifestPayloadSource<'a> {
+    fn from_source(source: &'a ManifestSource) -> Self {
+        Self {
+            source_id: &source.source_id,
+            document_version_id: &source.document_version_id,
+            page: source.page,
+            anchor_kind: &source.anchor_kind,
+            text_sha256: &source.text_sha256,
+            text: &source.text,
+            text_mode: &source.text_mode,
+            window_start: source.window_start,
+            window_end: source.window_end,
+            window_sha256: source.window_sha256.as_deref(),
+            category_boosted: source.category_boosted,
+            included_via: &source.included_via,
+            neighbor_of_source_id: source.neighbor_of_source_id.as_deref(),
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct ManifestPayload<'a> {
     retrieval_version: &'a str,
     matter_id: &'a str, capability: &'a str, query_terms: &'a str,
-    sources: &'a [ManifestSource], budget_chars_used: i64, budget_chars_limit: i64,
+    sources: Vec<ManifestPayloadSource<'a>>, budget_chars_used: i64, budget_chars_limit: i64,
 }
 
 /// Canonical hash defined so it can never be circular: hashed over a payload type
-/// that structurally has no hash field of its own, then the result is attached to
-/// the public `ContextManifest`. `retrieval_version` is a fixed literal and no
-/// timestamp appears anywhere in the hashed payload, so identical inputs against
-/// the same DB always produce a byte-identical manifest and hash, every run.
+/// that structurally has no hash field of its own, and excludes raw diagnostic
+/// BM25 values, then the result is attached to the public `ContextManifest`.
+/// `retrieval_version` is a fixed literal and no timestamp appears anywhere in the
+/// hashed payload, so identical selected sources/windows/budget against the same
+/// DB always produce a byte-identical manifest hash, every run.
 fn build_manifest(
     matter_id: &str, capability: &str, query_terms: &str,
     sources: Vec<ManifestSource>, budget_chars_used: i64, budget_chars_limit: i64,
 ) -> AppResult<ContextManifest> {
+    let payload_sources: Vec<_> = sources.iter().map(ManifestPayloadSource::from_source).collect();
     let payload = ManifestPayload {
         retrieval_version: RETRIEVAL_VERSION, matter_id, capability, query_terms,
-        sources: &sources, budget_chars_used, budget_chars_limit,
+        sources: payload_sources, budget_chars_used, budget_chars_limit,
     };
     let manifest_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&payload)?));
     Ok(ContextManifest {
@@ -344,6 +403,25 @@ mod tests {
             display_text: "x".to_string(), normalized_text: "x".to_string(),
             created_at: created_at.to_string(), category_boosted, bm25_score,
             included_via: "match", neighbor_of_source_id: None,
+        }
+    }
+
+    fn manifest_source(id: &str, bm25_score: Option<f64>) -> ManifestSource {
+        ManifestSource {
+            source_id: id.to_string(),
+            document_version_id: "v".to_string(),
+            page: Some(1),
+            anchor_kind: "page".to_string(),
+            text_sha256: "full-sha".to_string(),
+            text: "grounded text".to_string(),
+            text_mode: "full".to_string(),
+            window_start: None,
+            window_end: None,
+            window_sha256: None,
+            bm25_score,
+            category_boosted: false,
+            included_via: "match".to_string(),
+            neighbor_of_source_id: None,
         }
     }
 
@@ -405,10 +483,47 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_window_centers_on_earliest_match_across_terms_not_query_order() {
+        let text = "x".repeat(1000) + "EARLY" + &"y".repeat(6000) + "LATE" + &"z".repeat(4000);
+        let terms = vec!["late".to_string(), "early".to_string()];
+        let (start, end, window) = deterministic_window(&text, &terms);
+        assert_eq!(start, 0, "the earliest document occurrence must win even when its term appears later in the query");
+        assert_eq!(end, WINDOW_SIZE_CHARS);
+        assert!(window.contains("EARLY"), "the window should be anchored around the earliest term occurrence");
+        assert!(!window.contains("LATE"), "a later query-ordered term must not steal the window anchor");
+    }
+
+    #[test]
     fn deterministic_window_defaults_to_start_of_text_with_no_terms() {
         let text = "a".repeat(20000);
         let (start, _end, _window) = deterministic_window(&text, &[]);
         assert_eq!(start, 0);
+    }
+
+    #[test]
+    fn manifest_hash_excludes_diagnostic_bm25_score_but_ranking_still_uses_it() {
+        let with_score = manifest_source("s1", Some(-1.25));
+        let mut with_different_score = with_score.clone();
+        with_different_score.bm25_score = Some(-99.875);
+
+        let manifest_a = build_manifest("matter", "extract_facts", "needle", vec![with_score], 13, 200).unwrap();
+        let manifest_b = build_manifest("matter", "extract_facts", "needle", vec![with_different_score], 13, 200).unwrap();
+        assert_eq!(manifest_a.manifest_sha256, manifest_b.manifest_sha256, "raw BM25 serialization must not affect the canonical manifest hash");
+        assert_ne!(manifest_a.sources[0].bm25_score, manifest_b.sources[0].bm25_score, "bm25Score must remain visible in the public manifest for diagnostics");
+        assert_ne!(serde_json::to_string(&manifest_a).unwrap(), serde_json::to_string(&manifest_b).unwrap(), "public diagnostics should still expose the BM25 difference");
+
+        let ranked_once = rank_candidates(vec![
+            candidate("weak", Some(-1.0), false, "2026-01-01T00:00:00Z"),
+            candidate("strong", Some(-5.0), false, "2020-01-01T00:00:00Z"),
+        ]);
+        let ranked_twice = rank_candidates(vec![
+            candidate("weak", Some(-1.0), false, "2026-01-01T00:00:00Z"),
+            candidate("strong", Some(-5.0), false, "2020-01-01T00:00:00Z"),
+        ]);
+        let ids_once: Vec<_> = ranked_once.iter().map(|c| c.source_id.as_str()).collect();
+        let ids_twice: Vec<_> = ranked_twice.iter().map(|c| c.source_id.as_str()).collect();
+        assert_eq!(ids_once, ids_twice, "BM25-backed ordering must remain deterministic");
+        assert_eq!(ids_once, vec!["strong", "weak"], "the better BM25 match must still rank first");
     }
 
     #[test]
