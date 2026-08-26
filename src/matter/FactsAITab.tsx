@@ -6,6 +6,12 @@ import type { AiProfile, AiProposal, VerifiedFact } from "../types";
 
 type Capability = "extract_facts" | "extract_medical_event" | "extract_wage_record" | "extract_liability_fact";
 
+type ConflictFact = {id:string;subject:string;predicate:string;value:string};
+type FactConflict = {
+  id:string; matterId:string; status:"unresolved"; createdAt:string;
+  factA:ConflictFact; factB:ConflictFact;
+};
+
 const CAPABILITIES: Array<{value: Capability; label: string; buttonLabel: string; placeholder: string}> = [
   {value: "extract_facts", label: "עובדה כללית", buttonLabel: "הצע עובדה לבדיקה", placeholder: "לדוגמה: שבר בכף היד"},
   {value: "extract_medical_event", label: "אירוע רפואי", buttonLabel: "הצע אירועים רפואיים", placeholder: "לדוגמה: אשפוז, אבחנה, טיפול"},
@@ -74,6 +80,9 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const {data:facts,loading,error,reload}=useCommand(
     ()=>commands.list_verified_facts({matterId}) as Promise<VerifiedFact[]>, [matterId]
   );
+  const {data:conflicts,loading:conflictsLoading,error:conflictsError,reload:reloadConflicts}=useCommand(
+    ()=>commands.list_fact_conflicts({matterId}) as Promise<FactConflict[]>, [matterId]
+  );
   const {data:profiles}=useCommand(
     ()=>commands.get_ai_settings() as Promise<AiProfile[]>, []
   );
@@ -90,6 +99,9 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const [runError,setRunError]=useState<string|null>(null);
   const [reviewingId,setReviewingId]=useState<string|null>(null);
   const [lastRunId,setLastRunId]=useState<string|null>(null);
+  const [conflictBusyId,setConflictBusyId]=useState<string|null>(null);
+  const [conflictError,setConflictError]=useState<string|null>(null);
+  const [resolutionNotes,setResolutionNotes]=useState<Record<string,string>>({});
 
   const selectedProfile=enabledProfiles.find(p=>p.id===profileId);
   const selectedCapability=CAPABILITIES.find(c=>c.value===capability)??CAPABILITIES[0]!;
@@ -97,6 +109,21 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const invalidate=async(factId:string)=>{
     await commands.invalidate_fact({factId});
     reload();
+    reloadConflicts();
+  };
+
+  const resolveConflict=async(conflictId:string)=>{
+    setConflictBusyId(conflictId);setConflictError(null);
+    try{
+      await commands.resolve_fact_conflict({
+        matterId, conflictId, resolutionNote:resolutionNotes[conflictId]?.trim()||undefined
+      });
+      setResolutionNotes(prev=>{
+        const next={...prev}; delete next[conflictId]; return next;
+      });
+      reloadConflicts();
+    }catch(e){setConflictError(String(e));}
+    finally{setConflictBusyId(null);}
   };
 
   const openSource=(occurrenceId:string)=>{
@@ -138,6 +165,26 @@ export function FactsAITab({matterId}:{matterId:string}) {
         <button className="source-link" disabled={!f.occurrenceId} onClick={()=>f.occurrenceId&&openSource(f.occurrenceId)}>פתח מקור · {f.sourceLabel}</button>
         <button className="source-link" onClick={()=>invalidate(f.id)}>בטל תוקף</button>
       </div>)}
+
+      <div style={{marginTop:24}}>
+        <span className="eyebrow">CONFLICT REVIEW</span><h3>סתירות פתוחות</h3>
+        <p className="quiet">רק עורך דין יכול לסגור סתירה; המערכת אינה מכריעה איזו עובדה נכונה.</p>
+        {conflictsLoading && <p className="quiet">טוען סתירות...</p>}
+        {conflictsError && <p className="quiet">שגיאה: {conflictsError}</p>}
+        {conflictError && <p className="quiet">שגיאה בפתרון הסתירה: {conflictError}</p>}
+        {!conflictsLoading && !conflictsError && conflicts?.length===0 && <p className="quiet">אין סתירות פתוחות בין עובדות תקפות.</p>}
+        {conflicts?.map(c=><div className="proposal" key={c.id}>
+          <div className="header-actions"><strong>סתירה לבדיקה</strong><StatusBadge tone="warn">Human review</StatusBadge></div>
+          <dl className="profile-fields">
+            <div><dt>עובדה א׳</dt><dd><strong>{c.factA.subject} · {c.factA.predicate}</strong><br/>{c.factA.value}</dd></div>
+            <div><dt>עובדה ב׳</dt><dd><strong>{c.factB.subject} · {c.factB.predicate}</strong><br/>{c.factB.value}</dd></div>
+          </dl>
+          <label>הערת פתרון (אופציונלי)<textarea rows={2} value={resolutionNotes[c.id]??""} onChange={e=>setResolutionNotes(prev=>({...prev,[c.id]:e.target.value}))}/></label>
+          <button className="primary-lite" disabled={conflictBusyId===c.id} onClick={()=>resolveConflict(c.id)}>
+            {conflictBusyId===c.id?"שומר...":"סמן כנפתר לאחר בדיקה"}
+          </button>
+        </div>)}
+      </div>
     </section>
     <section className="workspace-card">
       <span className="eyebrow">AI REVIEW</span><h2>הצעות לבדיקה</h2>
