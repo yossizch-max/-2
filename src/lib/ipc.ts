@@ -6,6 +6,7 @@ export async function call<T=unknown>(command:string,payload:Record<string,unkno
 
 export const commands = {
   get_app_health: (payload:Record<string,unknown>={}) => call("get_app_health",payload),
+  get_case_health: (payload:Record<string,unknown>={}) => call("get_case_health",payload),
   get_settings: (payload:Record<string,unknown>={}) => call("get_settings",payload),
   save_settings: (payload:Record<string,unknown>={}) => call("save_settings",payload),
   choose_folder: (payload:Record<string,unknown>={}) => call("choose_folder",payload),
