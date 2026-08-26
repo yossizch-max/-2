@@ -289,3 +289,13 @@ lawyer-driven. New "ראיות חסרות" tab in `MatterWorkspace.tsx`
 (`MissingEvidenceTab.tsx`), structurally identical to `WorkstreamsTab.tsx`. See
 `docs/RELEASE_GATES.md`'s "Phase B, milestone B3" section for the full writeup. B4–B6
 remain deliberately unattempted, each still pending its own planning pass.
+
+A user code review of this same milestone (2026-08-26, before any Windows CI run
+confirmed the original shape) found that `priority` could contradict a lawyer's own
+action: a requirement collected outside the matter's current Pack could show
+`status: collected` next to `priority: not_applicable`. Fixed with no migration
+needed - the overloaded value was split into `relevance` (`applicable`/
+`not_applicable` - is the key in the Pack, or has the lawyer acted on it) and
+`priority` (`Option<String>`, only meaningful when relevant), both still computed at
+read time and never persisted. See `docs/RELEASE_GATES.md`'s "Phase B, milestone B3"
+section for the full writeup.

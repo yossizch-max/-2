@@ -17,7 +17,7 @@
   "matter_profile_and_parties_cascade_delete_with_matter": true,
   "matter_workstreams_cascade_delete_with_matter": true,
   "matter_requirements_cascade_delete_with_matter": true,
-  "regenerated_at": "2026-08-25",
-  "regenerated_against_parent_commit": "0be99a9b469de0678a4bcb632ae6d60832dcbda9",
-  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql, all applied in order (real, not estimated)"
+  "regenerated_at": "2026-08-26",
+  "regenerated_against_parent_commit": "94f7c63a9af5409c126b21eff5ad837d4dbf99fe",
+  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql, all applied in order (real, not estimated) - schema unchanged by the B3 relevance/priority review fix (pure Rust/TS read-model logic, no migration)"
 }

@@ -12,6 +12,8 @@ export function MissingEvidenceTab({matterId}:{matterId:string}) {
 
   const keyLabel=(v:string)=>REQUIREMENT_KEYS.find(k=>k.value===v)?.label??v;
   const priorityLabel=(v:string)=>REQUIREMENT_PRIORITIES.find(p=>p.value===v)?.label??v;
+  const relevanceLabel=(r:MatterRequirement)=>
+    r.relevance==="not_applicable" ? "לא רלוונטי" : (r.priority ? priorityLabel(r.priority) : "");
 
   const setStatus=async(key:string,status:string,notes:string|null)=>{
     setBusyKey(key);
@@ -28,7 +30,7 @@ export function MissingEvidenceTab({matterId}:{matterId:string}) {
       {requirements?.map(r=><div className="mini-row" key={r.requirementKey} style={{gridTemplateColumns:"1fr auto",alignItems:"center",display:"grid",gap:"10px"}}>
         <div style={{display:"grid",gap:"6px"}}>
           <strong>{keyLabel(r.requirementKey)}</strong>
-          <small className="quiet">{priorityLabel(r.priority)}</small>
+          <small className="quiet">{relevanceLabel(r)}</small>
           <input
             placeholder="הערות"
             defaultValue={r.notes??""}

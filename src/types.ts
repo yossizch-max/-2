@@ -241,13 +241,13 @@ export const REQUIREMENT_STATUSES: Array<{value: string; label: string}> = [
 ];
 
 export const REQUIREMENT_PRIORITIES: Array<{value: string; label: string}> = [
-  {value: "not_applicable", label: "לא רלוונטי"},
   {value: "recommended", label: "מומלץ"},
   {value: "required_by_office_policy", label: "נדרש לפי מדיניות המשרד"},
   {value: "optional", label: "אופציונלי"},
 ];
 
 export type MatterRequirement = {
-  id: string; matterId: string; requirementKey: string; status: string; priority: string;
+  id: string; matterId: string; requirementKey: string; status: string;
+  relevance: string; priority?: string | null;
   notes?: string | null; createdAt: string; updatedAt: string;
 };

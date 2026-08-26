@@ -1,7 +1,7 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-26",
-  "regenerated_against_commit": "0be99a9b469de0678a4bcb632ae6d60832dcbda9",
+  "regenerated_against_commit": "94f7c63a9af5409c126b21eff5ad837d4dbf99fe",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 13370,
-      "sha256": "32d23d5abc0d6fefb049c5fa79fdd4a496e89074e37aeecda966f2e4b063eeea"
+      "size": 14392,
+      "sha256": "d95822e003aba869d892cf927273d4e894e61ae369b7670d014e30000f5a47b6"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 1116,
-      "sha256": "7439d39d3c6e271e78b461081d4d099ed89a61be66eb451addd3eac8694f4f7b"
+      "size": 1221,
+      "sha256": "a29d7fccc6a1aadeea9767f61fac349238554802f504ccbb97878ff47205d780"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "5ca5383eff5a83640a96ef47fa020900f3c864b6a64d5ee84d75c8a848541f71"
+      "sha256": "22cb8877a426fdc02c0c7d7201bf2fc92ac08507702637ce031ea6163cb4c0b7"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 20975,
-      "sha256": "828a32923dc39b5dd20e6308c496e4e140a4d909ffb62c6fc99a53ee924c2f46"
+      "size": 21648,
+      "sha256": "7e8b78911202059c030c0e76e81539177cdd6519d540c7552fcadcf0552c2476"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 69259,
-      "sha256": "8caff2dc43e9d2c6a53f4fe2bc0023df2d2fd8277ac7c583b783ed2ea82a1e3e"
+      "size": 71830,
+      "sha256": "7707dae67abb920d63a9256a5c84e024e1b0a8d9c3eff14f07bf037031e58eea"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -259,8 +259,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 82358,
-      "sha256": "5a8222b39f19031ddb4966900d7866e600a2ca0b1b562a09bd9106759af9d9ab"
+      "size": 84318,
+      "sha256": "ea4d2a5f8f8724037d73a0aa3caeab63a0a98185fa71288ab0f3a2c5e2476690"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
@@ -289,13 +289,13 @@
     },
     {
       "path": "src-tauri/src/models.rs",
-      "size": 2629,
-      "sha256": "1b70134b1bcfea41703899be225b6c18509a355567dc09969db92b23e6669d1a"
+      "size": 2664,
+      "sha256": "12a1e4e3a1c003d097dda7622d497da305770cd7da344c352a72028845d46d7d"
     },
     {
       "path": "src-tauri/src/requirements.rs",
-      "size": 8422,
-      "sha256": "4cc6d0631213a68a41073c236231716d04d0ebb6193491a7ba53ec72fb3e7ae9"
+      "size": 10033,
+      "sha256": "1e028a09a36963452595e86656b9f22ead7eacc25c79b094f2d42ae8e6989978"
     },
     {
       "path": "src-tauri/src/scanner.rs",
@@ -399,8 +399,8 @@
     },
     {
       "path": "src/matter/MissingEvidenceTab.tsx",
-      "size": 2353,
-      "sha256": "0f3f89f6f2a914c1a842a4f4c9f4f46a99961328985b274ee7139e19e95e3fbf"
+      "size": 2500,
+      "sha256": "d1265f20d4ba629c5bc3957b240679b2e826e5997cee00fae8a06636c1941b85"
     },
     {
       "path": "src/matter/OverviewTab.tsx",
@@ -479,8 +479,8 @@
     },
     {
       "path": "src/types.ts",
-      "size": 9682,
-      "sha256": "21db8a33f21abbd38c46133fe68619075dbded57f41ba7a141baa1e0ef9a3caa"
+      "size": 9652,
+      "sha256": "da7928254a308cdd917c931500d2bfbe0c50a0f80e6085bfd0dc6135feafdb8f"
     },
     {
       "path": "tsconfig.app.json",

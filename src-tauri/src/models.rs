@@ -63,5 +63,6 @@ pub struct Workstream {
 #[serde(rename_all = "camelCase")]
 pub struct MatterRequirement {
     pub id: String, pub matter_id: String, pub requirement_key: String, pub status: String,
-    pub priority: String, pub notes: Option<String>, pub created_at: String, pub updated_at: String,
+    pub relevance: String, pub priority: Option<String>,
+    pub notes: Option<String>, pub created_at: String, pub updated_at: String,
 }

@@ -71,11 +71,21 @@ fn default_requirements(case_type: &str) -> &'static [(&'static str, &'static st
     }
 }
 
-fn priority_for(case_type: &str, key: &str) -> String {
-    default_requirements(case_type).iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, p)| p.to_string())
-        .unwrap_or_else(|| "not_applicable".to_string())
+/// `relevance` (is this key applicable to the matter right now) and `priority`
+/// (how strongly the office recommends it, only meaningful when relevant) are
+/// two distinct concepts computed here at read time, never persisted:
+/// - in the current Matter Pack -> applicable, with the Pack's priority.
+/// - not in the Pack, and still `not_applicable` -> not_applicable, no priority.
+/// - not in the Pack, but the lawyer already moved its status forward -> the
+///   lawyer's own action makes it relevant in practice, so it's applicable/optional.
+fn relevance_and_priority(case_type: &str, key: &str, status: &str) -> (String, Option<String>) {
+    if let Some((_, priority)) = default_requirements(case_type).iter().find(|(k, _)| *k == key) {
+        return ("applicable".to_string(), Some(priority.to_string()));
+    }
+    if status == "not_applicable" {
+        return ("not_applicable".to_string(), None);
+    }
+    ("applicable".to_string(), Some("optional".to_string()))
 }
 
 /// Idempotent, non-destructive - identical shape to `workstreams::reconcile`. Handles
@@ -111,10 +121,11 @@ pub fn list(conn: &Connection, matter_id: &str, case_type: &str) -> AppResult<Ve
     )?;
     let mut rows: Vec<MatterRequirement> = stmt.query_map([matter_id], |r| {
         let requirement_key: String = r.get(2)?;
-        let priority = priority_for(case_type, &requirement_key);
+        let status: String = r.get(3)?;
+        let (relevance, priority) = relevance_and_priority(case_type, &requirement_key, &status);
         Ok(MatterRequirement {
-            id: r.get(0)?, matter_id: r.get(1)?, requirement_key, status: r.get(3)?,
-            priority, notes: r.get(4)?, created_at: r.get(5)?, updated_at: r.get(6)?,
+            id: r.get(0)?, matter_id: r.get(1)?, requirement_key, status,
+            relevance, priority, notes: r.get(4)?, created_at: r.get(5)?, updated_at: r.get(6)?,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
     rows.sort_by_key(|req| ALLOWED_REQUIREMENT_KEYS.iter().position(|k| *k == req.requirement_key).unwrap_or(usize::MAX));
@@ -165,9 +176,26 @@ mod tests {
     }
 
     #[test]
-    fn priority_for_a_key_outside_the_pack_is_not_applicable() {
-        assert_eq!(priority_for("civil_commercial", "vehicle_photos"), "not_applicable");
-        assert_eq!(priority_for("traffic_accident", "vehicle_photos"), "optional");
+    fn a_key_outside_the_pack_and_still_untouched_is_not_applicable() {
+        let (relevance, priority) = relevance_and_priority("civil_commercial", "vehicle_photos", "not_applicable");
+        assert_eq!(relevance, "not_applicable");
+        assert_eq!(priority, None);
+    }
+
+    #[test]
+    fn a_key_inside_the_pack_gets_the_packs_priority() {
+        let (relevance, priority) = relevance_and_priority("traffic_accident", "vehicle_photos", "not_collected");
+        assert_eq!(relevance, "applicable");
+        assert_eq!(priority, Some("optional".to_string()));
+    }
+
+    #[test]
+    fn a_key_outside_the_pack_but_manually_advanced_by_the_lawyer_becomes_applicable() {
+        for status in ["not_collected", "requested", "collected", "stale"] {
+            let (relevance, priority) = relevance_and_priority("civil_commercial", "vehicle_photos", status);
+            assert_eq!(relevance, "applicable", "status={status}");
+            assert_eq!(priority, Some("optional".to_string()), "status={status}");
+        }
     }
 
     #[test]

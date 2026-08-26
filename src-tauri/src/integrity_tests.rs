@@ -1437,11 +1437,41 @@ fn creating_a_matter_seeds_its_default_requirements() {
     assert_eq!(rows.len(), 13, "every matter must get all 13 requirement keys seeded");
     let row_for = |key: &str| rows.iter().find(|r| r.requirement_key == key).unwrap().clone();
     assert_eq!(row_for("id_document").status, "not_collected");
-    assert_eq!(row_for("id_document").priority, "required_by_office_policy");
+    assert_eq!(row_for("id_document").relevance, "applicable");
+    assert_eq!(row_for("id_document").priority, Some("required_by_office_policy".to_string()));
     assert_eq!(row_for("police_report").status, "not_collected");
-    assert_eq!(row_for("police_report").priority, "recommended");
-    assert_eq!(row_for("vehicle_photos").priority, "optional");
+    assert_eq!(row_for("police_report").priority, Some("recommended".to_string()));
+    assert_eq!(row_for("vehicle_photos").priority, Some("optional".to_string()));
     assert_eq!(row_for("contract_document").status, "not_applicable", "traffic_accident's default pack does not include contract_document");
+    assert_eq!(row_for("contract_document").relevance, "not_applicable");
+    assert_eq!(row_for("contract_document").priority, None, "an irrelevant, untouched requirement must carry no priority");
+}
+
+// --- B3 review fix (2026-08-26): relevance/priority split, so a manually-collected
+// item outside the current Matter Pack no longer shows a contradictory
+// status=collected / priority=not_applicable pair. ---
+
+#[test]
+fn manually_collecting_a_requirement_outside_the_pack_makes_it_applicable_and_optional() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B3 review fix: manual collection outside the pack", "civil_commercial");
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "civil_commercial")).unwrap();
+
+    // civil_commercial's default pack does not include vehicle_photos.
+    let before = db.read(|conn| requirements::list(conn, &matter_id, "civil_commercial")).unwrap();
+    let before_row = before.iter().find(|r| r.requirement_key == "vehicle_photos").unwrap();
+    assert_eq!(before_row.relevance, "not_applicable");
+    assert_eq!(before_row.priority, None);
+
+    // the lawyer collects it anyway - this must never surface as status=collected
+    // alongside a "not applicable" priority.
+    db.write(|conn| requirements::update_status(conn, &matter_id, "vehicle_photos", "collected", None)).unwrap();
+    let after = db.read(|conn| requirements::list(conn, &matter_id, "civil_commercial")).unwrap();
+    let after_row = after.iter().find(|r| r.requirement_key == "vehicle_photos").unwrap();
+    assert_eq!(after_row.status, "collected");
+    assert_eq!(after_row.relevance, "applicable", "a lawyer's own action makes the item relevant in practice");
+    assert_eq!(after_row.priority, Some("optional".to_string()));
 }
 
 #[test]

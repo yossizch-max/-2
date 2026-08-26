@@ -48,12 +48,15 @@ with structured party fields, and widening/relabeling the case-type taxonomy (se
 "Phase B, milestone B1" below for the full writeup), confirmed on real Windows CI at
 run #16, commit `6e89cd0`. B2 (Workstreams + Matter Packs — per-matter status tracks
 auto-seeded from case type, reconciled non-destructively on change) is implemented (see
-"Phase B, milestone B2" below); its Windows CI run was queued right before B3 (Missing
-Evidence Matrix — the same reconcile idiom applied to a document checklist, see "Phase
-B, milestone B3" below) was also implemented on top of it. **Neither B2 nor B3 is yet
-reconfirmed on Windows CI** — that run is still needed before Gate C/E can be called
-current again. What's left needs a human on a real Windows machine with a fresh
-installer: real OCR, real AI provider calls, and
+"Phase B, milestone B2" below); B3 (Missing Evidence Matrix — the same reconcile idiom
+applied to a document checklist, see "Phase B, milestone B3" below) was also implemented
+on top of it, then a user code review of B3 found and fixed a genuine semantic gap
+(`priority` could contradict a lawyer-collected item's status — split into
+`relevance`/`priority`, no migration needed, see "Phase B, milestone B3" for the full
+writeup). **Neither B2, B3, nor the B3 review-fix is yet reconfirmed on Windows CI** —
+that run is still needed before Gate C/E can be called current again. What's left needs
+a human on a real Windows machine with a fresh installer: real OCR, real AI provider
+calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
 
@@ -651,12 +654,12 @@ different key set.
   at `not_collected`/`requested`/`collected`/`stale`. Called from the same three sites
   as `workstreams::reconcile`: `create_matter`, `update_matter` on a real case-type
   change, and as read-repair in the new `list_matter_requirements`.
-- A key's **priority** (`recommended`/`required_by_office_policy`/`optional`/
-  `not_applicable`) is computed at read time from the matter's *current* case type via
-  a static Rust map - never persisted, and never phrased as statutory ("the law
-  requires"); these are office-workflow recommendations only, freely overridable per
-  matter. Only an Approved Legal Ruleset could ever give a future requirement real
-  legal weight, and that's out of scope here.
+- A key's **priority** (`recommended`/`required_by_office_policy`/`optional`) is
+  computed at read time from the matter's *current* case type via a static Rust map -
+  never persisted, and never phrased as statutory ("the law requires"); these are
+  office-workflow recommendations only, freely overridable per matter. Only an
+  Approved Legal Ruleset could ever give a future requirement real legal weight, and
+  that's out of scope here.
 - **Deliberately no `linked_document_id` column in this pass** - wiring a requirement
   to a specific document (an "open source" button, a staleness cascade off
   `scanner.rs`) is a real feature but has no consumer yet; adding the column now would
@@ -669,14 +672,47 @@ different key set.
 
 11 new backend tests (seeding, reconcile-never-touches-collected on a case-type
 change, backfill-via-list on a pre-B3 matter, key/status validation, cascade delete,
-plus unit tests including a priority-lookup check) - 86/86 total. `cargo check/test
---locked`, `npm run build`, `contract:check` (96/96, no drift), `qa:static` (now also
-checking `oneTableInMatterRequirements`) all pass. Migration re-verified idempotent via
-direct sqlite3 (applied 3x): 42 tables, 29 indexes, 37 triggers, `user_version=16`,
-integrity ok, `fk_check` clean.
+plus unit tests including a priority-lookup check) - 86/86 total at the original shape.
+`cargo check/test --locked`, `npm run build`, `contract:check` (96/96, no drift),
+`qa:static` (now also checking `oneTableInMatterRequirements`) all pass. Migration
+re-verified idempotent via direct sqlite3 (applied 3x): 42 tables, 29 indexes, 37
+triggers, `user_version=16`, integrity ok, `fk_check` clean.
 
-**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
-can be called current on Gate C/E. B4-B6 remain deliberately unattempted, each still
+**Review fix (2026-08-26), applied before any Windows CI run confirmed the original
+shape** - a user code review of the just-shipped B3 milestone found a genuine
+semantic gap: `priority` was computed only from the matter's current case-type Pack,
+so a requirement the lawyer had manually collected outside the Pack (or one whose Pack
+membership changed after collection) could surface as `status: collected` next to
+`priority: not_applicable` - self-contradictory, even though the underlying
+`reconcile`/status-preservation logic was correct and had never actually touched the
+row wrongly. No migration needed - pure read-model logic, no schema/persistence
+change, per the review's own framing. Fixed in `requirements.rs`/`models.rs` by
+splitting the overloaded value into two fields, both still computed at read time and
+never persisted:
+- **`relevance`** (`applicable`/`not_applicable`) - whether the key currently belongs
+  to the matter's Pack, or the lawyer has otherwise acted on it.
+- **`priority`** (`Option<String>`, `required_by_office_policy`/`recommended`/
+  `optional`) - only meaningful when relevant; `None` when not.
+
+A key in the current Pack keeps the Pack's priority regardless of status. A key
+outside the Pack still at `status: not_applicable` is `relevance: not_applicable`/
+`priority: None`. A key outside the Pack that the lawyer has moved to
+`not_collected`/`requested`/`collected`/`stale` becomes `relevance: applicable`/
+`priority: optional` - a lawyer's own action makes the item relevant in practice
+instead of displaying a contradictory state. The frontend (`MissingEvidenceTab.tsx`,
+`types.ts`) was updated to show "לא רלוונטי" only when `relevance` is
+`not_applicable`, the priority label otherwise. `linked_document_id` and manual-only
+`stale` remain deliberately deferred, reaffirmed by the same review as still correct.
+
+3 new tests (2 unit tests on the relevance/priority split, 1 integration regression
+test reproducing the exact reported scenario) plus updated assertions on the existing
+seeding test - 89/89 total. `cargo check/test --locked`, `npm run build`,
+`contract:check` (96/96, no drift), `qa:static` all pass. Migration re-verified
+idempotent (still 42 tables/29 indexes/37 triggers/`user_version=16` - unchanged).
+
+**Neither the original B3 commit (`94f7c63`) nor this review-fix commit has been
+reconfirmed on Windows CI yet** - that run is still needed before this milestone can
+be called current on Gate C/E. B4-B6 remain deliberately unattempted, each still
 pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review
