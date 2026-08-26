@@ -51,3 +51,10 @@ pub struct MatterParty {
     pub email: Option<String>, pub address: Option<String>, pub notes: Option<String>,
     pub created_at: String, pub updated_at: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Workstream {
+    pub id: String, pub matter_id: String, pub kind: String, pub status: String,
+    pub notes: Option<String>, pub created_at: String, pub updated_at: String,
+}

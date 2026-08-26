@@ -192,3 +192,26 @@ export type MatterParty = {
   identifier?: string | null; phone?: string | null; email?: string | null; address?: string | null;
   notes?: string | null; createdAt: string; updatedAt: string;
 };
+
+export const WORKSTREAM_KINDS: Array<{value: string; label: string}> = [
+  {value: "medical", label: "רפואי"},
+  {value: "liability", label: "אחריות"},
+  {value: "wage", label: "שכר"},
+  {value: "insurance", label: "ביטוח"},
+  {value: "btl", label: "מל\"ל"},
+  {value: "negotiation", label: "מו\"מ"},
+  {value: "litigation", label: "ליטיגציה"},
+];
+
+export const WORKSTREAM_STATUSES: Array<{value: string; label: string}> = [
+  {value: "not_applicable", label: "לא רלוונטי"},
+  {value: "not_started", label: "טרם התחיל"},
+  {value: "active", label: "פעיל"},
+  {value: "blocked", label: "חסום"},
+  {value: "done", label: "הושלם"},
+];
+
+export type Workstream = {
+  id: string; matterId: string; kind: string; status: string;
+  notes?: string | null; createdAt: string; updatedAt: string;
+};

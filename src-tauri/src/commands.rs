@@ -1,5 +1,6 @@
 use crate::{
     ai, authorities, damage, extraction, legal_docs, legal_rules, matter_profile, models, scanner, search, security,
+    workstreams,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -208,11 +209,15 @@ pub fn create_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
     let internal=payload.get("internalNumber").and_then(Value::as_str);
     let id=Uuid::new_v4().to_string(); let now=Utc::now().to_rfc3339();
     state.db.write(|conn|{
-        conn.execute(
+        let tx=conn.transaction()?;
+        tx.execute(
             "INSERT INTO matters(id,title,internal_number,matter_type,status,workflow_stage,created_at,updated_at)
              VALUES(?1,?2,?3,?4,'active','intake',?5,?5)",
             params![id,title,internal,matter_type,now]
-        )?; Ok(())
+        )?;
+        workstreams::reconcile(&tx,&id,matter_type)?;
+        tx.commit()?;
+        Ok(())
     })?;
     Ok(json!({"id":id}))
 }
@@ -266,17 +271,31 @@ pub fn update_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
     let matter_type=payload.get("matterType").and_then(Value::as_str);
     if let Some(mt)=matter_type { matter_profile::validate_case_type(mt)?; }
     let status=payload.get("status").and_then(Value::as_str);
-    state.db.write(|conn|{let changed=conn.execute(
-        "UPDATE matters SET
-            title=coalesce(?2,title),
-            internal_number=coalesce(?3,internal_number),
-            external_number=coalesce(?4,external_number),
-            matter_type=coalesce(?5,matter_type),
-            status=coalesce(?6,status),
-            updated_at=?7
-         WHERE id=?1",
-        params![matter_id,title,internal,external,matter_type,status,Utc::now().to_rfc3339()]
-    )?;if changed!=1{return Err(AppError::NotFound("matter".into()));}Ok(())})?;
+    state.db.write(|conn|{
+        let tx=conn.transaction()?;
+        let old_matter_type:String=tx.query_row(
+            "SELECT matter_type FROM matters WHERE id=?1",[matter_id],|r|r.get(0)
+        ).map_err(|_|AppError::NotFound("matter".into()))?;
+        let changed=tx.execute(
+            "UPDATE matters SET
+                title=coalesce(?2,title),
+                internal_number=coalesce(?3,internal_number),
+                external_number=coalesce(?4,external_number),
+                matter_type=coalesce(?5,matter_type),
+                status=coalesce(?6,status),
+                updated_at=?7
+             WHERE id=?1",
+            params![matter_id,title,internal,external,matter_type,status,Utc::now().to_rfc3339()]
+        )?;
+        if changed!=1{return Err(AppError::NotFound("matter".into()));}
+        if let Some(new_type)=matter_type {
+            if new_type!=old_matter_type {
+                workstreams::reconcile(&tx,matter_id,new_type)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    })?;
     Ok(json!({"ok":true}))
 }
 
@@ -354,6 +373,36 @@ pub fn delete_matter_party(state: State<'_, AppState>, payload: Value) -> AppRes
     let party_id=required_string(&payload,"partyId")?;
     let matter_id=required_string(&payload,"matterId")?;
     matter_profile::delete_party(&state.db,party_id,matter_id)?;
+    Ok(json!({"ok":true}))
+}
+
+/// Unlike other `list_*` commands this one legitimately needs a write, not just a
+/// read: it calls `workstreams::reconcile` first (read-repair for a pre-B2 matter with
+/// zero workstream rows, or any matter somehow missing one) before returning the
+/// current set.
+#[tauri::command]
+pub fn list_matter_workstreams(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let rows=state.db.write(|conn|{
+        let tx=conn.transaction()?;
+        let matter_type:String=tx.query_row(
+            "SELECT matter_type FROM matters WHERE id=?1",[matter_id],|r|r.get(0)
+        ).map_err(|_|AppError::NotFound("matter".into()))?;
+        workstreams::reconcile(&tx,matter_id,&matter_type)?;
+        let rows=workstreams::list(&tx,matter_id)?;
+        tx.commit()?;
+        Ok(rows)
+    })?;
+    Ok(serde_json::to_value(rows)?)
+}
+
+#[tauri::command]
+pub fn update_matter_workstream(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let kind=required_string(&payload,"kind")?;
+    let status=required_string(&payload,"status")?;
+    let notes=payload.get("notes").and_then(Value::as_str);
+    state.db.write(|conn|workstreams::update_status(conn,matter_id,kind,status,notes))?;
     Ok(json!({"ok":true}))
 }
 

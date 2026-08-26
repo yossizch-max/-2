@@ -17,6 +17,7 @@ mod scanner;
 mod search;
 mod security;
 mod source_snapshot;
+mod workstreams;
 
 use db::DbState;
 use std::path::PathBuf;
@@ -69,6 +70,8 @@ pub fn run() {
             commands::add_matter_party,
             commands::update_matter_party,
             commands::delete_matter_party,
+            commands::list_matter_workstreams,
+            commands::update_matter_workstream,
             commands::list_documents,
             commands::get_document,
             commands::list_document_versions,

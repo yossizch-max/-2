@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
-import type { Matter } from "../types";
+import { CASE_TYPES, type Matter } from "../types";
 import { OverviewTab } from "../matter/OverviewTab";
 import { DocumentsTab } from "../matter/DocumentsTab";
 import { FactsAITab } from "../matter/FactsAITab";
@@ -9,21 +9,23 @@ import { DamageTab } from "../matter/DamageTab";
 import { TasksCalendarTab } from "../matter/TasksCalendarTab";
 import { LegalDocumentsTab } from "../matter/LegalDocumentsTab";
 import { AuthoritiesTab } from "../matter/AuthoritiesTab";
+import { WorkstreamsTab } from "../matter/WorkstreamsTab";
 
-type Tab="overview"|"documents"|"facts"|"damage"|"tasks"|"legal"|"research";
+type Tab="overview"|"documents"|"facts"|"damage"|"workstreams"|"tasks"|"legal"|"research";
 const STAGES=["intake","evidence_collection","treatment_and_records","negotiation","litigation","closed"];
 
 function EditMatterModal({matter,onClose,onSaved}:{matter:Matter;onClose:()=>void;onSaved:()=>void}) {
   const [title,setTitle]=useState(matter.title);
   const [internalNumber,setInternalNumber]=useState(matter.internalNumber??"");
   const [externalNumber,setExternalNumber]=useState(matter.externalNumber??"");
+  const [matterType,setMatterType]=useState(matter.matterType);
   const [busy,setBusy]=useState(false);
   const [err,setErr]=useState<string|null>(null);
 
   const save=async()=>{
     setBusy(true);setErr(null);
     try{
-      await commands.update_matter({matterId:matter.id,title,internalNumber:internalNumber||undefined,externalNumber:externalNumber||undefined});
+      await commands.update_matter({matterId:matter.id,title,internalNumber:internalNumber||undefined,externalNumber:externalNumber||undefined,matterType});
       onSaved();onClose();
     }catch(e){setErr(String(e));}
     finally{setBusy(false);}
@@ -35,6 +37,9 @@ function EditMatterModal({matter,onClose,onSaved}:{matter:Matter;onClose:()=>voi
       <label>כותרת<input autoFocus value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label>מספר פנימי<input value={internalNumber} onChange={e=>setInternalNumber(e.target.value)}/></label>
       <label>מספר חיצוני<input value={externalNumber} onChange={e=>setExternalNumber(e.target.value)}/></label>
+      <label>סוג תיק<select value={matterType} onChange={e=>setMatterType(e.target.value)}>
+        {CASE_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+      </select></label>
       {err && <p className="quiet">{err}</p>}
       <div className="header-actions">
         <button className="btn secondary" onClick={onClose} disabled={busy}>ביטול</button>
@@ -51,7 +56,7 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
   const [tab,setTab]=useState<Tab>("overview");
   const [editing,setEditing]=useState(false);
   const [stageBusy,setStageBusy]=useState(false);
-  const tabs:Array<[Tab,string]>=[["overview","סקירה"],["documents","מסמכים"],["facts","עובדות ו־AI"],["damage","נזק"],["tasks","משימות ויומן"],["legal","מסמכים משפטיים"],["research","מחקר"]];
+  const tabs:Array<[Tab,string]>=[["overview","סקירה"],["documents","מסמכים"],["facts","עובדות ו־AI"],["damage","נזק"],["workstreams","מסלולי עבודה"],["tasks","משימות ויומן"],["legal","מסמכים משפטיים"],["research","מחקר"]];
 
   const changeStage=async(stage:string)=>{
     setStageBusy(true);
@@ -78,7 +83,7 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
       {tabs.map(([key,label])=><button key={key} aria-current={tab===key?"page":undefined} className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
     </nav>
     <div className="tab-body">
-      {tab==="overview"?<OverviewTab matter={matter}/>:tab==="documents"?<DocumentsTab matterId={matterId}/>:tab==="facts"?<FactsAITab matterId={matterId}/>:tab==="damage"?<DamageTab matterId={matterId}/>:tab==="tasks"?<TasksCalendarTab matterId={matterId}/>:tab==="legal"?<LegalDocumentsTab matterId={matterId}/>:<AuthoritiesTab matterId={matterId}/>}
+      {tab==="overview"?<OverviewTab matter={matter}/>:tab==="documents"?<DocumentsTab matterId={matterId}/>:tab==="facts"?<FactsAITab matterId={matterId}/>:tab==="damage"?<DamageTab matterId={matterId}/>:tab==="workstreams"?<WorkstreamsTab matterId={matterId}/>:tab==="tasks"?<TasksCalendarTab matterId={matterId}/>:tab==="legal"?<LegalDocumentsTab matterId={matterId}/>:<AuthoritiesTab matterId={matterId}/>}
     </div>
     {editing && <EditMatterModal matter={matter} onClose={()=>setEditing(false)} onSaved={reload}/>}
   </div>;

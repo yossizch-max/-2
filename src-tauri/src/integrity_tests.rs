@@ -89,10 +89,19 @@
 //! reason as `verify_authority` above (see the v1 P0-6 note); `matter_profile::
 //! validate_case_type`/`validate_party_role` themselves are unit-tested directly in
 //! `matter_profile.rs`.
+//!
+//! Phase B, milestone B2 (Workstreams + Matter Packs, 2026-08-25): `workstreams.rs`
+//! adds a `matter_workstreams` table auto-seeded from a matter's case type and
+//! reconciled - never destructively - when the case type changes. Tests below cover
+//! seeding on creation, that a case-type change only ever upgrades a currently
+//! `not_applicable` default and never touches an already-active workstream,
+//! backfilling a pre-B2 matter with zero rows, kind/status validation, and cascade
+//! delete. `validate_kind`/`validate_status`/`default_active_kinds` themselves are
+//! unit-tested directly in `workstreams.rs`.
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, scanner};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, scanner, workstreams};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -122,6 +131,20 @@ fn new_matter(db: &DbState, title: &str) -> String {
             "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
              VALUES(?1,?2,'personal_injury','active','intake',?3,?3)",
             params![id, title, now],
+        ).map_err(AppError::Db)?;
+        Ok(())
+    }).unwrap();
+    id
+}
+
+fn new_matter_with_type(db: &DbState, title: &str, matter_type: &str) -> String {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,?2,?3,'active','intake',?4,?4)",
+            params![id, title, matter_type, now],
         ).map_err(AppError::Db)?;
         Ok(())
     }).unwrap();
@@ -1302,4 +1325,93 @@ fn deleting_a_matter_cascades_to_its_profile_and_parties() {
     ).map_err(AppError::Db)).unwrap();
     assert_eq!(profile_rows, 0, "matter_profile must cascade-delete with its matter");
     assert_eq!(party_rows, 0, "matter_parties must cascade-delete with its matter");
+}
+
+// --- Phase B, B2: Workstreams + Matter Packs ---
+
+#[test]
+fn creating_a_matter_seeds_its_default_workstreams() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B2 test: seed defaults", "traffic_accident");
+    db.write(|conn| workstreams::reconcile(conn, &matter_id, "traffic_accident")).unwrap();
+
+    let rows = db.read(|conn| workstreams::list(conn, &matter_id)).unwrap();
+    assert_eq!(rows.len(), 7, "every matter must get all 7 workstream kinds seeded");
+    let status_of = |kind: &str| rows.iter().find(|w| w.kind == kind).unwrap().status.clone();
+    assert_eq!(status_of("medical"), "not_started");
+    assert_eq!(status_of("wage"), "not_started");
+    assert_eq!(status_of("btl"), "not_started");
+    assert_eq!(status_of("negotiation"), "not_started");
+    assert_eq!(status_of("litigation"), "not_started");
+    assert_eq!(status_of("liability"), "not_applicable", "traffic_accident's default pack does not include liability");
+}
+
+#[test]
+fn changing_case_type_upgrades_not_applicable_defaults_without_touching_active_ones() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B2 test: reconcile on case-type change", "civil_commercial");
+    db.write(|conn| workstreams::reconcile(conn, &matter_id, "civil_commercial")).unwrap();
+
+    // civil_commercial's default pack is only negotiation/litigation - manually set
+    // litigation active, so the reconcile-on-change path must never touch it.
+    db.write(|conn| workstreams::update_status(conn, &matter_id, "litigation", "active", None)).unwrap();
+
+    // work_accident's default pack additionally includes medical/wage/liability/btl -
+    // all currently not_applicable on this matter, so they must flip to not_started.
+    db.write(|conn| workstreams::reconcile(conn, &matter_id, "work_accident")).unwrap();
+
+    let rows = db.read(|conn| workstreams::list(conn, &matter_id)).unwrap();
+    let status_of = |kind: &str| rows.iter().find(|w| w.kind == kind).unwrap().status.clone();
+    assert_eq!(status_of("litigation"), "active", "an already-active workstream must never be touched by reconcile");
+    assert_eq!(status_of("medical"), "not_started", "a newly-relevant default must be upgraded from not_applicable");
+    assert_eq!(status_of("wage"), "not_started");
+    assert_eq!(status_of("liability"), "not_started");
+    assert_eq!(status_of("btl"), "not_started");
+    assert_eq!(status_of("insurance"), "not_applicable", "a kind not in the new pack either must stay not_applicable");
+}
+
+#[test]
+fn listing_workstreams_backfills_a_pre_b2_matter_with_zero_rows() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    // simulates a matter that existed before this migration shipped: a bare matters
+    // row with no matter_workstreams rows at all.
+    let matter_id = new_matter_with_type(&db, "B2 test: backfill", "generic_civil");
+
+    let before = db.read(|conn| workstreams::list(conn, &matter_id)).unwrap();
+    assert!(before.is_empty(), "a pre-B2 matter has no workstream rows yet");
+
+    db.write(|conn| workstreams::reconcile(conn, &matter_id, "generic_civil")).unwrap();
+    let after = db.read(|conn| workstreams::list(conn, &matter_id)).unwrap();
+    assert_eq!(after.len(), 7, "reconcile must backfill all 7 kinds on first read");
+}
+
+#[test]
+fn update_matter_workstream_requires_a_known_kind_and_status() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B2 test: kind/status validation");
+
+    let bad_kind = db.write(|conn| workstreams::update_status(conn, &matter_id, "made_up_kind", "active", None));
+    assert!(bad_kind.is_err(), "an unknown workstream kind must be rejected");
+
+    let bad_status = db.write(|conn| workstreams::update_status(conn, &matter_id, "medical", "made_up_status", None));
+    assert!(bad_status.is_err(), "an unknown workstream status must be rejected");
+}
+
+#[test]
+fn deleting_a_matter_cascades_to_its_workstreams() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B2 test: cascade delete", "traffic_accident");
+    db.write(|conn| workstreams::reconcile(conn, &matter_id, "traffic_accident")).unwrap();
+
+    db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db)).unwrap();
+
+    let workstream_rows: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM matter_workstreams WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(workstream_rows, 0, "matter_workstreams must cascade-delete with its matter");
 }

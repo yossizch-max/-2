@@ -1,11 +1,11 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
-  "regenerated_at": "2026-08-25",
-  "regenerated_against_commit": "16a31b31a97b1df491c10266650c51c49b77bde8",
+  "regenerated_at": "2026-08-26",
+  "regenerated_against_commit": "fe239222a785f480dc093532c4121b2e0631995f",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
-  "file_count": 92,
+  "file_count": 95,
   "files": [
     {
       "path": ".github/workflows/windows-release-gate.yml",
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 8510,
-      "sha256": "412253256da714a357304bd6a4550a88d5c0b49a40cd78031bb644ab4ddcdca2"
+      "size": 10906,
+      "sha256": "ce8415367759a9a34c10e4891e54b6355a0e6f2c8280df71cb0a7048c820435a"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 934,
-      "sha256": "154d10e0420633bd25bab3e66954e71db70ca0524736ddfcc7c9a657f27f4448"
+      "size": 1024,
+      "sha256": "969e5d255405b0d5c5c77790915e7d62679f9f8a6c3562f536aa4e40f8609d06"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "35e6ff2bc2944c23a24cd0611e2c00ec77c938f032e9308b76341ced66d8b2ae"
+      "sha256": "416c61469d5dfd9ed9c42405576d53c7e541ec9848f10b6232f331962565ec84"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 18249,
-      "sha256": "fb128d0079da0b82a9a62b7fc04cce89ef4553a9e203d9665e39eb823d344234"
+      "size": 19676,
+      "sha256": "06a9a8d0257010dbb1f852db7a8a38a5a23dc7772012527e9f6974c263905b3a"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 61618,
-      "sha256": "3349d362ab72a93a771ad64655c7aadbb74f83cf2316fa9b832cbcc45f8127f0"
+      "size": 65517,
+      "sha256": "ca58edef6006bda75013b70a692158f70c6e6902102c65d1c93a388a6a519578"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -119,8 +119,8 @@
     },
     {
       "path": "scripts/static-qa.mjs",
-      "size": 2217,
-      "sha256": "db05b3d01f10ba483c098c963c5353f4677fea0eb33fd49650f3dbdc707a68c5"
+      "size": 2386,
+      "sha256": "290d11bee2fad37e52e28350f38983739ed6316d55be6841de80ead187af57e5"
     },
     {
       "path": "scripts/vendor-ocr-runtime.ps1",
@@ -188,6 +188,11 @@
       "sha256": "055164ca9c0fff3c901ed2402dfcd1a508d8151f3cb7b9bf34ba8736c2ed0150"
     },
     {
+      "path": "src-tauri/migrations/004_matter_workstreams_v15.sql",
+      "size": 1095,
+      "sha256": "c5954367c5d2f78490af16f8492ff08dc2b153e64b007c1e90daf77541e8ea4b"
+    },
+    {
       "path": "src-tauri/resources/ocr/README.md",
       "size": 640,
       "sha256": "9cbb7dfec5f41b051e1e9877db2c44fbcf60a6d26e303f4676dbe4912b1b8792"
@@ -219,8 +224,8 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "size": 76850,
-      "sha256": "6b4fc1792a88b1157cd30c9636e2ad08ec788bc6a8e5f6c653d5536e4796629b"
+      "size": 78833,
+      "sha256": "864647207642cdc44d1f5b482dd433b7385ea22802589d751b8cfe2b37950ddb"
     },
     {
       "path": "src-tauri/src/damage.rs",
@@ -229,8 +234,8 @@
     },
     {
       "path": "src-tauri/src/db.rs",
-      "size": 6256,
-      "sha256": "90e8c4b8c0d3fa7f5c14e238f783ca478c700ecf63ec259472a9f3496d7606a8"
+      "size": 8007,
+      "sha256": "454ebed25ae58afc9478632c68ce001fca4250240da37d3e9ac7f44126a67d9c"
     },
     {
       "path": "src-tauri/src/error.rs",
@@ -249,8 +254,8 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 71007,
-      "sha256": "eac2bce08e1455b6da2662efad6051e3f8e978b31379cab0016f587980f467be"
+      "size": 76966,
+      "sha256": "80a7d9b10142cdb1e887904533b6c364e33576bf3412474ecc40734244a15f12"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
@@ -264,8 +269,8 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "size": 5251,
-      "sha256": "78a999c2831143164cc930c2d5e59989d0d4e317b52c5f2e746ef4c48c69dad2"
+      "size": 5363,
+      "sha256": "fd05dc8c1e359fb83af1cef4fdeac3f489647b3e2f55676344320b637a802889"
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -279,8 +284,8 @@
     },
     {
       "path": "src-tauri/src/models.rs",
-      "size": 2049,
-      "sha256": "d3145e8cf6bb90d66efae1c8afad558965ea468157b4e388c9f4fc577d0a095a"
+      "size": 2319,
+      "sha256": "51be56b3cbc016da92d5beb593a5825a5a9c6352f75cfe5935338cfc5d0c0e23"
     },
     {
       "path": "src-tauri/src/scanner.rs",
@@ -301,6 +306,11 @@
       "path": "src-tauri/src/source_snapshot.rs",
       "size": 2977,
       "sha256": "b6ee462be691c992911fd7d2d0f44e7b4fe86d40679a7ad2cd42999fa8b48be7"
+    },
+    {
+      "path": "src-tauri/src/workstreams.rs",
+      "size": 6038,
+      "sha256": "009b614b46c83618c5833a9a00e328982ca910620098363ff37a68c16aa3a88b"
     },
     {
       "path": "src-tauri/tauri.conf.json",
@@ -344,8 +354,8 @@
     },
     {
       "path": "src/lib/ipc.ts",
-      "size": 9277,
-      "sha256": "1dafe9ddb18935515628a956f539f3bcba519c45896bc9243da3234183cb28eb"
+      "size": 9493,
+      "sha256": "69b871eda52a5cdf725750c58729374a08153d53085c228b3d7b8b7a7f64996c"
     },
     {
       "path": "src/main.tsx",
@@ -388,6 +398,11 @@
       "sha256": "2f732abd0ecd7fe4336bc6f498a5a419befcf60951800169929d400709e5e478"
     },
     {
+      "path": "src/matter/WorkstreamsTab.tsx",
+      "size": 2049,
+      "sha256": "80e5bed80ac77e27a360337e414e1386e9aee26b0b0cafe74a14f7900c1294df"
+    },
+    {
       "path": "src/pages/AISettingsPage.tsx",
       "size": 4364,
       "sha256": "6944824d640cc97c8dc196c027e8102d58b8cad67406c53ea6a5db22434e5677"
@@ -409,8 +424,8 @@
     },
     {
       "path": "src/pages/MatterWorkspace.tsx",
-      "size": 5002,
-      "sha256": "883bdd84a4849c3d2b3fd2c6ddfeb97e17988c99680035d97e4593da974cecfc"
+      "size": 5470,
+      "sha256": "f706ff24b0cafc081374bc6f63c85407106b7d9f356d963c2fcd5588ebb0ec25"
     },
     {
       "path": "src/pages/MattersPage.tsx",
@@ -449,8 +464,8 @@
     },
     {
       "path": "src/types.ts",
-      "size": 7028,
-      "sha256": "92e519b034987ba9d24e79b53278d513861661d5e46155987d5b3669c7e985e8"
+      "size": 7880,
+      "sha256": "0dadd351871a07eb58867feba18d8e3eb50193171831885971ae4acd19933f3b"
     },
     {
       "path": "tsconfig.app.json",

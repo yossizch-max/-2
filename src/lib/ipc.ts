@@ -28,6 +28,8 @@ export const commands = {
   add_matter_party: (payload:Record<string,unknown>={}) => call("add_matter_party",payload),
   update_matter_party: (payload:Record<string,unknown>={}) => call("update_matter_party",payload),
   delete_matter_party: (payload:Record<string,unknown>={}) => call("delete_matter_party",payload),
+  list_matter_workstreams: (payload:Record<string,unknown>={}) => call("list_matter_workstreams",payload),
+  update_matter_workstream: (payload:Record<string,unknown>={}) => call("update_matter_workstream",payload),
   list_documents: (payload:Record<string,unknown>={}) => call("list_documents",payload),
   get_document: (payload:Record<string,unknown>={}) => call("get_document",payload),
   list_document_versions: (payload:Record<string,unknown>={}) => call("list_document_versions",payload),

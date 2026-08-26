@@ -251,3 +251,23 @@ Legal Ruleset; B4's ledger items should follow a `draft → verified → superse
 lifecycle where a correction supersedes rather than silently edits; B5 splits into
 B5a (a focused metadata/FTS/neighbor-expansion retrieval pipeline) before B5b (AI →
 ledger proposals), instead of reusing the existing wide `plan_context` unchanged.
+
+## Phase B, milestone B2 — Workstreams + Matter Packs (2026-08-25)
+
+Second milestone of the roadmap: a `matter_workstreams` table (medical/liability/wage/
+insurance/BTL/negotiation/litigation, each `not_applicable`/`not_started`/`active`/
+`blocked`/`done`), auto-seeded from a matter's case type via a new
+`workstreams::reconcile` function - one idempotent, non-destructive pass that handles
+seeding a brand-new matter, backfilling a pre-B2 matter with zero rows, and upgrading
+only the still-`not_applicable` defaults when a matter's case type later changes,
+never touching a workstream already `not_started`/`active`/`blocked`/`done`.
+`create_matter` (now transactional for the first time) and `update_matter` (which now
+reads the old case type before overwriting it, to detect a real change) both call it;
+`list_matter_workstreams` also calls it first as read-repair. Kind/status are
+Rust-only validated, matching `matter_profile.rs`'s own pattern. Matter Pack defaults
+are office-workflow defaults, not legal determinations. New "מסלולי עבודה" tab in
+`MatterWorkspace.tsx` rather than another `OverviewTab` panel (already dense after
+B1); the edit-matter modal gained a case-type selector so a lawyer can actually trigger
+a case-type change. See `docs/RELEASE_GATES.md`'s "Phase B, milestone B2" section for
+the full writeup. B3–B6 remain deliberately unattempted, each still pending its own
+planning pass.

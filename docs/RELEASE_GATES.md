@@ -46,8 +46,12 @@ client ever depended on its shape) prompted renaming two fields for room to grow
 (`primary_event_date`/`primary_court_name`), replacing a single contact-details blob
 with structured party fields, and widening/relabeling the case-type taxonomy (see
 "Phase B, milestone B1" below for the full writeup), confirmed on real Windows CI at
-run #16, commit `6e89cd0`. What's left needs a human on a real Windows machine with a
-fresh installer: real OCR, real AI provider calls, and DOCX export, which doesn't
+run #16, commit `6e89cd0`. B2 (Workstreams + Matter Packs — per-matter status tracks
+auto-seeded from case type, reconciled non-destructively on change) is implemented (see
+"Phase B, milestone B2" below), **but not yet reconfirmed on Windows CI** — that run is
+still needed before Gate C/E can be called current again. What's left needs a human on
+a real Windows machine with a fresh installer: real OCR, real AI provider calls, and
+DOCX export, which doesn't
 exist in this reconstruction yet.**
 
 **This is still not a client-ready release.** An unsigned installer from a
@@ -566,6 +570,59 @@ Windows CI at [run #15](https://github.com/yossizch-max/-2/actions/runs/32892388
 65/65 tests passed on the real runner. The review-fix commit (`6e89cd0`) was then
 confirmed at [run #16](https://github.com/yossizch-max/-2/actions/runs/32901003830) -
 66/66 tests passed on the real runner. B1 is now fully CI-confirmed on Gate C/E.
+
+## Phase B, milestone B2 — Workstreams + Matter Packs (2026-08-25)
+
+Second milestone of the Phase B roadmap locked in by the B1 design review: per-matter
+Workstream tracks (medical/liability/wage/insurance/BTL/negotiation/litigation), each
+with a status (`not_applicable`/`not_started`/`active`/`blocked`/`done`), auto-seeded
+from the matter's case type and reconciled - never destructively - when the case type
+later changes. Planned via `EnterPlanMode` (an Explore pass first confirmed
+`create_matter` had no existing "seed child rows on parent creation" precedent to
+reuse, `update_matter` overwrote `matter_type` blind with no prior read of the old
+value, and `OverviewTab.tsx` was already dense enough after B1 that a dedicated tab -
+not another panel - was the right call for this milestone's UI).
+
+- **New migration `004_matter_workstreams_v15.sql`**: one `matter_workstreams` table
+  (`matter_id`, `kind`, `status`, `notes`), `UNIQUE(matter_id,kind)`. No DB `CHECK` on
+  `kind`/`status` - validated in `src-tauri/src/workstreams.rs` only, the same pattern
+  `matter_profile.rs` already uses.
+- **`workstreams::reconcile(conn, matter_id, case_type)`** is one function serving all
+  three cases with a single idempotent, non-destructive pass: `INSERT ... ON
+  CONFLICT(matter_id,kind) DO NOTHING` seeds any of the 7 kinds not yet present
+  (`not_started` if the case type's default pack includes it, else
+  `not_applicable`), then a second pass flips an existing `not_applicable` row to
+  `not_started` only if the *new* case type's defaults now include it - a workstream
+  already at `not_started`/`active`/`blocked`/`done` is never touched. This one
+  function handles a brand-new matter (full seed), a case-type change on an existing
+  matter (only the second pass can fire), and a pre-B2 matter with zero workstream
+  rows (full backfill) identically.
+- **`create_matter`** is now wrapped in `conn.transaction()` (it had none before) and
+  calls `reconcile` right after its `INSERT`, so a matter is never left without its
+  workstreams. **`update_matter`** now `SELECT`s the old `matter_type` before its
+  `UPDATE` (it previously overwrote blind via `coalesce`) and calls `reconcile` only
+  when the value actually changed. **`list_matter_workstreams`** calls `reconcile`
+  first (read-repair) before listing - the one `list_*` command that legitimately
+  needs a write, documented as such - so a pre-B2 matter gets backfilled transparently
+  on first view with no migration/backfill script needed.
+- Matter Pack defaults (which kinds are "on" per case type) are office-workflow
+  defaults, not legal determinations, and stay freely overridable per matter.
+- New "מסלולי עבודה" tab in `MatterWorkspace.tsx` (`WorkstreamsTab.tsx`) rather than
+  another `OverviewTab` panel; the existing edit-matter modal gained a case-type
+  `<select>` so a lawyer can actually trigger the reconcile-on-change path (it
+  previously had no way to change a matter's case type at all after creation).
+
+9 new backend tests (seeding, reconcile-never-touches-an-active-workstream on a
+case-type change, backfill-via-list on a pre-B2 matter, kind/status validation,
+cascade delete, plus 3 pure unit tests for the allowlists/defaults) - 75/75 total.
+`cargo check/test --locked`, `npm run build`, `contract:check` (94/94, no drift),
+`qa:static` (now also checking `oneTableInMatterWorkstreams`) all pass. Migration
+re-verified idempotent via direct sqlite3 (applied 3x): 41 tables, 28 indexes, 37
+triggers, `user_version=15`, integrity ok, `fk_check` clean.
+
+**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
+can be called current on Gate C/E. B3-B6 remain deliberately unattempted, each still
+pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review
 - source snapshot created before extraction — `extraction.rs::extract_document` calls
