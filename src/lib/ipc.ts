@@ -72,6 +72,7 @@ export const commands = {
   plan_ai_context: (payload:Record<string,unknown>={}) => call("plan_ai_context",payload),
   run_ai_capability: (payload:Record<string,unknown>={}) => call("run_ai_capability",payload),
   get_ai_run: (payload:Record<string,unknown>={}) => call("get_ai_run",payload),
+  list_ai_proposals: (payload:Record<string,unknown>={}) => call("list_ai_proposals",payload),
   review_ai_proposal: (payload:Record<string,unknown>={}) => call("review_ai_proposal",payload),
   list_verified_facts: (payload:Record<string,unknown>={}) => call("list_verified_facts",payload),
   verify_fact: (payload:Record<string,unknown>={}) => call("verify_fact",payload),

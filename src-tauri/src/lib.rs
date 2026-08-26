@@ -1,4 +1,5 @@
 mod ai;
+mod ai_review;
 mod authorities;
 mod commands;
 mod damage;
@@ -117,6 +118,7 @@ pub fn run() {
             commands::plan_ai_context,
             commands::run_ai_capability,
             commands::get_ai_run,
+            ai_review::list_ai_proposals,
             commands::review_ai_proposal,
             commands::list_verified_facts,
             commands::verify_fact,

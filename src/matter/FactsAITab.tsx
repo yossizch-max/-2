@@ -2,15 +2,15 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
-import type { AiProfile, AiProposal, AiRun, VerifiedFact } from "../types";
+import type { AiProfile, AiProposal, VerifiedFact } from "../types";
 
 type Capability = "extract_facts" | "extract_medical_event" | "extract_wage_record" | "extract_liability_fact";
 
 const CAPABILITIES: Array<{value: Capability; label: string; buttonLabel: string; placeholder: string}> = [
-  {value: "extract_facts", label: "עובדה כללית", buttonLabel: "הצע עובדה מאומתת", placeholder: "לדוגמה: שבר בכף היד"},
-  {value: "extract_medical_event", label: "אירוע רפואי", buttonLabel: "הצע אירוע רפואי", placeholder: "לדוגמה: אשפוז, אבחנה, טיפול"},
-  {value: "extract_wage_record", label: "רשומת שכר", buttonLabel: "הצע רשומת שכר", placeholder: "לדוגמה: תלוש שכר, מעסיק, היעדרות"},
-  {value: "extract_liability_fact", label: "עובדת חבות", buttonLabel: "הצע עובדת חבות", placeholder: "לדוגמה: עדות, דו\"ח משטרה, תאונה"},
+  {value: "extract_facts", label: "עובדה כללית", buttonLabel: "הצע עובדה לבדיקה", placeholder: "לדוגמה: שבר בכף היד"},
+  {value: "extract_medical_event", label: "אירוע רפואי", buttonLabel: "הצע אירועים רפואיים", placeholder: "לדוגמה: אשפוז, אבחנה, טיפול"},
+  {value: "extract_wage_record", label: "רשומת שכר", buttonLabel: "הצע רשומות שכר", placeholder: "לדוגמה: תלוש שכר, מעסיק, היעדרות"},
+  {value: "extract_liability_fact", label: "עובדת חבות", buttonLabel: "הצע עובדות חבות", placeholder: "לדוגמה: עדות, דו\"ח משטרה, תאונה"},
 ];
 
 const PROPOSAL_KIND_LABELS: Record<string, string> = {
@@ -32,6 +32,12 @@ function formatMoney(cents?: number) {
 
 function approvalButtonLabel(kind: string) {
   return kind === "extract_facts" ? "אשר → צור עובדה מאומתת" : "אשר → צור טיוטת פנקס";
+}
+
+function proposalTone(status: string): "ok" | "risk" | "warn" {
+  if (status === "approved") return "ok";
+  if (status === "rejected") return "risk";
+  return "warn";
 }
 
 function StructuredPreview({proposal}:{proposal:AiProposal}) {
@@ -71,21 +77,19 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const {data:profiles}=useCommand(
     ()=>commands.get_ai_settings() as Promise<AiProfile[]>, []
   );
+  const {data:proposals,loading:queueLoading,error:queueError,reload:reloadQueue}=useCommand(
+    ()=>commands.list_ai_proposals({matterId}) as Promise<AiProposal[]>, [matterId]
+  );
   const enabledProfiles=profiles?.filter(p=>p.enabled)??[];
 
   const [capability,setCapability]=useState<Capability>("extract_facts");
   const [profileId,setProfileId]=useState("");
   const [query,setQuery]=useState("");
   const [egressApproved,setEgressApproved]=useState(false);
-  const [runId,setRunId]=useState<string|null>(null);
   const [busy,setBusy]=useState(false);
   const [runError,setRunError]=useState<string|null>(null);
   const [reviewingId,setReviewingId]=useState<string|null>(null);
-
-  const {data:run,loading:runLoading,error:runFetchError,reload:reloadRun}=useCommand(
-    ()=>runId ? commands.get_ai_run({runId}) as Promise<AiRun> : Promise.resolve(undefined),
-    [runId]
-  );
+  const [lastRunId,setLastRunId]=useState<string|null>(null);
 
   const selectedProfile=enabledProfiles.find(p=>p.id===profileId);
   const selectedCapability=CAPABILITIES.find(c=>c.value===capability)??CAPABILITIES[0];
@@ -101,22 +105,23 @@ export function FactsAITab({matterId}:{matterId:string}) {
 
   const runAi=async()=>{
     if(!profileId)return;
-    setBusy(true);setRunError(null);
+    setBusy(true);setRunError(null);setLastRunId(null);
     try{
       const res=await commands.run_ai_capability({
         matterId, capability, profileId, externalEgressApproved:egressApproved,
         query: query.trim()||undefined
       }) as {runId:string};
-      setRunId(res.runId);
+      setLastRunId(res.runId);
+      reloadQueue();
     }catch(e){ setRunError(String(e)); }
     finally{ setBusy(false); }
   };
 
-  const review=async(proposalId:string,decision:"approved"|"rejected"|"needs_revision")=>{
+  const review=async(proposalId:string,decision:"approved"|"rejected")=>{
     setReviewingId(proposalId);setRunError(null);
     try{
       await commands.review_ai_proposal({proposalId,decision});
-      reloadRun();
+      reloadQueue();
       if(decision==="approved")reload();
     }catch(e){ setRunError(String(e)); }
     finally{ setReviewingId(null); }
@@ -136,7 +141,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
     </section>
     <section className="workspace-card">
       <span className="eyebrow">AI REVIEW</span><h2>הצעות לבדיקה</h2>
-      <p className="quiet">AI מציע בלבד; האישור נשאר פעולה של עורך דין.</p>
+      <p className="quiet">AI מציע בלבד; הצעות נשמרות בתיק עד שהן מאושרות או נדחות.</p>
 
       {enabledProfiles.length===0 && <p className="quiet">אין ספק AI פעיל. יש להגדיר ולהפעיל ספק בעמוד ה-AI תחילה.</p>}
       {enabledProfiles.length>0 && <>
@@ -158,19 +163,16 @@ export function FactsAITab({matterId}:{matterId:string}) {
       </>}
 
       {runError && <p className="quiet">שגיאה: {runError}</p>}
-      {runId && runLoading && <p className="quiet">טוען הרצה...</p>}
-      {runId && runFetchError && <p className="quiet">שגיאה: {runFetchError}</p>}
-      {run && <div style={{marginTop:14}}>
-        <div className="header-actions">
-          <StatusBadge tone={run.status==="completed"?"ok":run.status==="failed"?"risk":"warn"}>{run.status}</StatusBadge>
-          <span className="quiet">{run.proposals.length} הצעות</span>
-        </div>
-        {run.proposals.length===0 && run.status==="completed" &&
-          <p className="quiet">ה-AI לא הציע עובדות מהמקורות הזמינים בתיק זה.</p>}
-        {run.proposals.map(p=><div className="proposal" key={p.id}>
+      {lastRunId && !runError && <p className="quiet">הרצת AI הושלמה · {lastRunId.slice(0,12)}</p>}
+      {queueLoading && <p className="quiet">טוען תור בדיקה...</p>}
+      {queueError && <p className="quiet">שגיאה בטעינת תור הבדיקה: {queueError}</p>}
+      {!queueLoading && !queueError && proposals?.length===0 && <p className="quiet">אין עדיין הצעות AI בתיק זה.</p>}
+      {proposals && <div style={{marginTop:14}}>
+        <div className="header-actions"><span className="quiet">{proposals.length} הצעות שמורות בתיק</span></div>
+        {proposals.map(p=><div className="proposal" key={p.id}>
           <div className="header-actions">
             <strong>{PROPOSAL_KIND_LABELS[p.proposalKind]??p.proposalKind}</strong>
-            <StatusBadge tone={p.status==="approved"?"ok":p.status==="rejected"?"risk":"warn"}>{p.status}</StatusBadge>
+            <StatusBadge tone={proposalTone(p.status)}>{p.status}</StatusBadge>
           </div>
           <StructuredPreview proposal={p}/>
           {p.structured.explanation && <p className="quiet">{p.structured.explanation}</p>}
@@ -184,10 +186,9 @@ export function FactsAITab({matterId}:{matterId:string}) {
           </div>}
           {p.status==="pending" && <div className="proposal-actions">
             <button className="primary-lite" disabled={reviewingId===p.id} onClick={()=>review(p.id,"approved")}>{approvalButtonLabel(p.proposalKind)}</button>
-            <button disabled={reviewingId===p.id} onClick={()=>review(p.id,"needs_revision")}>דורש תיקון</button>
             <button disabled={reviewingId===p.id} onClick={()=>review(p.id,"rejected")}>דחה</button>
           </div>}
-          {p.status!=="pending" && <p className="quiet">{p.reviewNote}</p>}
+          {p.status!=="pending" && p.reviewNote && <p className="quiet">{p.reviewNote}</p>}
         </div>)}
       </div>}
     </section>
