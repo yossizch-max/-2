@@ -198,50 +198,46 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             .cloned()
             .collect();
 
-        let mut open_tasks = Vec::new();
-        {
+        let open_tasks = {
             let mut stmt = conn.prepare(
                 "SELECT id,title,due_at FROM tasks WHERE matter_id=?1 AND status='open'
                  ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,due_at,id",
             )?;
-            open_tasks = stmt
-                .query_map([matter_id], |r| {
-                    let due_at: Option<String> = r.get(2)?;
-                    Ok(TaskSignal {
-                        id: r.get(0)?,
-                        title: r.get(1)?,
-                        days_until: due_at.as_deref().and_then(|v| days_until(v, today)),
-                        due_at,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-        }
+            stmt.query_map([matter_id], |r| {
+                let due_at: Option<String> = r.get(2)?;
+                Ok(TaskSignal {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    days_until: due_at.as_deref().and_then(|v| days_until(v, today)),
+                    due_at,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
         let overdue_tasks: Vec<TaskSignal> = open_tasks
             .iter()
             .filter(|t| t.days_until.is_some_and(|d| d < 0))
             .cloned()
             .collect();
 
-        let mut open_waiting = Vec::new();
-        {
+        let open_waiting = {
             let mut stmt = conn.prepare(
                 "SELECT id,party_label,item_label,follow_up_at FROM waiting_for
                  WHERE matter_id=?1 AND status='open'
                  ORDER BY CASE WHEN follow_up_at IS NULL THEN 1 ELSE 0 END,follow_up_at,id",
             )?;
-            open_waiting = stmt
-                .query_map([matter_id], |r| {
-                    let follow_up_at: Option<String> = r.get(3)?;
-                    Ok(WaitingSignal {
-                        id: r.get(0)?,
-                        party_label: r.get(1)?,
-                        item_label: r.get(2)?,
-                        days_until: follow_up_at.as_deref().and_then(|v| days_until(v, today)),
-                        follow_up_at,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-        }
+            stmt.query_map([matter_id], |r| {
+                let follow_up_at: Option<String> = r.get(3)?;
+                Ok(WaitingSignal {
+                    id: r.get(0)?,
+                    party_label: r.get(1)?,
+                    item_label: r.get(2)?,
+                    days_until: follow_up_at.as_deref().and_then(|v| days_until(v, today)),
+                    follow_up_at,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
         let overdue_waiting: Vec<WaitingSignal> = open_waiting
             .iter()
             .filter(|w| w.days_until.is_some_and(|d| d < 0))
@@ -264,8 +260,15 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             [matter_id],
             |r| r.get(0),
         )?;
+        // Extraction state belongs to document_versions, not documents. Count a
+        // document at most once and only from its latest version so an old historical
+        // stale/blocked version cannot keep depressing health after a successful re-run.
         let documents_needing_attention: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM documents WHERE matter_id=?1 AND extraction_state IN ('stale','blocked')",
+            "SELECT COUNT(*) FROM documents d
+             WHERE d.matter_id=?1
+               AND (SELECT v.extraction_state FROM document_versions v
+                    WHERE v.document_id=d.id AND v.matter_id=d.matter_id
+                    ORDER BY v.created_at DESC,v.id DESC LIMIT 1) IN ('stale','blocked')",
             [matter_id],
             |r| r.get(0),
         )?;
