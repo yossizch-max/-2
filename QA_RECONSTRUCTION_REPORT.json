@@ -2,11 +2,11 @@
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "tested_at": "2026-08-25",
   "regenerated_note": "This file was stale from the 2026-08-24 initial import (61 commands, 31 tables, 25 wired/36 stub) through many subsequent commits before being regenerated here against actually-current, actually-run checks. Treat any future drift the same way this drift was found: by an independent check against the real source, not by trusting this file.",
-  "regenerated_against_parent_commit": "fe239222a785f480dc093532c4121b2e0631995f",
+  "regenerated_against_parent_commit": "0be99a9b469de0678a4bcb632ae6d60832dcbda9",
   "reconstruction_not_byte_for_byte": true,
   "frontend_backend_contract": {
-    "frontend_invokes": 94,
-    "rust_commands": 94,
+    "frontend_invokes": 96,
+    "rust_commands": 96,
     "missing": [],
     "extra": [],
     "result": "PASS",
@@ -25,6 +25,7 @@
     "fiveTablesInLegalRulesInfra": true,
     "twoTablesInMatterProfile": true,
     "oneTableInMatterWorkstreams": true,
+    "oneTableInMatterRequirements": true,
     "ocrSourceMismatch": true,
     "ocrReverify": true,
     "docxDocumentAnchoring": true,
@@ -36,9 +37,9 @@
     "verified_by": "node scripts/static-qa.mjs"
   },
   "database": {
-    "user_version": 15,
-    "tables": 41,
-    "indexes": 28,
+    "user_version": 16,
+    "tables": 42,
+    "indexes": 29,
     "triggers": 37,
     "integrity_check": "ok",
     "foreign_key_check": [],
@@ -57,24 +58,25 @@
     "engine_run_status_reversal_blocked": true,
     "matter_profile_and_parties_cascade_delete_with_matter": true,
     "matter_workstreams_cascade_delete_with_matter": true,
-    "note": "41 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13) + 2 matter-profile tables (003_matter_profile_v14.sql, additive, PRAGMA user_version=14) + 1 matter-workstreams table (004_matter_workstreams_v15.sql, additive, PRAGMA user_version=15) - matters itself is never ALTERed, see each migration's own doc comment"
+    "matter_requirements_cascade_delete_with_matter": true,
+    "note": "42 = 33 base tables (001_schema_v12.sql, unchanged) + 5 legal-rules-infrastructure tables (002_legal_rules_infrastructure_v13.sql, additive, PRAGMA user_version=13) + 2 matter-profile tables (003_matter_profile_v14.sql, additive, PRAGMA user_version=14) + 1 matter-workstreams table (004_matter_workstreams_v15.sql, additive, PRAGMA user_version=15) + 1 matter-requirements table (005_matter_requirements_v16.sql, additive, PRAGMA user_version=16) - matters itself is never ALTERed, see each migration's own doc comment"
   },
   "reconstructed_commands": {
-    "total": 94,
-    "wired": 94,
+    "total": 96,
+    "wired": 96,
     "fail_closed_not_yet_wired": 0,
-    "note": "All 94 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command. 17 of the 94 are the legal-rules-infrastructure commands, 6 are the Phase B milestone B1 matter-profile commands (get/save_matter_profile, list/add/update/delete_matter_party), and 2 are the new Phase B milestone B2 workstream commands (list_matter_workstreams, update_matter_workstream)."
+    "note": "All 96 commands have real handlers; docx/pdf export output kinds still return PdfConverterUnavailable by design (no converter is wired), which is intentional fail-closed behavior, not an unwired command. 17 of the 96 are the legal-rules-infrastructure commands, 6 are the Phase B milestone B1 matter-profile commands, 2 are the Phase B milestone B2 workstream commands, and 2 are the new Phase B milestone B3 requirement commands (list_matter_requirements, update_matter_requirement)."
   },
   "rust_compile": {
     "cargo_check_locked": "PASS",
-    "cargo_test_locked": "PASS (75/75)"
+    "cargo_test_locked": "PASS (86/86)"
   },
   "npm_ci": "PASS (0 vulnerabilities, npm audit --audit-level=high)",
   "windows_tauri_build": {
     "status": "PASS on a real windows-2025 GitHub Actions runner",
     "most_recent_verified_run": "https://github.com/yossizch-max/-2/actions/runs/32901003830",
     "most_recent_verified_commit": "6e89cd0cb98b3ec92f8d0cc2c98a4cd2d2e029af",
-    "note": "run #15 confirmed the Phase B milestone B1 commit as originally shaped (65/65 tests); run #16 then confirmed the design-review follow-up commit that renamed/restructured its fields (66/66 tests). B1 is fully CI-confirmed. Phase B milestone B2 (Workstreams, see phase_b_workstreams below, now 75/75 tests locally) has NOT yet had its own Windows CI run; see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
+    "note": "run #15 confirmed the Phase B milestone B1 commit as originally shaped (65/65 tests); run #16 then confirmed the design-review follow-up commit that renamed/restructured its fields (66/66 tests). B1 is fully CI-confirmed. Phase B milestone B2 (Workstreams, run #17 queued/in progress as of this writing) and B3 (Missing Evidence Matrix, this commit, now 86/86 tests locally) have NOT yet been confirmed on Windows CI; see docs/RELEASE_GATES.md for current status before trusting this as proof the exact current commit builds"
   },
   "ocr_third_party_runtime": {
     "status": "BUNDLED_AND_VERIFIED",
@@ -101,6 +103,10 @@
   "phase_b_workstreams": {
     "status": "MILESTONE_B2_COMPLETE_LOCALLY_NOT_YET_CI_CONFIRMED",
     "detail": "Second milestone (B2) of the Phase B roadmap: a matter_workstreams table (medical/liability/wage/insurance/btl/negotiation/litigation, each not_applicable/not_started/active/blocked/done) auto-seeded from a matter's case type at creation via a new workstreams::reconcile function, called inside the same transaction as create_matter's INSERT (now wrapped in conn.transaction() for the first time) and update_matter's UPDATE when matterType actually changes (update_matter now SELECTs the old value first to detect a real change). reconcile is idempotent and non-destructive: it inserts any of the 7 kinds not yet present, then upgrades an existing not_applicable row to not_started only if the new case type's defaults include it - an already not_started/active/blocked/done workstream is never touched. list_matter_workstreams calls reconcile first (read-repair) before listing, so a pre-B2 matter with zero workstream rows gets backfilled transparently on first view. Kind/status are Rust-only validated (no DB CHECK), matching matter_profile.rs's own pattern. Matter Pack defaults are office-workflow defaults, not legal determinations - freely overridable per matter. New tab 'מסלולי עבודה' in MatterWorkspace.tsx (WorkstreamsTab.tsx); a case-type <select> was added to the existing edit-matter modal so a lawyer can actually trigger a case-type change. 9 new backend tests (seeding, reconcile-never-touches-active, backfill-on-list, kind/status validation, cascade delete, plus 3 pure unit tests) - 75/75 total. cargo check/test --locked, npm run build, contract:check (94/94, no drift), qa:static (now also checking oneTableInMatterWorkstreams) all pass. Migration re-verified idempotent via direct sqlite3 (applied 3x): 41 tables, 28 indexes, 37 triggers, user_version=15, integrity ok, fk_check clean. This commit has not yet had its own Windows CI run. B3-B6 remain deliberately unattempted, each still pending its own planning pass."
+  },
+  "phase_b_requirements": {
+    "status": "MILESTONE_B3_COMPLETE_LOCALLY_NOT_YET_CI_CONFIRMED",
+    "detail": "Third milestone (B3) of the Phase B roadmap: a matter_requirements checklist table (13 typical document keys - id_document/police_report/medical_records_initial/medical_records_full_file/wage_stubs/employer_incident_report/witness_statements/insurance_policy/btl_forms/vehicle_photos/expert_opinion/contract_document/correspondence_records - each not_applicable/not_collected/requested/collected/stale) built to the exact same shape and reconcile idiom as B2's matter_workstreams: one idempotent, non-destructive requirements::reconcile function called from create_matter, from update_matter on a real case-type change, and as read-repair in list_matter_requirements. A key's priority (recommended/required_by_office_policy/optional/not_applicable) is computed at read time from the matter's current case type via a static Rust map - never persisted, never phrased as statutory ('the law requires'); these are office-workflow recommendations only, and freely overridable per matter. Deliberately no linked_document_id column in this pass - wiring a requirement to a specific document (an 'open source' button, a staleness cascade off scanner.rs) has no consumer yet and would be a speculative, unused column; status stays entirely lawyer-driven, including 'stale', since what that should mean for a checklist item isn't yet defined by real usage. New tab 'ראיות חסרות' in MatterWorkspace.tsx (MissingEvidenceTab.tsx), structurally identical to WorkstreamsTab.tsx. 11 new backend tests (seeding, reconcile-never-touches-collected, backfill-on-list, key/status validation, cascade delete, plus unit tests including a priority-lookup check) - 86/86 total. cargo check/test --locked, npm run build, contract:check (96/96, no drift), qa:static (now also checking oneTableInMatterRequirements) all pass. Migration re-verified idempotent via direct sqlite3 (applied 3x): 42 tables, 29 indexes, 37 triggers, user_version=16, integrity ok, fk_check clean. This commit has not yet had its own Windows CI run. B4-B6 remain deliberately unattempted, each still pending its own planning pass."
   },
   "release_verdict": "DEVELOPER_RECONSTRUCTION_ONLY_NO_CLIENT_USE",
   "release_verdict_detail": "See docs/RELEASE_GATES.md for the authoritative, actively-maintained gate-by-gate status. This file is a point-in-time snapshot, not a live source of truth."

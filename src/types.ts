@@ -215,3 +215,39 @@ export type Workstream = {
   id: string; matterId: string; kind: string; status: string;
   notes?: string | null; createdAt: string; updatedAt: string;
 };
+
+export const REQUIREMENT_KEYS: Array<{value: string; label: string}> = [
+  {value: "id_document", label: "תעודת זהות"},
+  {value: "police_report", label: "דו\"ח משטרה"},
+  {value: "medical_records_initial", label: "מסמכים רפואיים ראשוניים"},
+  {value: "medical_records_full_file", label: "תיק רפואי מלא"},
+  {value: "wage_stubs", label: "תלושי שכר"},
+  {value: "employer_incident_report", label: "דיווח מעסיק על התאונה"},
+  {value: "witness_statements", label: "הודעות עדים"},
+  {value: "insurance_policy", label: "פוליסת ביטוח"},
+  {value: "btl_forms", label: "טפסי מל\"ל"},
+  {value: "vehicle_photos", label: "תמונות רכב/זירה"},
+  {value: "expert_opinion", label: "חוות דעת מומחה"},
+  {value: "contract_document", label: "מסמך חוזה"},
+  {value: "correspondence_records", label: "תיעוד התכתבות"},
+];
+
+export const REQUIREMENT_STATUSES: Array<{value: string; label: string}> = [
+  {value: "not_applicable", label: "לא רלוונטי"},
+  {value: "not_collected", label: "טרם נאסף"},
+  {value: "requested", label: "התבקש"},
+  {value: "collected", label: "נאסף"},
+  {value: "stale", label: "יש לרענן"},
+];
+
+export const REQUIREMENT_PRIORITIES: Array<{value: string; label: string}> = [
+  {value: "not_applicable", label: "לא רלוונטי"},
+  {value: "recommended", label: "מומלץ"},
+  {value: "required_by_office_policy", label: "נדרש לפי מדיניות המשרד"},
+  {value: "optional", label: "אופציונלי"},
+];
+
+export type MatterRequirement = {
+  id: string; matterId: string; requirementKey: string; status: string; priority: string;
+  notes?: string | null; createdAt: string; updatedAt: string;
+};

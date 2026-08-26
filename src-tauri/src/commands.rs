@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, legal_docs, legal_rules, matter_profile, models, scanner, search, security,
+    ai, authorities, damage, extraction, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
     workstreams,
     error::{AppError,AppResult}, AppState
 };
@@ -216,6 +216,7 @@ pub fn create_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
             params![id,title,internal,matter_type,now]
         )?;
         workstreams::reconcile(&tx,&id,matter_type)?;
+        requirements::reconcile(&tx,&id,matter_type)?;
         tx.commit()?;
         Ok(())
     })?;
@@ -291,6 +292,7 @@ pub fn update_matter(state: State<'_, AppState>, payload: Value) -> AppResult<Va
         if let Some(new_type)=matter_type {
             if new_type!=old_matter_type {
                 workstreams::reconcile(&tx,matter_id,new_type)?;
+                requirements::reconcile(&tx,matter_id,new_type)?;
             }
         }
         tx.commit()?;
@@ -403,6 +405,33 @@ pub fn update_matter_workstream(state: State<'_, AppState>, payload: Value) -> A
     let status=required_string(&payload,"status")?;
     let notes=payload.get("notes").and_then(Value::as_str);
     state.db.write(|conn|workstreams::update_status(conn,matter_id,kind,status,notes))?;
+    Ok(json!({"ok":true}))
+}
+
+/// Same read-repair shape as `list_matter_workstreams` (see its doc comment).
+#[tauri::command]
+pub fn list_matter_requirements(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let rows=state.db.write(|conn|{
+        let tx=conn.transaction()?;
+        let matter_type:String=tx.query_row(
+            "SELECT matter_type FROM matters WHERE id=?1",[matter_id],|r|r.get(0)
+        ).map_err(|_|AppError::NotFound("matter".into()))?;
+        requirements::reconcile(&tx,matter_id,&matter_type)?;
+        let rows=requirements::list(&tx,matter_id,&matter_type)?;
+        tx.commit()?;
+        Ok(rows)
+    })?;
+    Ok(serde_json::to_value(rows)?)
+}
+
+#[tauri::command]
+pub fn update_matter_requirement(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let requirement_key=required_string(&payload,"requirementKey")?;
+    let status=required_string(&payload,"status")?;
+    let notes=payload.get("notes").and_then(Value::as_str);
+    state.db.write(|conn|requirements::update_status(conn,matter_id,requirement_key,status,notes))?;
     Ok(json!({"ok":true}))
 }
 

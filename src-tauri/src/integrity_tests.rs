@@ -98,10 +98,18 @@
 //! backfilling a pre-B2 matter with zero rows, kind/status validation, and cascade
 //! delete. `validate_kind`/`validate_status`/`default_active_kinds` themselves are
 //! unit-tested directly in `workstreams.rs`.
+//!
+//! Phase B, milestone B3 (Missing Evidence Matrix, 2026-08-25): `requirements.rs`
+//! adds a `matter_requirements` checklist table, same shape and same non-destructive
+//! `reconcile` idiom as `workstreams.rs` (seeding, upgrade-on-case-type-change,
+//! backfill-via-list, key/status validation, cascade delete - all mirrored below).
+//! These are office-workflow checklist recommendations, never phrased as statutory.
+//! `validate_key`/`validate_status`/`default_requirements` themselves are unit-tested
+//! directly in `requirements.rs`.
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, scanner, workstreams};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, scanner, workstreams};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -1414,4 +1422,88 @@ fn deleting_a_matter_cascades_to_its_workstreams() {
         "SELECT count(*) FROM matter_workstreams WHERE matter_id=?1", [&matter_id], |r| r.get(0)
     ).map_err(AppError::Db)).unwrap();
     assert_eq!(workstream_rows, 0, "matter_workstreams must cascade-delete with its matter");
+}
+
+// --- Phase B, B3: Missing Evidence Matrix ---
+
+#[test]
+fn creating_a_matter_seeds_its_default_requirements() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B3 test: seed defaults", "traffic_accident");
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "traffic_accident")).unwrap();
+
+    let rows = db.read(|conn| requirements::list(conn, &matter_id, "traffic_accident")).unwrap();
+    assert_eq!(rows.len(), 13, "every matter must get all 13 requirement keys seeded");
+    let row_for = |key: &str| rows.iter().find(|r| r.requirement_key == key).unwrap().clone();
+    assert_eq!(row_for("id_document").status, "not_collected");
+    assert_eq!(row_for("id_document").priority, "required_by_office_policy");
+    assert_eq!(row_for("police_report").status, "not_collected");
+    assert_eq!(row_for("police_report").priority, "recommended");
+    assert_eq!(row_for("vehicle_photos").priority, "optional");
+    assert_eq!(row_for("contract_document").status, "not_applicable", "traffic_accident's default pack does not include contract_document");
+}
+
+#[test]
+fn changing_case_type_upgrades_not_applicable_requirements_without_touching_collected_ones() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B3 test: reconcile on case-type change", "civil_commercial");
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "civil_commercial")).unwrap();
+
+    // civil_commercial's default pack doesn't include medical_records_initial - manually
+    // mark it collected, so the reconcile-on-change path must never touch it.
+    db.write(|conn| requirements::update_status(conn, &matter_id, "medical_records_initial", "collected", None)).unwrap();
+
+    // medical_malpractice's default pack additionally includes medical_records_full_file -
+    // currently not_applicable on this matter, so it must flip to not_collected.
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "medical_malpractice")).unwrap();
+
+    let rows = db.read(|conn| requirements::list(conn, &matter_id, "medical_malpractice")).unwrap();
+    let row_for = |key: &str| rows.iter().find(|r| r.requirement_key == key).unwrap().clone();
+    assert_eq!(row_for("medical_records_initial").status, "collected", "an already-collected requirement must never be touched by reconcile");
+    assert_eq!(row_for("medical_records_full_file").status, "not_collected", "a newly-relevant default must be upgraded from not_applicable");
+    assert_eq!(row_for("vehicle_photos").status, "not_applicable", "a key not in the new pack either must stay not_applicable");
+}
+
+#[test]
+fn listing_requirements_backfills_a_pre_b3_matter_with_zero_rows() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B3 test: backfill", "generic_civil");
+
+    let before = db.read(|conn| requirements::list(conn, &matter_id, "generic_civil")).unwrap();
+    assert!(before.is_empty(), "a pre-B3 matter has no requirement rows yet");
+
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "generic_civil")).unwrap();
+    let after = db.read(|conn| requirements::list(conn, &matter_id, "generic_civil")).unwrap();
+    assert_eq!(after.len(), 13, "reconcile must backfill all 13 keys on first read");
+}
+
+#[test]
+fn update_matter_requirement_requires_a_known_key_and_status() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B3 test: key/status validation");
+
+    let bad_key = db.write(|conn| requirements::update_status(conn, &matter_id, "made_up_key", "collected", None));
+    assert!(bad_key.is_err(), "an unknown requirement key must be rejected");
+
+    let bad_status = db.write(|conn| requirements::update_status(conn, &matter_id, "id_document", "made_up_status", None));
+    assert!(bad_status.is_err(), "an unknown requirement status must be rejected");
+}
+
+#[test]
+fn deleting_a_matter_cascades_to_its_requirements() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter_with_type(&db, "B3 test: cascade delete", "traffic_accident");
+    db.write(|conn| requirements::reconcile(conn, &matter_id, "traffic_accident")).unwrap();
+
+    db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db)).unwrap();
+
+    let requirement_rows: i64 = db.read(|conn| conn.query_row(
+        "SELECT count(*) FROM matter_requirements WHERE matter_id=?1", [&matter_id], |r| r.get(0)
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(requirement_rows, 0, "matter_requirements must cascade-delete with its matter");
 }

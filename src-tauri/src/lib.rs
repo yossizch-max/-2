@@ -13,6 +13,7 @@ mod legal_docs;
 mod legal_rules;
 mod matter_profile;
 mod models;
+mod requirements;
 mod scanner;
 mod search;
 mod security;
@@ -72,6 +73,8 @@ pub fn run() {
             commands::delete_matter_party,
             commands::list_matter_workstreams,
             commands::update_matter_workstream,
+            commands::list_matter_requirements,
+            commands::update_matter_requirement,
             commands::list_documents,
             commands::get_document,
             commands::list_document_versions,

@@ -48,9 +48,12 @@ with structured party fields, and widening/relabeling the case-type taxonomy (se
 "Phase B, milestone B1" below for the full writeup), confirmed on real Windows CI at
 run #16, commit `6e89cd0`. B2 (Workstreams + Matter Packs — per-matter status tracks
 auto-seeded from case type, reconciled non-destructively on change) is implemented (see
-"Phase B, milestone B2" below), **but not yet reconfirmed on Windows CI** — that run is
-still needed before Gate C/E can be called current again. What's left needs a human on
-a real Windows machine with a fresh installer: real OCR, real AI provider calls, and
+"Phase B, milestone B2" below); its Windows CI run was queued right before B3 (Missing
+Evidence Matrix — the same reconcile idiom applied to a document checklist, see "Phase
+B, milestone B3" below) was also implemented on top of it. **Neither B2 nor B3 is yet
+reconfirmed on Windows CI** — that run is still needed before Gate C/E can be called
+current again. What's left needs a human on a real Windows machine with a fresh
+installer: real OCR, real AI provider calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
 
@@ -620,8 +623,60 @@ cascade delete, plus 3 pure unit tests for the allowlists/defaults) - 75/75 tota
 re-verified idempotent via direct sqlite3 (applied 3x): 41 tables, 28 indexes, 37
 triggers, `user_version=15`, integrity ok, `fk_check` clean.
 
+**Not yet reconfirmed on Windows CI** - its run (#17) was queued right before B3 landed
+on top of it; that run is still needed before this milestone can be called current on
+Gate C/E.
+
+## Phase B, milestone B3 — Missing Evidence Matrix (2026-08-25)
+
+Third milestone of the Phase B roadmap: a per-matter checklist of typical documents a
+matter of a given case type tends to need (13 keys: id_document, police_report,
+medical_records_initial, medical_records_full_file, wage_stubs,
+employer_incident_report, witness_statements, insurance_policy, btl_forms,
+vehicle_photos, expert_opinion, contract_document, correspondence_records), each with a
+status (`not_applicable`/`not_collected`/`requested`/`collected`/`stale`) a lawyer
+tracks over the matter's life. Built to the exact same shape and `reconcile` idiom as
+B2's `matter_workstreams` - the pattern worked well and needed no changes, just a
+different key set.
+
+- **New migration `005_matter_requirements_v16.sql`**: one `matter_requirements` table
+  (`matter_id`, `requirement_key`, `status`, `notes`), `UNIQUE(matter_id,
+  requirement_key)`, no DB `CHECK` (Rust-only validation, same rationale as
+  `matter_workstreams`).
+- **`requirements::reconcile`** is the same idempotent, non-destructive one-function
+  design as `workstreams::reconcile`: seeds any of the 13 keys not yet present
+  (`not_collected` if the matter's case type's default pack includes it, else
+  `not_applicable`), then upgrades an existing `not_applicable` row to `not_collected`
+  only if the *new* case type's defaults now include it - never touches a row already
+  at `not_collected`/`requested`/`collected`/`stale`. Called from the same three sites
+  as `workstreams::reconcile`: `create_matter`, `update_matter` on a real case-type
+  change, and as read-repair in the new `list_matter_requirements`.
+- A key's **priority** (`recommended`/`required_by_office_policy`/`optional`/
+  `not_applicable`) is computed at read time from the matter's *current* case type via
+  a static Rust map - never persisted, and never phrased as statutory ("the law
+  requires"); these are office-workflow recommendations only, freely overridable per
+  matter. Only an Approved Legal Ruleset could ever give a future requirement real
+  legal weight, and that's out of scope here.
+- **Deliberately no `linked_document_id` column in this pass** - wiring a requirement
+  to a specific document (an "open source" button, a staleness cascade off
+  `scanner.rs`) is a real feature but has no consumer yet; adding the column now would
+  be a speculative, unused abstraction, cheap to add later (e.g. alongside B4) once
+  something actually needs it. `status` stays entirely lawyer-driven for the same
+  reason - what `stale` should mean for a checklist item (time-based? tied to a
+  specific document version?) isn't yet defined by real usage.
+- New "ראיות חסרות" tab in `MatterWorkspace.tsx` (`MissingEvidenceTab.tsx`),
+  structurally identical to `WorkstreamsTab.tsx`.
+
+11 new backend tests (seeding, reconcile-never-touches-collected on a case-type
+change, backfill-via-list on a pre-B3 matter, key/status validation, cascade delete,
+plus unit tests including a priority-lookup check) - 86/86 total. `cargo check/test
+--locked`, `npm run build`, `contract:check` (96/96, no drift), `qa:static` (now also
+checking `oneTableInMatterRequirements`) all pass. Migration re-verified idempotent via
+direct sqlite3 (applied 3x): 42 tables, 29 indexes, 37 triggers, `user_version=16`,
+integrity ok, `fk_check` clean.
+
 **Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
-can be called current on Gate C/E. B3-B6 remain deliberately unattempted, each still
+can be called current on Gate C/E. B4-B6 remain deliberately unattempted, each still
 pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review

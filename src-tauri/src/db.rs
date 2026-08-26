@@ -21,6 +21,7 @@ impl DbState {
         conn.execute_batch(include_str!("../migrations/002_legal_rules_infrastructure_v13.sql"))?;
         conn.execute_batch(include_str!("../migrations/003_matter_profile_v14.sql"))?;
         conn.execute_batch(include_str!("../migrations/004_matter_workstreams_v15.sql"))?;
+        conn.execute_batch(include_str!("../migrations/005_matter_requirements_v16.sql"))?;
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
@@ -61,6 +62,7 @@ mod tests {
     const MIGRATION_002: &str = include_str!("../migrations/002_legal_rules_infrastructure_v13.sql");
     const MIGRATION_003: &str = include_str!("../migrations/003_matter_profile_v14.sql");
     const MIGRATION_004: &str = include_str!("../migrations/004_matter_workstreams_v15.sql");
+    const MIGRATION_005: &str = include_str!("../migrations/005_matter_requirements_v16.sql");
 
     #[test]
     fn migration_is_idempotent_across_repeated_app_launches() {
@@ -69,19 +71,21 @@ mod tests {
         conn.execute_batch(MIGRATION_002).unwrap();
         conn.execute_batch(MIGRATION_003).unwrap();
         conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
         // A real app re-runs the full schema on every launch against an
         // already-initialized database; every statement must tolerate that.
         conn.execute_batch(MIGRATION_001).unwrap();
         conn.execute_batch(MIGRATION_002).unwrap();
         conn.execute_batch(MIGRATION_003).unwrap();
         conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
         let table_count: i64 = conn.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 41);
+        assert_eq!(table_count, 42);
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(user_version, 15);
+        assert_eq!(user_version, 16);
     }
 
     #[test]
@@ -158,6 +162,35 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(workstreams_table_exists, 1);
+        let matter_survived: String = conn.query_row(
+            "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(matter_survived, "existing matter");
+    }
+
+    #[test]
+    fn a_v15_database_upgrades_cleanly_to_v16_without_touching_matters() {
+        // simulates an install that already has 001-004 applied (with real matter data)
+        // before the app is upgraded to a build that also ships 005 - requirements.rs's
+        // seeding is done in commands.rs, not in the migration itself, so this migration
+        // alone must leave pre-existing matter rows completely untouched.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        let matter_id = "m1";
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,'existing matter','generic_civil','active','intake','x','x')",
+            [matter_id],
+        ).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        let requirements_table_exists: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='matter_requirements'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(requirements_table_exists, 1);
         let matter_survived: String = conn.query_row(
             "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
         ).unwrap();

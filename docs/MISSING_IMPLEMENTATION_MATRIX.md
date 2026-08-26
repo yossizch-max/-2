@@ -271,3 +271,21 @@ B1); the edit-matter modal gained a case-type selector so a lawyer can actually 
 a case-type change. See `docs/RELEASE_GATES.md`'s "Phase B, milestone B2" section for
 the full writeup. B3–B6 remain deliberately unattempted, each still pending its own
 planning pass.
+
+## Phase B, milestone B3 — Missing Evidence Matrix (2026-08-25)
+
+Third milestone of the roadmap: a `matter_requirements` checklist table (13 typical
+document keys, each `not_applicable`/`not_collected`/`requested`/`collected`/`stale`),
+built to the exact same shape and `reconcile` idiom as B2's `matter_workstreams` -
+seeding, backfill-on-list, and upgrade-only-on-case-type-change, never touching a
+requirement already `not_collected`/`requested`/`collected`/`stale`. A key's priority
+(`recommended`/`required_by_office_policy`/`optional`) is computed at read time from a
+static Rust map, never persisted, and never phrased as statutory - these are
+office-workflow recommendations only, freely overridable per matter. Deliberately no
+`linked_document_id` column in this pass (no consumer yet - would be a speculative,
+unused abstraction) and no automatic staleness cascade (what "stale" should mean for a
+checklist item isn't yet defined by real usage) - `status` stays entirely
+lawyer-driven. New "ראיות חסרות" tab in `MatterWorkspace.tsx`
+(`MissingEvidenceTab.tsx`), structurally identical to `WorkstreamsTab.tsx`. See
+`docs/RELEASE_GATES.md`'s "Phase B, milestone B3" section for the full writeup. B4–B6
+remain deliberately unattempted, each still pending its own planning pass.
