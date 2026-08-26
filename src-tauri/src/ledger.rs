@@ -10,15 +10,23 @@
 //! Lifecycle is `draft -> verified`, correction-by-supersession, never a status
 //! mutation: a verified row (and its sources) is immutable at the DB level - see
 //! `006_matter_ledgers_v17.sql`'s triggers, which (unlike `legal_authority_passages`,
-//! a known gap) also protect the source child tables. Because that trigger family is
-//! the real integrity control, this module's `integrity_sha256` is a tamper-evidence
-//! convenience over the source grounding (detects a later swap of which sources count
-//! toward a hash a reviewer already saw), not the sole line of defense.
+//! a known gap) also protect the source child tables against UPDATE/INSERT/DELETE.
+//! `integrity_sha256` folds in the full row plus every source's page/version id and
+//! hash, ordered - a genuine snapshot of everything a lawyer verified, not just a
+//! tamper-evidence convenience over the trigger family.
 //!
 //! A correction never mutates the old verified row: `supersede`-by-creating a new row
 //! whose `supersedes_entry_id` points back at the old one. "Is this entry superseded"
 //! is computed at read time (does some OTHER verified row point at me?), matching the
 //! relevance/priority and default-workstream idiom already established in this schema.
+//! A partial unique index guarantees at most one verified successor per superseded
+//! entry - `verify_entry` also checks this in Rust first, for a clean error message.
+//!
+//! `stale` only ever moves 0->1 on a verified row (DB-enforced) - re-verifying a stale
+//! entry in place is not possible; only a fresh supersession can move it forward.
+//! Deleting a verified row or its sources directly is blocked at the DB level too,
+//! except through `with_cascade_delete_guard` - the deliberate escape hatch a whole-
+//! matter deletion must use so its cascade isn't rejected by the same trigger.
 use crate::{
     db::DbState,
     error::{AppError, AppResult},
@@ -66,6 +74,18 @@ impl LedgerKind {
             Self::Liability => "liability_fact_sources",
         }
     }
+}
+
+/// The deliberate escape hatch for a whole-matter deletion: flips `ledger_delete_guard`
+/// on for the duration of `f`, then off again regardless of outcome, so `f`'s DELETE
+/// (typically `DELETE FROM matters WHERE id=?1`) can cascade through a verified ledger
+/// entry without the delete-blocking triggers rejecting it. Any other DELETE against
+/// a verified row or its sources - anything not wrapped here - stays blocked.
+pub fn with_cascade_delete_guard<T>(conn: &Connection, f: impl FnOnce(&Connection) -> AppResult<T>) -> AppResult<T> {
+    conn.execute("UPDATE ledger_delete_guard SET active=1 WHERE id=1", [])?;
+    let result = f(conn);
+    conn.execute("UPDATE ledger_delete_guard SET active=0 WHERE id=1", [])?;
+    result
 }
 
 fn validate_supersedes(conn: &Connection, table: &str, matter_id: &str, old_entry_id: &str) -> AppResult<()> {
@@ -144,29 +164,68 @@ pub fn list_entry_sources(db: &DbState, kind: LedgerKind, matter_id: &str, entry
     })
 }
 
+/// Generic, deterministic string snapshot of every column of one row - used to fold
+/// the entry's full domain state (not just its id) into the integrity hash, without
+/// the shared engine needing per-kind knowledge of field names.
+fn row_snapshot(conn: &Connection, table: &str, entry_id: &str, matter_id: &str) -> AppResult<String> {
+    use rusqlite::types::ValueRef;
+    let mut stmt = conn.prepare(&format!("SELECT * FROM {table} WHERE id=?1 AND matter_id=?2"))?;
+    let column_count = stmt.column_count();
+    let snapshot = stmt.query_row(params![entry_id, matter_id], |row| {
+        let mut parts = Vec::with_capacity(column_count);
+        for i in 0..column_count {
+            parts.push(match row.get_ref(i)? {
+                ValueRef::Null => String::new(),
+                ValueRef::Integer(n) => n.to_string(),
+                ValueRef::Real(f) => f.to_string(),
+                ValueRef::Text(t) => String::from_utf8_lossy(t).to_string(),
+                ValueRef::Blob(_) => String::new(),
+            });
+        }
+        Ok(parts.join("|"))
+    }).map_err(|_| AppError::Validation("ledger entry not verifiable".into()))?;
+    Ok(snapshot)
+}
+
 /// Requires the entry to be `draft` with at least one source (fail closed - an
-/// unsupported entry can never verify), and re-checks verbatim containment fresh
-/// against each source's *current* page text right before flipping status - the same
-/// recheck-at-terminal-transition discipline used by `authorities::verify`,
-/// `legal_rules::approve_ruleset`, and `ai::approve_proposal`.
+/// unsupported entry can never verify), and re-checks verbatim containment *and*
+/// document-version currency fresh against each source's *current* state right before
+/// flipping status - the same recheck-at-terminal-transition discipline used by
+/// `authorities::verify`, `legal_rules::approve_ruleset`, and `ai::approve_proposal`
+/// (the latter re-checks `document_versions.stale` the same way, for the same reason:
+/// a source can sit as a draft for a while, and the cited document can change
+/// underneath it in the meantime). Also refuses to create a second verified successor
+/// for an entry that already has one (the partial unique index is the DB-level
+/// backstop for this same rule).
 pub fn verify_entry(db: &DbState, kind: LedgerKind, matter_id: &str, entry_id: &str) -> AppResult<String> {
     let table = kind.table();
     let source_table = kind.source_table();
     db.write(|conn| {
-        let status: String = conn.query_row(
-            &format!("SELECT status FROM {table} WHERE id=?1 AND matter_id=?2"),
-            params![entry_id, matter_id], |r| r.get(0),
+        let (status, supersedes_entry_id): (String, Option<String>) = conn.query_row(
+            &format!("SELECT status,supersedes_entry_id FROM {table} WHERE id=?1 AND matter_id=?2"),
+            params![entry_id, matter_id], |r| Ok((r.get(0)?, r.get(1)?)),
         ).map_err(|_| AppError::Validation("ledger entry not verifiable".into()))?;
         if status != "draft" {
             return Err(AppError::Validation("ledger entry not verifiable".into()));
         }
+        if let Some(old_id) = &supersedes_entry_id {
+            let already_superseded: i64 = conn.query_row(
+                &format!("SELECT count(*) FROM {table} WHERE matter_id=?1 AND supersedes_entry_id=?2 AND status='verified'"),
+                params![matter_id, old_id], |r| r.get(0),
+            )?;
+            if already_superseded > 0 {
+                return Err(AppError::Validation(
+                    "the entry being corrected already has a different verified successor".into()
+                ));
+            }
+        }
 
         let mut stmt = conn.prepare(&format!(
-            "SELECT document_page_id,display_quote,source_text_sha256
+            "SELECT document_page_id,document_version_id,display_quote,source_text_sha256
              FROM {source_table} WHERE matter_id=?1 AND entry_id=?2 ORDER BY id"
         ))?;
-        let sources: Vec<(String, String, String)> = stmt
-            .query_map(params![matter_id, entry_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        let sources: Vec<(String, String, String, String)> = stmt
+            .query_map(params![matter_id, entry_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         if sources.is_empty() {
             return Err(AppError::Validation(
@@ -174,22 +233,32 @@ pub fn verify_entry(db: &DbState, kind: LedgerKind, matter_id: &str, entry_id: &
             ));
         }
 
-        let mut hashes = Vec::with_capacity(sources.len());
-        for (page_id, quote, hash) in &sources {
-            let page_normalized: String = conn.query_row(
-                "SELECT normalized_text FROM document_pages WHERE id=?1 AND matter_id=?2",
-                params![page_id, matter_id], |r| r.get(0),
+        let mut source_summaries = Vec::with_capacity(sources.len());
+        for (page_id, version_id, quote, hash) in &sources {
+            let (page_normalized, version_stale): (String, i64) = conn.query_row(
+                "SELECT p.normalized_text,v.stale FROM document_pages p
+                 JOIN document_versions v ON v.id=p.document_version_id AND v.matter_id=p.matter_id
+                 WHERE p.id=?1 AND p.matter_id=?2",
+                params![page_id, matter_id], |r| Ok((r.get(0)?, r.get(1)?)),
             ).map_err(|_| AppError::InvalidSourceReference)?;
+            if version_stale != 0 {
+                return Err(AppError::Validation(
+                    "a cited source's document has changed since it was added and is now stale; re-run before verifying".into()
+                ));
+            }
             let normalized_quote = extraction::normalize_source_text(quote);
             if normalized_quote.is_empty() || !page_normalized.contains(&normalized_quote) {
                 return Err(AppError::Validation(
                     "a cited source no longer contains its quote verbatim; this entry cannot be verified".into()
                 ));
             }
-            hashes.push(hash.clone());
+            source_summaries.push(format!("{page_id}:{version_id}:{hash}"));
         }
 
-        let integrity_sha = hex::encode(Sha256::digest(format!("{entry_id}:{table}:{}", hashes.join(","))));
+        let row_snapshot = row_snapshot(conn, table, entry_id, matter_id)?;
+        let integrity_sha = hex::encode(Sha256::digest(format!(
+            "{kind:?}|{row_snapshot}|{}", source_summaries.join(",")
+        )));
         let changed = conn.execute(
             &format!(
                 "UPDATE {table} SET status='verified',verified_at=?3,integrity_sha256=?4

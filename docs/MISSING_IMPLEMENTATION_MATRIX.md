@@ -311,13 +311,26 @@ mutation): a correction `INSERT`s a brand-new row referencing the old one via
 `supersedes_entry_id`, the old verified row is never touched, and "superseded" is
 computed at read time. A verified entry's fields are immutable at the DB level via a
 trigger with one carved-out column (`stale`, so `scanner.rs`'s staleness cascade can
-still flip it) - deliberately with no delete-blocking trigger, since SQLite fires a
-child row's `BEFORE DELETE` trigger even for a parent's `ON DELETE CASCADE`, which
-would otherwise break deleting a matter with a verified ledger entry. `liability_facts`
-is named/framed as a ledger of grounded facts bearing on liability, not a legal
-determination TAHRIR asserts. One shared Rust engine (`ledger.rs`) implements the
-common source-grounding/verify/supersession logic across all three kinds; no
-AI-proposal integration in this pass - deliberately deferred to B5b. New "פנקסים" tab
-in `MatterWorkspace.tsx` (`LedgersTab.tsx`). See `docs/RELEASE_GATES.md`'s "Phase B,
-milestone B4" section for the full writeup. B5–B6 remain deliberately unattempted,
-each still pending its own planning pass.
+still flip it), and its `DELETE` is blocked too except through a deliberate guarded
+escape hatch (`ledger_delete_guard`/`ledger::with_cascade_delete_guard`) that a
+whole-matter deletion must use, since SQLite fires a child row's `BEFORE DELETE`
+trigger even for a parent's `ON DELETE CASCADE`. `liability_facts` is named/framed as a
+ledger of grounded facts bearing on liability, not a legal determination TAHRIR
+asserts. One shared Rust engine (`ledger.rs`) implements the common source-grounding/
+verify/supersession logic across all three kinds; no AI-proposal integration in this
+pass - deliberately deferred to B5b. New "פנקסים" tab in `MatterWorkspace.tsx`
+(`LedgersTab.tsx`). See `docs/RELEASE_GATES.md`'s "Phase B, milestone B4" section for
+the full writeup. B5–B6 remain deliberately unattempted, each still pending its own
+planning pass.
+
+A user code review of this same milestone (2026-08-26, before any Windows CI run
+confirmed the original shape) found 5 real integrity gaps and fixed all of them in
+place: verified evidence was deletable via direct SQL (fixed with the guard above);
+`stale` could be reset from 1 back to 0 on a verified row (fixed to be one-directional,
+0→1 only); `verify_entry` never checked whether a source's underlying document had
+gone stale, only its page text (fixed, mirroring `ai::approve_proposal`'s own stale
+re-check); two independent draft corrections of the same entry could both become
+verified successors (fixed with a partial `UNIQUE(matter_id,supersedes_entry_id)
+WHERE status='verified'` index); and the integrity hash covered only the source
+hashes, not the entry's own domain fields (fixed with a generic per-row snapshot). See
+`docs/RELEASE_GATES.md`'s "Phase B, milestone B4" section for the full writeup.

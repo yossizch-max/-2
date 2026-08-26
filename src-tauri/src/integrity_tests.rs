@@ -1658,6 +1658,75 @@ fn a_verified_ledger_entrys_fields_are_immutable_but_stale_can_still_be_flipped(
         "UPDATE medical_events SET stale=1 WHERE id=?1", [&entry_id]
     ).map_err(AppError::Db));
     assert!(flip_stale.is_ok(), "the stale flag must remain flippable on a verified entry - it is the one carved-out column");
+
+    // stale is one-directional once verified: 0->1 is the only permitted transition -
+    // resetting it back to 0 would let a row silently claim "still trustworthy" again
+    // without ever being re-verified against fresh source text.
+    let unstale = db.write(|conn| conn.execute(
+        "UPDATE medical_events SET stale=0 WHERE id=?1", [&entry_id]
+    ).map_err(AppError::Db));
+    assert!(unstale.is_err(), "a verified entry's stale flag must never be reset back to 0 by a plain UPDATE - only a fresh supersession can move it forward");
+}
+
+#[test]
+fn verify_entry_rejects_a_source_whose_document_version_has_gone_stale() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: verify rejects a stale source version");
+    let (version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let entry_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+
+    // the cited document changes underneath the draft source before anyone verifies it
+    db.write(|conn| conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1", [&version_id]).map_err(AppError::Db)).unwrap();
+
+    let result = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_id);
+    assert!(result.is_err(), "verify must reject a source whose document_version has gone stale, even if the cited page's text still literally contains the quote");
+}
+
+#[test]
+fn only_one_draft_correction_can_become_the_verified_successor() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: single verified successor");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+    let old_id = ledger::create_medical_event(&db, &matter_id, None, None, "שבר", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &old_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &old_id).unwrap();
+
+    // two independent draft corrections of the same old entry - e.g. two AI proposals
+    // or two lawyers working the same matter - are both allowed to exist as drafts
+    let correction_a = ledger::create_medical_event(&db, &matter_id, None, None, "תיקון א", Some(&old_id)).unwrap();
+    let correction_b = ledger::create_medical_event(&db, &matter_id, None, None, "תיקון ב", Some(&old_id)).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &correction_a, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &correction_b, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+
+    let first_verify = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &correction_a);
+    assert!(first_verify.is_ok(), "the first correction to verify must succeed");
+
+    let second_verify = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &correction_b);
+    assert!(second_verify.is_err(), "a second, independently-drafted correction of the same already-superseded entry must be rejected at verify time");
+}
+
+#[test]
+fn the_integrity_hash_changes_when_a_domain_field_differs_not_just_the_sources() {
+    let dirs = TestDirs::new();
+    let db = DbState::open(dirs.db_path.clone()).unwrap();
+    let matter_id = new_matter(&db, "B4 test: integrity hash covers domain fields");
+    let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "המטופל אובחן עם שבר בפרק כף היד.");
+
+    let entry_a = ledger::create_medical_event(&db, &matter_id, None, None, "שבר קל", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_a, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    let hash_a = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_a).unwrap();
+
+    // an entry with the IDENTICAL set of sources but a different domain field
+    // (treatment_summary) must produce a different hash - otherwise the hash would
+    // only be a signature over the sources, not over what the lawyer actually verified.
+    let entry_b = ledger::create_medical_event(&db, &matter_id, None, None, "שבר מרוסק", None).unwrap();
+    ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &entry_b, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+    let hash_b = ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &entry_b).unwrap();
+
+    assert_ne!(hash_a, hash_b, "the integrity hash must reflect the entry's own domain fields, not just its source hashes");
 }
 
 #[test]
@@ -1756,12 +1825,21 @@ fn deleting_a_matter_cascades_to_its_ledger_entries_and_sources_even_when_verifi
     ledger::create_wage_record(&db, &matter_id, None, None, None, 100, None).unwrap();
     ledger::create_liability_fact(&db, &matter_id, None, None, "תיאור", None).unwrap();
 
-    // deleting a matter must cascade even to a VERIFIED ledger entry - a delete-blocking
-    // trigger (like the one on damage_calculations) would break this, since SQLite fires
-    // a child row's own BEFORE DELETE trigger even for an ON DELETE CASCADE from its
-    // parent FK; that's exactly why these tables deliberately have no such trigger.
-    let delete_result = db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db));
-    assert!(delete_result.is_ok(), "deleting a matter must cascade even when it has a verified ledger entry");
+    // a direct delete of the matter, WITHOUT the cascade-delete guard, must be
+    // rejected - the delete-blocking trigger protects a verified entry against any
+    // deletion path that doesn't go through with_cascade_delete_guard.
+    let unguarded_delete = db.write(|conn| conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db));
+    assert!(unguarded_delete.is_err(), "an unguarded delete must be rejected once any ledger entry under the matter is verified");
+
+    // deleting a matter must still cascade to a VERIFIED ledger entry when the
+    // deletion is deliberately wrapped in with_cascade_delete_guard - a plain
+    // delete-blocking trigger (like the one on damage_calculations) would otherwise
+    // break this, since SQLite fires a child row's own BEFORE DELETE trigger even for
+    // an ON DELETE CASCADE from its parent FK; the guard is the deliberate escape hatch.
+    let guarded_delete = db.write(|conn| ledger::with_cascade_delete_guard(conn, |conn| {
+        conn.execute("DELETE FROM matters WHERE id=?1", [&matter_id]).map_err(AppError::Db)
+    }));
+    assert!(guarded_delete.is_ok(), "a guarded delete must cascade even when it has a verified ledger entry");
 
     for table in ["medical_events", "medical_event_sources", "wage_records", "liability_facts"] {
         let rows: i64 = db.read(|conn| conn.query_row(

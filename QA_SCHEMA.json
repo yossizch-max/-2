@@ -1,8 +1,8 @@
 {
   "user_version": 17,
-  "tables": 48,
-  "indexes": 32,
-  "triggers": 46,
+  "tables": 49,
+  "indexes": 35,
+  "triggers": 52,
   "integrity": "ok",
   "foreign_key_check": [],
   "locked_damage_mutation_blocked": true,
@@ -18,10 +18,14 @@
   "matter_workstreams_cascade_delete_with_matter": true,
   "matter_requirements_cascade_delete_with_matter": true,
   "verified_ledger_entry_fields_immutable_but_stale_carve_out_works": true,
+  "verified_ledger_entry_stale_flag_is_one_directional_0_to_1_only": true,
   "verified_ledger_entry_sources_immutable": true,
-  "matter_ledgers_cascade_delete_with_matter_even_when_verified": true,
+  "verified_ledger_entry_delete_blocked_unless_cascade_guard_active": true,
+  "matter_ledgers_cascade_delete_with_matter_even_when_verified_via_guard": true,
   "cross_matter_ledger_supersession_blocked": true,
+  "only_one_verified_successor_per_superseded_ledger_entry": true,
+  "verify_rejects_a_source_whose_document_version_has_gone_stale": true,
   "regenerated_at": "2026-08-26",
-  "regenerated_against_parent_commit": "958f37206563bb35f2ce886786a1f8a18d43d806",
-  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql + 006_matter_ledgers_v17.sql, all applied in order (real, not estimated). Phase B milestone B4 (Medical/Wage/Liability Ledgers) added 6 tables, 3 indexes, 9 triggers - deliberately no delete-blocking trigger on the new tables (unlike damage_calculations), since SQLite fires a child row's own BEFORE DELETE trigger even for an ON DELETE CASCADE from its parent FK, verified empirically; the UPDATE-blocking trigger (with a carved-out `stale` column) is what actually enforces 'a correction is never a silent edit'"
+  "regenerated_against_parent_commit": "7bdb60ad8e2ab2bfad8d1746cec045089eb1e0b0",
+  "regenerated_by": "python3 sqlite3 against src-tauri/migrations/001_schema_v12.sql + 002_legal_rules_infrastructure_v13.sql + 003_matter_profile_v14.sql + 004_matter_workstreams_v15.sql + 005_matter_requirements_v16.sql + 006_matter_ledgers_v17.sql, all applied in order (real, not estimated). A user code review of the just-shipped B4 commit (7bdb60a) found 5 real integrity gaps (3 P0, 2 P1), fixed in place in the same migration file before any Windows CI run confirmed the original shape: (1) verified ledger entries/sources could be deleted directly via SQL, defeating 'verified evidence cannot disappear silently' - fixed with a ledger_delete_guard control table that gates the delete-blocking triggers, so only a deliberate whole-matter cascade (wrapped in ledger::with_cascade_delete_guard) can remove a verified row, never a direct delete; (2) the verified-immutability trigger's `stale` carve-out was bidirectional (1->0 allowed), letting a stale row silently claim 'still trustworthy' again - fixed to allow only 0->1; (3) verify_entry checked verbatim containment but never document_versions.stale, so a draft could be verified against a source whose underlying document had already changed - fixed by joining document_versions and rejecting a stale source at verify time, mirroring ai::approve_proposal's own stale re-check; (4) nothing stopped two independent draft corrections of the same verified entry from both becoming verified successors - fixed with a Rust pre-check plus a new partial UNIQUE(matter_id,supersedes_entry_id) WHERE status='verified' index as the DB-level backstop; (5) integrity_sha256 hashed only entry_id+source hashes, not the entry's own domain fields - fixed with a generic per-row snapshot (every column, via rusqlite ValueRef) folded into the hash alongside each source's page id/version id/hash. 6 new/updated tests (unguarded-delete-rejected, guarded-cascade-still-succeeds, stale-cannot-reset-to-0, verify-rejects-a-stale-source-version, only-one-verified-successor, hash-reflects-domain-fields) - 106/106 total. cargo check/test --locked, npm run build, contract:check (106/106, no drift), qa:static (now checking sevenTablesInMatterLedgers, since ledger_delete_guard is a 7th table in this migration) all pass. Migration re-verified idempotent via direct sqlite3 (applied 3x): 49 tables, 35 indexes, 52 triggers, user_version=17 (unchanged - no PRAGMA bump, edited in place before B4's own CI run confirmed the original shape), integrity ok, fk_check clean."
 }

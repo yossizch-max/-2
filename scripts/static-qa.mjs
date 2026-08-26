@@ -31,7 +31,7 @@ const checks={
   twoTablesInMatterProfile:(sqlMatterProfile.match(/CREATE TABLE /g)||[]).length===2,
   oneTableInMatterWorkstreams:(sqlWorkstreams.match(/CREATE TABLE /g)||[]).length===1,
   oneTableInMatterRequirements:(sqlRequirements.match(/CREATE TABLE /g)||[]).length===1,
-  sixTablesInMatterLedgers:(sqlLedgers.match(/CREATE TABLE /g)||[]).length===6,
+  sevenTablesInMatterLedgers:(sqlLedgers.match(/CREATE TABLE /g)||[]).length===7,
   ocrSourceMismatch:snapshot.includes("SourceShaMismatch"),
   ocrReverify:extraction.includes("snapshot.verify_unchanged()"),
   docxDocumentAnchoring:extraction.includes('anchor_kind: "document"')&&extraction.includes("page_number: None"),

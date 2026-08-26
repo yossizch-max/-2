@@ -87,7 +87,7 @@ mod tests {
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 48);
+        assert_eq!(table_count, 49);
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(user_version, 17);
     }

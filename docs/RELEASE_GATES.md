@@ -56,10 +56,13 @@ on top of it, then a user code review of B3 found and fixed a genuine semantic g
 writeup). B4 (Medical/Wage/Liability Ledgers — evidence-grounded, lawyer-verified
 records with a `draft → verified` lifecycle and correction-by-supersession, copying
 `legal_authorities`' verbatim-containment-checked source-grounding pattern) is also
-implemented (see "Phase B, milestone B4" below). **None of B2, B3, the B3 review-fix,
-or B4 is yet reconfirmed on Windows CI** — that run is still needed before Gate C/E can
-be called current again. What's left needs a human on a real Windows machine with a
-fresh installer: real OCR, real AI provider calls, and
+implemented, then a user code review of B4 found and fixed 5 integrity gaps (verified
+evidence deletable via SQL, `stale` resettable, verify not checking source-version
+staleness, multiple verified successors possible, a weak integrity hash — see "Phase B,
+milestone B4" below for the full writeup). **None of B2, B3, the B3 review-fix, B4, or
+the B4 hardening-fix is yet reconfirmed on Windows CI** — that run is still needed
+before Gate C/E can be called current again. What's left needs a human on a real
+Windows machine with a fresh installer: real OCR, real AI provider calls, and
 DOCX export, which doesn't
 exist in this reconstruction yet.**
 
@@ -758,15 +761,16 @@ real lawyer's validation.
   `verified_facts` line) can still flip it when a cited document changes underneath a
   verified entry. Matching `BEFORE INSERT/UPDATE` triggers on the source child tables
   close a gap `legal_authority_passages` itself still has (no such trigger at all).
-- **Deliberately NO delete-blocking trigger**, unlike `damage_calculations` - verified
-  empirically that SQLite fires a child row's own `BEFORE DELETE` trigger even when the
-  row is removed via an `ON DELETE CASCADE` from its parent FK, so a no-delete trigger
-  here would make deleting a matter with any verified ledger entry raise `ABORT`
-  instead of cascading, breaking a real, exposed feature (`delete_matter` via the
-  Matters page) for no real benefit - this app never exposes a "delete a ledger entry"
-  command in the first place. The `UPDATE`-blocking trigger above is what actually
-  enforces "a correction is never a silent edit"; it is unaffected by this, since
-  `UPDATE` is never part of a cascade.
+- **`DELETE` is blocked too, via a guarded escape hatch** - a verified entry and its
+  sources are also protected against direct deletion, not just mutation. SQLite fires a
+  child row's own `BEFORE DELETE` trigger even when the row is removed via an
+  `ON DELETE CASCADE` from its parent FK (verified empirically), so a plain
+  unconditional no-delete trigger would make deleting a matter with any verified ledger
+  entry raise `ABORT` instead of cascading. The fix is a `ledger_delete_guard` control
+  table: the delete-blocking triggers only fire when it's inactive, and
+  `ledger::with_cascade_delete_guard` is the one deliberate way to flip it on for the
+  duration of a whole-matter deletion. Any other `DELETE` against a verified row - a
+  direct one, not wrapped in the guard - stays rejected.
 - **One shared Rust engine** (`ledger.rs`, a `LedgerKind` enum dispatching table names -
   hardcoded, never user-controlled) implements `add_source`/`verify_entry`/
   `list_entry_sources`/supersession-validation generically across all three kinds;
@@ -785,14 +789,48 @@ source, re-check-at-verify-time, verified-immutability with the `stale` carve-ou
 source-immutability, supersession lifecycle including the pending-draft-correction
 case, cross-matter-supersession-blocked, cascade-delete-even-when-verified, plus 2 pure
 unit tests on `LedgerKind`) plus one existing scanner test extended to also assert the
-new stale-cascade - 103/103 total. `cargo check/test --locked`, `npm run build`,
-`contract:check` (106/106, no drift), `qa:static` (now also checking
-`sixTablesInMatterLedgers`) all pass. Migration re-verified idempotent via direct
-sqlite3 (applied 3x): 48 tables, 32 indexes, 46 triggers, `user_version=17`, integrity
-ok, `fk_check` clean.
+new stale-cascade - 103/103 total at the original shape.
 
-**Not yet reconfirmed on Windows CI** - that run is still needed before this milestone
-can be called current on Gate C/E. B5-B6 remain deliberately unattempted, each still
+**Hardening fix (2026-08-26), applied before any Windows CI run confirmed the original
+shape** - a user code review of the just-shipped B4 milestone found 5 real integrity
+gaps (3 P0, 2 P1), all fixed in place in `006_matter_ledgers_v17.sql`/`ledger.rs`
+before B5 starts feeding the AI into these ledgers:
+1. **Verified evidence could be deleted directly via SQL** - the source/entry
+   immutability triggers blocked `UPDATE`/`INSERT` but not `DELETE`, so a verified
+   row's grounding could silently vanish. Fixed with the `ledger_delete_guard`/
+   `with_cascade_delete_guard` mechanism described above, so only a deliberate
+   whole-matter cascade can remove a verified row - any other delete is rejected.
+2. **`stale` could be reset from 1 back to 0** on a verified row by a plain `UPDATE`,
+   letting it silently reclaim "still trustworthy" without ever being re-verified.
+   Fixed: the carve-out now only permits 0→1; 1→0 is blocked like every other field.
+3. **`verify_entry` never checked `document_versions.stale`** - only the cited page's
+   text, so a draft could be verified against a source whose underlying document had
+   already changed. Fixed by joining `document_versions` and rejecting a stale source
+   at verify time, mirroring `ai::approve_proposal`'s own re-check of the same flag.
+4. **Two independent draft corrections of the same verified entry could both become
+   verified successors**, since `validate_supersedes` only checked the *old* entry's
+   status, never whether it already had a successor. Fixed with a Rust pre-check (for
+   a clean error message) plus a `UNIQUE(matter_id,supersedes_entry_id) WHERE
+   status='verified'` partial index as the DB-level backstop against a race or direct
+   SQL bypass - multiple draft corrections may still coexist, only one can verify.
+5. **`integrity_sha256` hashed only `entry_id` and the source hashes**, not the
+   entry's own domain fields, so it wasn't a real snapshot of what the lawyer
+   verified. Fixed with a generic per-row column snapshot (`ValueRef`-based, so the
+   shared engine needs no per-kind field knowledge) folded into the hash alongside
+   each source's page id, document-version id, and hash.
+
+6 new/updated tests (unguarded-delete-rejected, guarded-cascade-still-succeeds,
+stale-cannot-reset-to-0, verify-rejects-a-stale-source-version,
+only-one-verified-successor, hash-reflects-domain-fields) - 106/106 total. `cargo
+check/test --locked`, `npm run build`, `contract:check` (106/106, no drift),
+`qa:static` (now checking `sevenTablesInMatterLedgers`, since `ledger_delete_guard` is
+a 7th table in this migration) all pass. Migration re-verified idempotent via direct
+sqlite3 (applied 3x): 49 tables, 35 indexes, 52 triggers, `user_version=17`
+(unchanged), integrity ok, `fk_check` clean.
+
+**Neither the original B4 commit (`7bdb60a`) nor this hardening-fix commit has been
+reconfirmed on Windows CI yet** - that run is still needed before this milestone can
+be called current on Gate C/E. B5-B6 remain deliberately unattempted, each still
 pending its own planning pass.
 
 ## Gate A, source integrity — verified by code review

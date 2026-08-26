@@ -1,7 +1,7 @@
 {
   "package": "TAHRIR_RECONSTRUCTED_CANONICAL_SOURCE_alpha16_1",
   "regenerated_at": "2026-08-26",
-  "regenerated_against_commit": "958f37206563bb35f2ce886786a1f8a18d43d806",
+  "regenerated_against_commit": "7bdb60ad8e2ab2bfad8d1746cec045089eb1e0b0",
   "regenerated_by": "scripts/generate-source-manifest.mjs",
   "reconstruction": true,
   "manifest_excludes_itself": true,
@@ -19,18 +19,18 @@
     },
     {
       "path": "QA_RECONSTRUCTION_REPORT.json",
-      "size": 18964,
-      "sha256": "27af519a74d05a2d2e231e601ac6f4e5d3c17a4269aea3acd6ec053024286ee7"
+      "size": 20553,
+      "sha256": "2e0e0d816a9ed7757b358cf1c6d0826a7e5f6af33942e8e636694dfc7ebd2f93"
     },
     {
       "path": "QA_SCHEMA.json",
-      "size": 1837,
-      "sha256": "01935b434b37f7662114ad8b29152e8d2854aa49ae2dd91ae4e491a444085d38"
+      "size": 3910,
+      "sha256": "ff1acccce324d0f3f86cae42af4be13dd33824d403cb462754dde4abf4c513e8"
     },
     {
       "path": "QA_TYPESCRIPT.json",
       "size": 440,
-      "sha256": "83b920cc91267097432ae12f59164b5b69821ced0ece7d4d192ef8ccee5662c6"
+      "sha256": "fbdee9ab0975680f7551d1dba2ae4d8803ba5948711bd39955389d50a1eb6f6e"
     },
     {
       "path": "README.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/MISSING_IMPLEMENTATION_MATRIX.md",
-      "size": 23262,
-      "sha256": "4a893e1f4b36e976a8225fd7fa118d86128125b97d48542114a0029de11a1154"
+      "size": 24235,
+      "sha256": "7192fecb6871f1bcc5d289dcdc6750226605356bdff51f6c370eba88fe908e13"
     },
     {
       "path": "docs/RECONSTRUCTION_NOTES.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "docs/RELEASE_GATES.md",
-      "size": 77846,
-      "sha256": "e14550deea38828bb155f30869affc53bbd4eef0cc87b34f463557abba295cc9"
+      "size": 80791,
+      "sha256": "b212397f8be6f887147686a617256fb5a3be91d77796718fd9de841d15f23d2c"
     },
     {
       "path": "docs/SOURCE_BASIS.md",
@@ -119,8 +119,8 @@
     },
     {
       "path": "scripts/static-qa.mjs",
-      "size": 2713,
-      "sha256": "2e00febbd74cfcfef40d1501a9f58ca391bd926a1aa63ae14321a8571a9c1a83"
+      "size": 2715,
+      "sha256": "bdc14478e833a898d72e465e2e93f895d8c06ca7887f6e479fc97e617df39e5e"
     },
     {
       "path": "scripts/vendor-ocr-runtime.ps1",
@@ -199,8 +199,8 @@
     },
     {
       "path": "src-tauri/migrations/006_matter_ledgers_v17.sql",
-      "size": 9701,
-      "sha256": "6db64e9cc4d803c553738994df07c8c5ac00f6a52b399563920da27e92dfd52d"
+      "size": 12766,
+      "sha256": "f823e6aa083bb419f3f1c7fdc792a82d0be3acb4cd1dae3a48b9acafcf8c76f8"
     },
     {
       "path": "src-tauri/resources/ocr/README.md",
@@ -245,7 +245,7 @@
     {
       "path": "src-tauri/src/db.rs",
       "size": 11898,
-      "sha256": "be4b8031f5ae16fb6b3da4ae2782e74d801962836915d09aaa2d11a5754b8d84"
+      "sha256": "aeeb29f3f337ca46a578486174b29c2f15721ba6a060132c5cb95d6e43bb9d9b"
     },
     {
       "path": "src-tauri/src/error.rs",
@@ -264,13 +264,13 @@
     },
     {
       "path": "src-tauri/src/integrity_tests.rs",
-      "size": 98908,
-      "sha256": "0f364d9bde805485284fd21c49214a22c9c08341b6a29825f332d30477de0116"
+      "size": 104608,
+      "sha256": "4e2dacb513186549878d802fc6ea6bbb1bdc2db29e3cbf28e1b451c2608e932a"
     },
     {
       "path": "src-tauri/src/ledger.rs",
-      "size": 19697,
-      "sha256": "afc07a0d5f47b6a96223d5e3af6a931f1c1a78b55378dd529d42836bf12b2919"
+      "size": 23826,
+      "sha256": "b5be1eae7c017c461bac7e275586fd62444957618434e47161ae33559c95d0f3"
     },
     {
       "path": "src-tauri/src/legal_docs.rs",
