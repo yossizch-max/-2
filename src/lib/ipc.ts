@@ -78,6 +78,8 @@ export const commands = {
   list_verified_facts: (payload:Record<string,unknown>={}) => call("list_verified_facts",payload),
   verify_fact: (payload:Record<string,unknown>={}) => call("verify_fact",payload),
   invalidate_fact: (payload:Record<string,unknown>={}) => call("invalidate_fact",payload),
+  list_fact_conflicts: (payload:Record<string,unknown>={}) => call("list_fact_conflicts",payload),
+  resolve_fact_conflict: (payload:Record<string,unknown>={}) => call("resolve_fact_conflict",payload),
   list_damage_calculations: (payload:Record<string,unknown>={}) => call("list_damage_calculations",payload),
   save_damage_calculation: (payload:Record<string,unknown>={}) => call("save_damage_calculation",payload),
   calculate_damage: (payload:Record<string,unknown>={}) => call("calculate_damage",payload),
