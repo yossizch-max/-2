@@ -92,7 +92,7 @@ export function FactsAITab({matterId}:{matterId:string}) {
   const [lastRunId,setLastRunId]=useState<string|null>(null);
 
   const selectedProfile=enabledProfiles.find(p=>p.id===profileId);
-  const selectedCapability=CAPABILITIES.find(c=>c.value===capability)??CAPABILITIES[0];
+  const selectedCapability=CAPABILITIES.find(c=>c.value===capability)??CAPABILITIES[0]!;
 
   const invalidate=async(factId:string)=>{
     await commands.invalidate_fact({factId});
