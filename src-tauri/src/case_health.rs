@@ -167,7 +167,8 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
         {
             let mut stmt = conn.prepare(
                 "SELECT id,action,due_at,state FROM legal_deadlines
-                 WHERE matter_id=?1 AND state IN ('draft','committed') ORDER BY due_at,id",
+                 WHERE matter_id=?1 AND state IN ('draft','committed') AND superseded_by IS NULL
+                 ORDER BY due_at,id",
             )?;
             let rows = stmt
                 .query_map([matter_id], |r| {
@@ -260,6 +261,14 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             [matter_id],
             |r| r.get(0),
         )?;
+        let unresolved_fact_conflicts: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM fact_conflicts
+                 WHERE matter_id=?1 AND status='unresolved'
+                 ORDER BY created_at,id",
+            )?;
+            stmt.query_map([matter_id], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?
+        };
         // Extraction state belongs to document_versions, not documents. Count a
         // document at most once and only from its latest version so an old historical
         // stale/blocked version cannot keep depressing health after a successful re-run.
@@ -277,6 +286,7 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
         let mut total_penalty = 0_i64;
         total_penalty += push_factor(&mut factors, "overdue_committed_deadlines", "critical", overdue_deadlines.len() as i64, 30, 60);
         total_penalty += push_factor(&mut factors, "due_soon_committed_deadlines", "high", due_soon_deadlines.len() as i64, 12, 24);
+        total_penalty += push_factor(&mut factors, "unresolved_fact_conflicts", "high", unresolved_fact_conflicts.len() as i64, 15, 30);
         total_penalty += push_factor(&mut factors, "overdue_tasks", "high", overdue_tasks.len() as i64, 10, 30);
         total_penalty += push_factor(&mut factors, "blocked_workstreams", "high", blocked_workstreams.len() as i64, 12, 24);
         total_penalty += push_factor(&mut factors, "required_evidence_stale", "high", required_stale.len() as i64, 10, 20);
@@ -304,6 +314,12 @@ pub(crate) fn compute(db: &DbState, matter_id: &str) -> AppResult<CaseHealthSnap
             NextBestAction {
                 code: "prepare_upcoming_deadline".into(), priority: "high".into(),
                 target_id: Some(item.id.clone()), due_at: Some(item.due_at.clone()), label: Some(item.action.clone()),
+                secondary_label: None, requirement_key: None, workstream_kind: None,
+            }
+        } else if let Some(conflict_id) = unresolved_fact_conflicts.first() {
+            NextBestAction {
+                code: "review_fact_conflict".into(), priority: "high".into(),
+                target_id: Some(conflict_id.clone()), due_at: None, label: None,
                 secondary_label: None, requirement_key: None, workstream_kind: None,
             }
         } else if let Some(item) = overdue_tasks.first() {
@@ -429,6 +445,37 @@ mod tests {
         matter_id
     }
 
+    fn collect_default_office_requirements(db: &DbState, matter_id: &str) {
+        db.write(|conn| requirements::update_status(conn, matter_id, "id_document", "collected", None)).unwrap();
+    }
+
+    fn insert_fact_conflict(db: &DbState, matter_id: &str, status: &str, created_at: &str) -> String {
+        let fact_a = Uuid::new_v4().to_string();
+        let fact_b = Uuid::new_v4().to_string();
+        let conflict_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,verified_at)
+                 VALUES(?1,?2,'subject-a','says','one','valid',?3)",
+                params![&fact_a, matter_id, &now],
+            )?;
+            conn.execute(
+                "INSERT INTO verified_facts(id,matter_id,subject,predicate,value_text,status,verified_at)
+                 VALUES(?1,?2,'subject-b','says','two','valid',?3)",
+                params![&fact_b, matter_id, &now],
+            )?;
+            conn.execute(
+                "INSERT INTO fact_conflicts(id,matter_id,fact_a_id,fact_b_id,status,created_at)
+                 VALUES(?1,?2,?3,?4,?5,?6)",
+                params![&conflict_id, matter_id, &fact_a, &fact_b, status, created_at],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        conflict_id
+    }
+
     #[test]
     fn overdue_committed_deadline_is_first_and_matter_isolated() {
         let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
@@ -485,6 +532,193 @@ mod tests {
         db.write(|conn| requirements::update_status(conn, &matter_id, "id_document", "collected", None)).unwrap();
         let snapshot = compute(&db, &matter_id).unwrap();
         assert!(!snapshot.factors.iter().any(|f| f.code == "required_evidence_missing"));
+        assert_eq!(snapshot.score, 100);
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unresolved_fact_conflict_is_high_priority_and_matter_isolated() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_a = seeded_matter(&db, "generic_civil");
+        let matter_b = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_a);
+        collect_default_office_requirements(&db, &matter_b);
+        let conflict_a = insert_fact_conflict(&db, &matter_a, "unresolved", "2026-01-01T00:00:00Z");
+        let conflict_b = insert_fact_conflict(&db, &matter_b, "unresolved", "2026-01-02T00:00:00Z");
+
+        let snapshot = compute(&db, &matter_a).unwrap();
+        let factor = snapshot.factors.iter().find(|f| f.code == "unresolved_fact_conflicts").unwrap();
+        assert_eq!(factor.severity, "high");
+        assert_eq!(factor.count, 1);
+        assert_eq!(factor.penalty, 15);
+        assert_eq!(snapshot.next_best_action.code, "review_fact_conflict");
+        assert_eq!(snapshot.next_best_action.priority, "high");
+        assert_eq!(snapshot.next_best_action.target_id.as_deref(), Some(conflict_a.as_str()));
+        assert_ne!(snapshot.next_best_action.target_id.as_deref(), Some(conflict_b.as_str()));
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolved_fact_conflicts_do_not_affect_health() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        insert_fact_conflict(&db, &matter_id, "resolved", "2026-01-01T00:00:00Z");
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "unresolved_fact_conflicts"));
+        assert_eq!(snapshot.score, 100);
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn earliest_unresolved_fact_conflict_is_the_next_action() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let later = insert_fact_conflict(&db, &matter_id, "unresolved", "2026-01-02T00:00:00Z");
+        let earlier = insert_fact_conflict(&db, &matter_id, "unresolved", "2026-01-01T00:00:00Z");
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert_eq!(snapshot.next_best_action.code, "review_fact_conflict");
+        assert_eq!(snapshot.next_best_action.target_id.as_deref(), Some(earlier.as_str()));
+        assert_ne!(snapshot.next_best_action.target_id.as_deref(), Some(later.as_str()));
+        let factor = snapshot.factors.iter().find(|f| f.code == "unresolved_fact_conflicts").unwrap();
+        assert_eq!(factor.count, 2);
+        assert_eq!(factor.penalty, 30);
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn critical_deadline_still_outranks_unresolved_fact_conflict() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        insert_fact_conflict(&db, &matter_id, "unresolved", "2026-01-01T00:00:00Z");
+        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
+        let now = Utc::now().to_rfc3339();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'Urgent deadline',?3,'committed','test',?4)",
+                params![Uuid::new_v4().to_string(), matter_id, overdue, now],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert_eq!(snapshot.next_best_action.code, "resolve_overdue_deadline");
+        assert!(snapshot.factors.iter().any(|f| f.code == "unresolved_fact_conflicts"));
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn completed_and_superseded_deadlines_are_not_binding_health_signals() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
+        let future = (Utc::now().date_naive() + chrono::Duration::days(30)).to_string();
+        let now = Utc::now().to_rfc3339();
+        let replacement_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'Replacement deadline',?3,'committed','test',?4)",
+                params![&replacement_id, matter_id, &future, &now],
+            )?;
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,superseded_by,created_at)
+                 VALUES(?1,?2,'Superseded old deadline',?3,'committed','test',?4,?5)",
+                params![Uuid::new_v4().to_string(), matter_id, &overdue, replacement_id, &now],
+            )?;
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'Completed deadline',?3,'completed','test',?4)",
+                params![Uuid::new_v4().to_string(), matter_id, &overdue, &now],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "overdue_committed_deadlines"));
+        assert!(!snapshot.factors.iter().any(|f| f.code == "due_soon_committed_deadlines"));
+        assert_eq!(snapshot.score, 100);
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn draft_deadlines_wait_for_review_without_binding_deadline_weight() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let overdue = (Utc::now().date_naive() - chrono::Duration::days(1)).to_string();
+        let now = Utc::now().to_rfc3339();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'Draft deadline',?3,'draft','test',?4)",
+                params![Uuid::new_v4().to_string(), matter_id, overdue, now],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "overdue_committed_deadlines"));
+        assert!(!snapshot.factors.iter().any(|f| f.code == "due_soon_committed_deadlines"));
+        assert!(snapshot.factors.iter().any(|f| f.code == "draft_deadlines_waiting_review" && f.count == 1));
+        assert_eq!(snapshot.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn superseded_verified_ledger_rows_are_not_counted_stale() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let now = Utc::now().to_rfc3339();
+        let old_entry = Uuid::new_v4().to_string();
+        let new_entry = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO medical_events(id,matter_id,treatment_summary,status,stale,verified_at,created_at,updated_at)
+                 VALUES(?1,?2,'Old stale event','verified',1,?3,?3,?3)",
+                params![&old_entry, matter_id, &now],
+            )?;
+            conn.execute(
+                "INSERT INTO medical_events(id,matter_id,treatment_summary,status,stale,supersedes_entry_id,verified_at,created_at,updated_at)
+                 VALUES(?1,?2,'Fresh successor','verified',0,?3,?4,?4,?4)",
+                params![&new_entry, matter_id, &old_entry, &now],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let snapshot = compute(&db, &matter_id).unwrap();
+        assert!(!snapshot.factors.iter().any(|f| f.code == "stale_verified_ledgers"));
         assert_eq!(snapshot.score, 100);
         assert_eq!(snapshot.next_best_action.code, "start_workstream");
         drop(db);

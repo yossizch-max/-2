@@ -20,6 +20,7 @@ type CaseHealth = {
 const FACTOR_LABELS:Record<string,string> = {
   overdue_committed_deadlines:"מועדים מחייבים שעברו",
   due_soon_committed_deadlines:"מועדים מחייבים בשבעת הימים הקרובים",
+  unresolved_fact_conflicts:"סתירות פתוחות בין עובדות מאומתות",
   overdue_tasks:"משימות פתוחות באיחור",
   blocked_workstreams:"מסלולי עבודה חסומים",
   required_evidence_stale:"ראיות שנדרש לרענן לפי מדיניות המשרד",
@@ -48,6 +49,8 @@ function actionText(action:NextBestAction):{title:string;detail:string}{
       return {title:`טפל מיד במועד: ${action.label??"מועד מחייב"}`, detail:action.dueAt?`המועד היה ${action.dueAt}`:"מועד מחייב שעבר"};
     case "prepare_upcoming_deadline":
       return {title:`הכן את הפעולה למועד: ${action.label??"מועד מחייב"}`, detail:action.dueAt?`יעד: ${action.dueAt}`:"מועד מחייב קרוב"};
+    case "review_fact_conflict":
+      return {title:"בדוק סתירה פתוחה בין עובדות מאומתות", detail:"נדרשת הכרעה אנושית לפני שימוש בעובדות הסותרות"};
     case "complete_overdue_task":
       return {title:action.label??"בצע משימה באיחור", detail:action.dueAt?`יעד שעבר: ${action.dueAt}`:"משימה פתוחה באיחור"};
     case "unblock_workstream":
