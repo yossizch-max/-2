@@ -212,7 +212,7 @@ fn read_claim(conn: &Connection, matter_id: &str, claim_id: &str) -> AppResult<V
                 "id": row.get::<_, String>(0)?,
                 "matterId": row.get::<_, String>(1)?,
                 "insurerPartyId": row.get::<_, String>(2)?,
-                "insurerDisplayName": insurer_display_name,
+                "insurerDisplayName": insurer_display_name.clone(),
                 "insurerName": insurer_display_name,
                 "insurerNameSnapshot": row.get::<_, String>(4)?,
                 "claimNumber": row.get::<_, Option<String>>(5)?,
@@ -267,7 +267,7 @@ pub(crate) fn list_claims(db: &DbState, matter_id: &str) -> AppResult<Vec<Value>
                 "id": row.get::<_, String>(0)?,
                 "matterId": row.get::<_, String>(1)?,
                 "insurerPartyId": row.get::<_, String>(2)?,
-                "insurerDisplayName": insurer_display_name,
+                "insurerDisplayName": insurer_display_name.clone(),
                 "insurerName": insurer_display_name,
                 "insurerNameSnapshot": row.get::<_, String>(4)?,
                 "claimNumber": row.get::<_, Option<String>>(5)?,
@@ -1338,6 +1338,12 @@ mod tests {
             &json!({ "matterId": matter, "insurerPartyId": insurer, "status": "settled" })
         )
         .is_err());
+        db.write(|conn| {
+            assert!(conn.execute("UPDATE matter_parties SET role='party' WHERE id=?1", params![insurer]).is_err());
+            assert!(conn.execute("DELETE FROM matter_parties WHERE id=?1", params![insurer]).is_err());
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1896,6 +1902,7 @@ mod tests {
                 "trg_insurance_claim_insurer_role_insert",
                 "trg_insurance_claim_insurer_role_update",
                 "trg_insurance_claim_insurer_party_role_guard",
+                "trg_insurance_claim_insurer_party_delete_guard",
                 "trg_negotiation_events_no_update",
                 "trg_negotiation_events_no_delete",
                 "trg_negotiation_positions_no_update",
