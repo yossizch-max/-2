@@ -121,7 +121,7 @@ mod tests {
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'document_pages_fts%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 52, "the 52 real application tables must be unaffected by FTS5's own shadow tables");
+        assert_eq!(table_count, 57, "the 57 real application tables must be unaffected by FTS5's own shadow tables");
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(user_version, 19);
     }
@@ -357,11 +357,13 @@ mod tests {
 
         let b7_tables: i64 = conn.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
-             ('insurance_claims','negotiation_events','negotiation_positions')",
+             ('insurance_claims','insurance_claim_insurers','insurance_claim_status_history',
+              'negotiation_events','negotiation_positions','negotiation_event_corrections',
+              'negotiation_position_corrections','negotiation_waiting_links')",
             [],
             |r| r.get(0),
         ).unwrap();
-        assert_eq!(b7_tables, 3);
+        assert_eq!(b7_tables, 8);
         let title: String = conn.query_row(
             "SELECT title FROM matters WHERE id='m1'", [], |r| r.get(0),
         ).unwrap();
