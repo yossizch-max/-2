@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
@@ -27,7 +27,7 @@ type NegotiationEvent = {
 };
 type SnapshotPosition = {id:string; side:string; kind:string; amountCents:number; currency:"ILS"; recordedAt:string};
 type NegotiationSnapshot = {
-  matterId:string;
+  matterId:string; insuranceClaimId:string;
   currentClaim?:Pick<InsuranceClaim,"id"|"insurerPartyId"|"insurerDisplayName"|"claimNumber"|"policyNumber"|"handlerName"|"handlerContact"|"status">|null;
   latestOurDemand?:SnapshotPosition|null;
   latestCounterpartyOffer?:SnapshotPosition|null;
@@ -94,13 +94,14 @@ function SourceSelect({documents,value,onChange}:{documents:DocumentRow[];value:
   </label>;
 }
 
-function SnapshotPanel({snapshot,loading,error}:{snapshot?:NegotiationSnapshot;loading:boolean;error:string|null}){
+function SnapshotPanel({snapshot,loading,error,claims,selectedClaimId,onSelectClaim}:{snapshot?:NegotiationSnapshot;loading:boolean;error:string|null;claims:InsuranceClaim[];selectedClaimId:string;onSelectClaim:(id:string)=>void}){
   const claim=snapshot?.currentClaim;
   return <section className="workspace-card" style={{marginBottom:16}}>
-    <div className="card-head"><div><span className="eyebrow">NEGOTIATION SNAPSHOT</span><h2>תמונת מו״מ</h2></div>{claim&&<StatusBadge tone={claimTone(claim.status)}>{CLAIM_STATUS_LABELS[claim.status]}</StatusBadge>}</div>
+    <div className="card-head"><div><span className="eyebrow">NEGOTIATION SNAPSHOT</span><h2>תמונת מו״מ</h2>{claims.length===1&&<small>תמונה עבור {claimLabel(claims[0])}</small>}</div>{claims.length>1&&<label style={{minWidth:220}}>תמונת מצב עבור<select value={selectedClaimId} onChange={e=>onSelectClaim(e.target.value)}>{claims.map(c=><option key={c.id} value={c.id}>{claimLabel(c)}</option>)}</select></label>}{claim&&<StatusBadge tone={claimTone(claim.status)}>{CLAIM_STATUS_LABELS[claim.status]}</StatusBadge>}</div>
     {loading&&<p className="quiet">טוען תמונת מצב...</p>}
     {error&&<p className="quiet">שגיאה בתמונת המו״מ: {error}</p>}
-    {!loading&&!error&&<>
+    {!loading&&!error&&claims.length===0&&<p className="quiet">צור או בחר תביעת ביטוח כדי לראות תמונת מו״מ ממוקדת.</p>}
+    {!loading&&!error&&claims.length>0&&<>
       <div className="grid-2">
         <div className="mini-row"><span>מבטחת</span><strong>{claim?.insurerDisplayName??"-"}</strong></div>
         <div className="mini-row"><span>מטפל/ת</span><strong>{claim?.handlerName??"-"}</strong></div>
@@ -283,7 +284,7 @@ function EventsSection({matterId,claims,documents,reloadSnapshot}:{matterId:stri
   };
   const closeFollowUp=async(id:string)=>{
     setBusy(true);setErr(null);
-    try{await commands.close_waiting_for({waitingForId:id});reload();reloadSnapshot();}
+    try{await commands.close_waiting_for({matterId,waitingForId:id});reload();reloadSnapshot();}
     catch(e){setErr(String(e));}finally{setBusy(false);}
   };
   return <section className="workspace-card" style={{marginTop:16}}>
@@ -308,15 +309,22 @@ function EventsSection({matterId,claims,documents,reloadSnapshot}:{matterId:stri
 }
 
 export function NegotiationTab({matterId}:{matterId:string}){
+  const [selectedClaimId,setSelectedClaimId]=useState("");
   const claims=useCommand(()=>commands.list_insurance_claims(matterId) as Promise<InsuranceClaim[]>,[matterId]);
   const parties=useCommand(()=>commands.list_matter_parties({matterId}) as Promise<MatterParty[]>,[matterId]);
   const documents=useCommand(()=>commands.list_documents({matterId}) as Promise<DocumentRow[]>,[matterId]);
-  const snapshot=useCommand(()=>commands.get_negotiation_snapshot(matterId) as Promise<NegotiationSnapshot>,[matterId]);
-  const reloadAll=()=>{claims.reload();parties.reload();documents.reload();snapshot.reload();};
   const claimRows=claims.data||[];
+  useEffect(()=>{
+    if(claims.loading)return;
+    const rows=claims.data||[];
+    if(rows.length===0){if(selectedClaimId)setSelectedClaimId("");return;}
+    if(!rows.some(c=>c.id===selectedClaimId))setSelectedClaimId(rows[0].id);
+  },[claims.loading,claims.data,selectedClaimId]);
+  const snapshot=useCommand<NegotiationSnapshot|null>(()=>selectedClaimId?commands.get_negotiation_snapshot(matterId,selectedClaimId) as Promise<NegotiationSnapshot>:Promise.resolve(null),[matterId,selectedClaimId]);
+  const reloadAll=()=>{claims.reload();parties.reload();documents.reload();snapshot.reload();};
   return <div className="matter-tab">
     <div className="workspace-card" style={{marginBottom:16}}><span className="eyebrow">HUMAN CONTROL</span><h2>מו״מ וביטוח</h2><p className="quiet">TAHRIR מתעדת, מחשבת פערים ומציפה מעקבים. קבלה, דחייה או סגירת פשרה נשארת פעולה אנושית מפורשת.</p></div>
-    <SnapshotPanel snapshot={snapshot.data} loading={snapshot.loading} error={snapshot.error}/>
+    <SnapshotPanel snapshot={snapshot.data??undefined} loading={snapshot.loading} error={snapshot.error} claims={claimRows} selectedClaimId={selectedClaimId} onSelectClaim={setSelectedClaimId}/>
     {claims.loading||parties.loading||documents.loading?<p className="quiet">טוען סביבת מו״מ...</p>:null}
     {claims.error&&<p className="quiet">שגיאה בטעינת תביעות ביטוח: {claims.error}</p>}
     {parties.error&&<p className="quiet">שגיאה בטעינת צדדים: {parties.error}</p>}
