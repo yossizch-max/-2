@@ -275,7 +275,7 @@ function EventsSection({matterId,claims,documents,reloadSnapshot}:{matterId:stri
   };
   const closeFollowUp=async(id:string)=>{
     setBusy(true);setErr(null);
-    try{await commands.close_waiting_for(id);reload();reloadSnapshot();}
+    try{await commands.close_waiting_for({waitingForId:id});reload();reloadSnapshot();}
     catch(e){setErr(String(e));}finally{setBusy(false);}
   };
   return <section className="workspace-card" style={{marginTop:16}}>
@@ -301,8 +301,8 @@ function EventsSection({matterId,claims,documents,reloadSnapshot}:{matterId:stri
 
 export function NegotiationTab({matterId}:{matterId:string}){
   const claims=useCommand(()=>commands.list_insurance_claims(matterId) as Promise<InsuranceClaim[]>,[matterId]);
-  const parties=useCommand(()=>commands.list_matter_parties(matterId) as Promise<MatterParty[]>,[matterId]);
-  const documents=useCommand(()=>commands.list_documents(matterId) as Promise<DocumentRow[]>,[matterId]);
+  const parties=useCommand(()=>commands.list_matter_parties({matterId}) as Promise<MatterParty[]>,[matterId]);
+  const documents=useCommand(()=>commands.list_documents({matterId}) as Promise<DocumentRow[]>,[matterId]);
   const snapshot=useCommand(()=>commands.get_negotiation_snapshot(matterId) as Promise<NegotiationSnapshot>,[matterId]);
   const reloadAll=()=>{claims.reload();parties.reload();documents.reload();snapshot.reload();};
   const claimRows=claims.data||[];
