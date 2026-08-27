@@ -11,7 +11,7 @@ use crate::{
     requirements, workstreams, AppState,
 };
 use chrono::{Local, NaiveDate, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
@@ -216,7 +216,7 @@ fn compute_for_date(
                 "SELECT id,title,due_at FROM tasks WHERE matter_id=?1 AND status='open'
                  ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,due_at,id",
             )?;
-            stmt.query_map([matter_id], |r| {
+            let rows = stmt.query_map([matter_id], |r| {
                 let due_at: Option<String> = r.get(2)?;
                 Ok(TaskSignal {
                     id: r.get(0)?,
@@ -225,7 +225,8 @@ fn compute_for_date(
                     due_at,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+            rows
         };
         let overdue_tasks: Vec<TaskSignal> = open_tasks
             .iter()
@@ -239,7 +240,7 @@ fn compute_for_date(
                  WHERE matter_id=?1 AND status='open'
                  ORDER BY CASE WHEN follow_up_at IS NULL THEN 1 ELSE 0 END,follow_up_at,id",
             )?;
-            stmt.query_map([matter_id], |r| {
+            let rows = stmt.query_map([matter_id], |r| {
                 let follow_up_at: Option<String> = r.get(3)?;
                 Ok(WaitingSignal {
                     id: r.get(0)?,
@@ -249,7 +250,8 @@ fn compute_for_date(
                     follow_up_at,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+            rows
         };
         let overdue_waiting: Vec<WaitingSignal> = open_waiting
             .iter()
@@ -284,7 +286,9 @@ fn compute_for_date(
                  WHERE c.matter_id=?1 AND c.status='unresolved'
                  ORDER BY c.created_at,c.id",
             )?;
-            stmt.query_map([matter_id], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?
+            let rows = stmt.query_map([matter_id], |r| r.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
         };
         // Extraction state belongs to document_versions, not documents. Count a
         // document at most once and only from its latest version so an old historical
@@ -442,6 +446,7 @@ pub fn get_case_health(state: State<'_, AppState>, payload: Value) -> AppResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use std::fs;
     use uuid::Uuid;
 
