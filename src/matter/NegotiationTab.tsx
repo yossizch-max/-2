@@ -96,8 +96,9 @@ function SourceSelect({documents,value,onChange}:{documents:DocumentRow[];value:
 
 function SnapshotPanel({snapshot,loading,error,claims,selectedClaimId,onSelectClaim}:{snapshot?:NegotiationSnapshot;loading:boolean;error:string|null;claims:InsuranceClaim[];selectedClaimId:string;onSelectClaim:(id:string)=>void}){
   const claim=snapshot?.currentClaim;
+  const firstClaim=claims.length===1?claims[0]:undefined;
   return <section className="workspace-card" style={{marginBottom:16}}>
-    <div className="card-head"><div><span className="eyebrow">NEGOTIATION SNAPSHOT</span><h2>תמונת מו״מ</h2>{claims.length===1&&<small>תמונה עבור {claimLabel(claims[0])}</small>}</div>{claims.length>1&&<label style={{minWidth:220}}>תמונת מצב עבור<select value={selectedClaimId} onChange={e=>onSelectClaim(e.target.value)}>{claims.map(c=><option key={c.id} value={c.id}>{claimLabel(c)}</option>)}</select></label>}{claim&&<StatusBadge tone={claimTone(claim.status)}>{CLAIM_STATUS_LABELS[claim.status]}</StatusBadge>}</div>
+    <div className="card-head"><div><span className="eyebrow">NEGOTIATION SNAPSHOT</span><h2>תמונת מו״מ</h2>{firstClaim&&<small>תמונה עבור {claimLabel(firstClaim)}</small>}</div>{claims.length>1&&<label style={{minWidth:220}}>תמונת מצב עבור<select value={selectedClaimId} onChange={e=>onSelectClaim(e.target.value)}>{claims.map(c=><option key={c.id} value={c.id}>{claimLabel(c)}</option>)}</select></label>}{claim&&<StatusBadge tone={claimTone(claim.status)}>{CLAIM_STATUS_LABELS[claim.status]}</StatusBadge>}</div>
     {loading&&<p className="quiet">טוען תמונת מצב...</p>}
     {error&&<p className="quiet">שגיאה בתמונת המו״מ: {error}</p>}
     {!loading&&!error&&claims.length===0&&<p className="quiet">צור או בחר תביעת ביטוח כדי לראות תמונת מו״מ ממוקדת.</p>}
@@ -317,8 +318,9 @@ export function NegotiationTab({matterId}:{matterId:string}){
   useEffect(()=>{
     if(claims.loading)return;
     const rows=claims.data||[];
-    if(rows.length===0){if(selectedClaimId)setSelectedClaimId("");return;}
-    if(!rows.some(c=>c.id===selectedClaimId))setSelectedClaimId(rows[0].id);
+    const firstRow=rows[0];
+    if(!firstRow){if(selectedClaimId)setSelectedClaimId("");return;}
+    if(!rows.some(c=>c.id===selectedClaimId))setSelectedClaimId(firstRow.id);
   },[claims.loading,claims.data,selectedClaimId]);
   const snapshot=useCommand<NegotiationSnapshot|null>(()=>selectedClaimId?commands.get_negotiation_snapshot(matterId,selectedClaimId) as Promise<NegotiationSnapshot>:Promise.resolve(null),[matterId,selectedClaimId]);
   const reloadAll=()=>{claims.reload();parties.reload();documents.reload();snapshot.reload();};
