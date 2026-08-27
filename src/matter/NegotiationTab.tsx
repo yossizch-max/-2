@@ -58,7 +58,10 @@ function toLocalInput(value?:string|null){
   d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
   return d.toISOString().slice(0,16);
 }
-function toRfc3339(local:string){return new Date(local).toISOString();}
+function toRfc3339(local:string){
+  const d=new Date(local);
+  return Number.isNaN(d.getTime())?null:d.toISOString();
+}
 function formatDate(value?:string|null){
   if(!value)return "-";
   const d=new Date(value);
@@ -74,7 +77,8 @@ function parseAmountCents(value:string){
   const [whole,frac=""]=clean.split(".");
   const shekels=Number(whole);
   if(!Number.isSafeInteger(shekels))return null;
-  return shekels*100+Number(frac.padEnd(2,"0"));
+  const cents=shekels*100+Number(frac.padEnd(2,"0"));
+  return Number.isSafeInteger(cents)?cents:null;
 }
 function claimLabel(c:InsuranceClaim){return c.claimNumber?`${c.insurerDisplayName} · ${c.claimNumber}`:c.insurerDisplayName;}
 function claimTone(status:ClaimStatus){return status==="settled"||status==="closed"?"ok":status==="awaiting_response"?"warn":"neutral";}
@@ -214,8 +218,9 @@ function PositionsSection({matterId,claims,documents,reloadSnapshot}:{matterId:s
   };
   const submit=async()=>{
     const amountCents=parseAmountCents(amount); if(amountCents===null)return;
+    const recordedAtValue=toRfc3339(recordedAt); if(!recordedAtValue){setErr("מועד חייב להיות תקין");return;}
     setBusy(true);setErr(null);
-    const payload={matterId,insuranceClaimId:claimId||undefined,side,kind,amountCents,currency:"ILS",recordedAt:toRfc3339(recordedAt),notes:notes||undefined,sourceDocumentVersionId:sourceDocumentVersionId||undefined};
+    const payload={matterId,insuranceClaimId:claimId||undefined,side,kind,amountCents,currency:"ILS",recordedAt:recordedAtValue,notes:notes||undefined,sourceDocumentVersionId:sourceDocumentVersionId||undefined};
     try{
       if(correcting){await commands.correct_negotiation_position({...payload,originalPositionId:correcting.id,reason:reason||undefined});}
       else{await commands.add_negotiation_position(payload);}
@@ -265,8 +270,11 @@ function EventsSection({matterId,claims,documents,reloadSnapshot}:{matterId:stri
     setReason("");setErr(null);setOpen(true);
   };
   const submit=async()=>{
-    if(!summary.trim())return; setBusy(true);setErr(null);
-    const payload={matterId,insuranceClaimId:claimId||undefined,eventKind,happenedAt:toRfc3339(happenedAt),summary,followUpAt:followUpAt?toRfc3339(followUpAt):undefined,sourceDocumentVersionId:sourceDocumentVersionId||undefined};
+    if(!summary.trim())return;
+    const happenedAtValue=toRfc3339(happenedAt); if(!happenedAtValue){setErr("מועד חייב להיות תקין");return;}
+    const followUpAtValue=followUpAt?toRfc3339(followUpAt):null; if(followUpAt&&!followUpAtValue){setErr("מועד המעקב חייב להיות תקין");return;}
+    setBusy(true);setErr(null);
+    const payload={matterId,insuranceClaimId:claimId||undefined,eventKind,happenedAt:happenedAtValue,summary,followUpAt:followUpAtValue||undefined,sourceDocumentVersionId:sourceDocumentVersionId||undefined};
     try{
       if(correcting){await commands.correct_negotiation_event({...payload,originalEventId:correcting.id,reason:reason||undefined});}
       else{await commands.add_negotiation_event(payload);}
