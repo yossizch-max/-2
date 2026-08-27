@@ -25,6 +25,7 @@ const FACTOR_LABELS:Record<string,string> = {
   blocked_workstreams:"מסלולי עבודה חסומים",
   required_evidence_stale:"ראיות שנדרש לרענן לפי מדיניות המשרד",
   required_evidence_missing:"ראיות חסרות לפי מדיניות המשרד",
+  negotiation_followups_overdue:"מעקבי משא ומתן תפעוליים שעבר מועד המעקב שלהם",
   waiting_followups_overdue:"מעקבים מול גורם חיצוני שעבר מועד המעקב שלהם",
   stale_verified_ledgers:"רשומות מאומתות בפנקסים שהתיישנו",
   stale_verified_facts:"עובדות מאומתות שהתיישנו",
@@ -59,6 +60,8 @@ function actionText(action:NextBestAction):{title:string;detail:string}{
       return {title:`רענן: ${requirementLabel(action.requirementKey)}`, detail:"נדרש לפי מדיניות המשרד ומסומן כמיושן"};
     case "collect_required_evidence":
       return {title:`השג: ${requirementLabel(action.requirementKey)}`, detail:"חסר לפי מדיניות המשרד"};
+    case "follow_up_negotiation":
+      return {title:`בצע מעקב מו״מ מול ${action.label??"המבטחת"}`, detail:`מעקב תפעולי: ${action.secondaryLabel??"פריט מו״מ"}${action.dueAt?` · יעד: ${action.dueAt}`:""}`};
     case "follow_up_waiting":
       return {title:`בצע מעקב מול ${action.label??"הגורם החיצוני"}`, detail:`ממתינים ל${action.secondaryLabel??"פריט"}${action.dueAt?` · מעקב: ${action.dueAt}`:""}`};
     case "refresh_stale_evidence":
