@@ -17,6 +17,7 @@ mod legal_docs;
 mod legal_rules;
 mod matter_profile;
 mod models;
+mod negotiation;
 mod requirements;
 mod retrieval;
 mod scanner;
@@ -81,6 +82,12 @@ pub fn run() {
             commands::update_matter_workstream,
             commands::list_matter_requirements,
             commands::update_matter_requirement,
+            negotiation::list_insurance_claims,
+            negotiation::save_insurance_claim,
+            negotiation::list_negotiation_events,
+            negotiation::add_negotiation_event,
+            negotiation::list_negotiation_positions,
+            negotiation::add_negotiation_position,
             commands::create_medical_event,
             commands::create_wage_record,
             commands::create_liability_fact,
