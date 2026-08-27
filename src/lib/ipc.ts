@@ -129,5 +129,5 @@ export const commands = {
   list_negotiation_positions: (matterId:string) => callRaw("list_negotiation_positions",{matterId}),
   add_negotiation_position: (payload:Record<string,unknown>={}) => callRaw("add_negotiation_position",{payload}),
   correct_negotiation_position: (payload:Record<string,unknown>={}) => callRaw("correct_negotiation_position",{payload}),
-  get_negotiation_snapshot: (matterId:string) => callRaw("get_negotiation_snapshot",{matterId}),
+  get_negotiation_snapshot: (matterId:string,insuranceClaimId:string) => callRaw("get_negotiation_snapshot",{matterId,insuranceClaimId}),
 };
