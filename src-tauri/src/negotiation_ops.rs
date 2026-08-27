@@ -422,4 +422,309 @@ mod tests {
         let matter_id = Uuid::new_v4().to_string();
         db.write(|conn| {
             conn.execute(
-                "INSERT INTM
+                "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+                 VALUES(?1,?2,'generic_civil','active','intake',?3,?3)",
+                params![matter_id, title, now_utc()],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        matter_id
+    }
+
+    fn add_party(db: &DbState, matter_id: &str, name: &str) -> String {
+        let party_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO matter_parties
+                   (id, matter_id, role, entity_kind, display_name, created_at, updated_at)
+                 VALUES (?1, ?2, 'insurer', 'organization', ?3, ?4, ?4)",
+                params![party_id, matter_id, name, now_utc()],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        party_id
+    }
+
+    fn add_claim_with_updated_at(
+        db: &DbState,
+        matter_id: &str,
+        insurer_party_id: &str,
+        insurer_name: &str,
+        claim_number: &str,
+        updated_at: &str,
+    ) -> String {
+        let claim_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO insurance_claims
+                   (id, matter_id, insurer_name, claim_number, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5)",
+                params![claim_id, matter_id, insurer_name, claim_number, updated_at],
+            )?;
+            conn.execute(
+                "INSERT INTO insurance_claim_insurers
+                   (claim_id, matter_id, insurer_party_id, insurer_name_snapshot, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![claim_id, matter_id, insurer_party_id, insurer_name, updated_at],
+            )?;
+            conn.execute(
+                "INSERT INTO insurance_claim_status_history
+                   (id, matter_id, insurance_claim_id, from_status, to_status, changed_at, actor_kind, created_at)
+                 VALUES (?1, ?2, ?3, NULL, 'open', ?4, 'human', ?4)",
+                params![Uuid::new_v4().to_string(), matter_id, claim_id, updated_at],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        claim_id
+    }
+
+    fn add_claim(
+        db: &DbState,
+        matter_id: &str,
+        insurer_party_id: &str,
+        insurer_name: &str,
+        claim_number: &str,
+    ) -> String {
+        add_claim_with_updated_at(
+            db,
+            matter_id,
+            insurer_party_id,
+            insurer_name,
+            claim_number,
+            &now_utc(),
+        )
+    }
+
+    fn add_position(
+        db: &DbState,
+        matter_id: &str,
+        claim_id: &str,
+        side: &str,
+        kind: &str,
+        amount_cents: i64,
+        recorded_at: &str,
+        created_at: &str,
+    ) -> String {
+        let position_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO negotiation_positions
+                   (id, matter_id, insurance_claim_id, side, kind, amount_cents, currency, recorded_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ILS', ?7, ?8)",
+                params![position_id, matter_id, claim_id, side, kind, amount_cents, recorded_at, created_at],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        position_id
+    }
+
+    fn add_event_with_follow_up(
+        db: &DbState,
+        matter_id: &str,
+        claim_id: &str,
+        summary: &str,
+        happened_at: &str,
+        follow_up_at: &str,
+    ) -> (String, String) {
+        let event_id = Uuid::new_v4().to_string();
+        let waiting_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO negotiation_events
+                   (id, matter_id, insurance_claim_id, event_kind, happened_at, summary, follow_up_at, created_at)
+                 VALUES (?1, ?2, ?3, 'email', ?4, ?5, ?6, ?4)",
+                params![event_id, matter_id, claim_id, happened_at, summary, follow_up_at],
+            )?;
+            conn.execute(
+                "INSERT INTO waiting_for
+                   (id, matter_id, party_label, item_label, since_at, follow_up_at, status, source_ref)
+                 VALUES (?1, ?2, 'Insurer', ?3, ?4, ?5, 'open', ?6)",
+                params![
+                    waiting_id,
+                    matter_id,
+                    summary,
+                    happened_at,
+                    follow_up_at,
+                    format!("negotiation_event:{event_id}")
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO negotiation_waiting_links (event_id, matter_id, waiting_for_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![event_id, matter_id, waiting_id, happened_at],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        (event_id, waiting_id)
+    }
+
+    #[test]
+    fn snapshot_is_scoped_to_the_selected_insurance_claim() {
+        let (_dir, db) = temp_db();
+        let matter = add_matter(&db, "Matter A");
+        let other_matter = add_matter(&db, "Matter B");
+        let clal_party = add_party(&db, &matter, "Clal");
+        let harel_party = add_party(&db, &matter, "Harel");
+        let other_party = add_party(&db, &other_matter, "Other");
+        let claim_a = add_claim(&db, &matter, &clal_party, "Clal", "A");
+        let claim_b = add_claim(&db, &matter, &harel_party, "Harel", "B");
+        let other_claim = add_claim(&db, &other_matter, &other_party, "Other", "X");
+
+        add_position(
+            &db,
+            &matter,
+            &claim_a,
+            "our_side",
+            "demand",
+            1_200_000,
+            "2026-08-27T10:00:00Z",
+            "2026-08-27T10:00:00Z",
+        );
+        add_position(
+            &db,
+            &matter,
+            &claim_b,
+            "counterparty",
+            "offer",
+            500_000,
+            "2026-08-28T10:00:00Z",
+            "2026-08-28T10:00:00Z",
+        );
+        add_event_with_follow_up(
+            &db,
+            &matter,
+            &claim_b,
+            "Harel interaction",
+            "2026-08-28T12:00:00Z",
+            "2026-08-29T12:00:00Z",
+        );
+
+        let as_of = parse_utc("2026-08-30T00:00:00Z", "asOf").unwrap();
+        let snapshot_a = snapshot_for_now(&db, &matter, &claim_a, as_of).unwrap();
+        assert_eq!(snapshot_a["currentClaim"]["id"].as_str().unwrap(), claim_a);
+        assert_eq!(snapshot_a["currentClaim"]["insurerDisplayName"], "Clal");
+        assert_eq!(snapshot_a["latestOurDemand"]["amountCents"], 1_200_000);
+        assert!(snapshot_a["latestCounterpartyOffer"].is_null());
+        assert!(snapshot_a["latestInteraction"].is_null());
+        assert!(snapshot_a["nextFollowUp"].is_null());
+        assert!(snapshot_a["gap"].is_null());
+
+        let snapshot_b = snapshot_for_now(&db, &matter, &claim_b, as_of).unwrap();
+        assert_eq!(snapshot_b["currentClaim"]["id"].as_str().unwrap(), claim_b);
+        assert_eq!(snapshot_b["currentClaim"]["insurerDisplayName"], "Harel");
+        assert!(snapshot_b["latestOurDemand"].is_null());
+        assert_eq!(snapshot_b["latestCounterpartyOffer"]["amountCents"], 500_000);
+        assert_eq!(snapshot_b["latestInteraction"]["summary"], "Harel interaction");
+        assert_eq!(snapshot_b["nextFollowUp"]["itemLabel"], "Harel interaction");
+        assert!(snapshot_b["nextFollowUp"]["overdue"].as_bool().unwrap());
+        assert!(snapshot_b["gap"].is_null());
+
+        assert!(snapshot_for_now(&db, &matter, &other_claim, as_of).is_err());
+    }
+
+    #[test]
+    fn close_waiting_for_requires_same_matter_and_clears_negotiation_health_signal() {
+        let (_dir, db) = temp_db();
+        let matter_a = add_matter(&db, "Matter A");
+        let matter_b = add_matter(&db, "Matter B");
+        let insurer = add_party(&db, &matter_a, "Insurer A");
+        let claim = add_claim(&db, &matter_a, &insurer, "Insurer A", "A");
+        let (_event_id, waiting_id) = add_event_with_follow_up(
+            &db,
+            &matter_a,
+            &claim,
+            "Overdue insurer follow-up",
+            "2000-01-01T00:00:00Z",
+            "2000-01-02T00:00:00Z",
+        );
+
+        let health_before = case_health::compute(&db, &matter_a).unwrap();
+        assert_eq!(health_before.next_best_action.code, "follow_up_negotiation");
+        let snapshot_before = snapshot_for_now(
+            &db,
+            &matter_a,
+            &claim,
+            parse_utc("2000-01-03T00:00:00Z", "asOf").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(snapshot_before["nextFollowUp"]["waitingForId"].as_str().unwrap(), waiting_id);
+
+        assert!(close_waiting_for_item(&db, &matter_b, &waiting_id).is_err());
+        let status_after_wrong_matter: String = db
+            .read(|conn| {
+                conn.query_row(
+                    "SELECT status FROM waiting_for WHERE id = ?1 AND matter_id = ?2",
+                    params![waiting_id, matter_a],
+                    |row| row.get(0),
+                )
+                .map_err(AppError::Db)
+            })
+            .unwrap();
+        assert_eq!(status_after_wrong_matter, "open");
+
+        close_waiting_for_item(&db, &matter_a, &waiting_id).unwrap();
+        let snapshot_after = snapshot_for_now(
+            &db,
+            &matter_a,
+            &claim,
+            parse_utc("2000-01-03T00:00:00Z", "asOf").unwrap(),
+        )
+        .unwrap();
+        assert!(snapshot_after["nextFollowUp"].is_null());
+        let health_after = case_health::compute(&db, &matter_a).unwrap();
+        assert_ne!(health_after.next_best_action.code, "follow_up_negotiation");
+        assert!(!health_after
+            .factors
+            .iter()
+            .any(|factor| factor.code == "negotiation_followups_overdue"));
+    }
+
+    #[test]
+    fn claim_status_history_changed_at_is_not_claim_updated_at() {
+        let (_dir, db) = temp_db();
+        let matter = add_matter(&db, "Matter A");
+        let insurer = add_party(&db, &matter, "Insurer A");
+        let created_at = "2026-08-27T10:00:00Z";
+        let claim = add_claim_with_updated_at(&db, &matter, &insurer, "Insurer A", "A", created_at);
+
+        let transition = change_claim_status(
+            &db,
+            &json!({
+                "matterId": matter,
+                "claimId": claim,
+                "toStatus": "negotiating",
+                "changedAt": "2000-01-01T12:00:00+02:00",
+                "actorKind": "human",
+                "note": "historical transition date"
+            }),
+        )
+        .unwrap();
+        assert_eq!(transition["changedAt"], "2000-01-01T10:00:00Z");
+
+        let (claim_updated_at, history_changed_at): (String, String) = db
+            .read(|conn| {
+                let claim_updated_at: String = conn.query_row(
+                    "SELECT updated_at FROM insurance_claims WHERE id = ?1 AND matter_id = ?2",
+                    params![claim, matter],
+                    |row| row.get(0),
+                )?;
+                let history_changed_at: String = conn.query_row(
+                    "SELECT changed_at FROM insurance_claim_status_history
+                     WHERE insurance_claim_id = ?1 AND matter_id = ?2 AND to_status = 'negotiating'",
+                    params![claim, matter],
+                    |row| row.get(0),
+                )?;
+                Ok((claim_updated_at, history_changed_at))
+            })
+            .unwrap();
+        assert_eq!(history_changed_at, "2000-01-01T10:00:00Z");
+        assert_ne!(claim_updated_at, history_changed_at);
+        assert!(parse_utc(&claim_updated_at, "updatedAt").unwrap() > parse_utc(&history_changed_at, "changedAt").unwrap());
+        assert!(parse_utc(&claim_updated_at, "updatedAt").unwrap() >= parse_utc(created_at, "createdAt").unwrap());
+    }
+}
