@@ -12,8 +12,9 @@ import { AuthoritiesTab } from "../matter/AuthoritiesTab";
 import { WorkstreamsTab } from "../matter/WorkstreamsTab";
 import { MissingEvidenceTab } from "../matter/MissingEvidenceTab";
 import { LedgersTab } from "../matter/LedgersTab";
+import { NegotiationTab } from "../matter/NegotiationTab";
 
-type Tab="overview"|"documents"|"facts"|"damage"|"workstreams"|"evidence"|"ledgers"|"tasks"|"legal"|"research";
+type Tab="overview"|"documents"|"facts"|"damage"|"negotiation"|"workstreams"|"evidence"|"ledgers"|"tasks"|"legal"|"research";
 const STAGES=["intake","evidence_collection","treatment_and_records","negotiation","litigation","closed"];
 
 function EditMatterModal({matter,onClose,onSaved}:{matter:Matter;onClose:()=>void;onSaved:()=>void}) {
@@ -58,7 +59,7 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
   const [tab,setTab]=useState<Tab>("overview");
   const [editing,setEditing]=useState(false);
   const [stageBusy,setStageBusy]=useState(false);
-  const tabs:Array<[Tab,string]>=[["overview","סקירה"],["documents","מסמכים"],["facts","עובדות ו־AI"],["damage","נזק"],["workstreams","מסלולי עבודה"],["evidence","ראיות חסרות"],["ledgers","פנקסים"],["tasks","משימות ויומן"],["legal","מסמכים משפטיים"],["research","מחקר"]];
+  const tabs:Array<[Tab,string]>=[["overview","סקירה"],["documents","מסמכים"],["facts","עובדות ו־AI"],["damage","נזק"],["negotiation","מו״מ וביטוח"],["workstreams","מסלולי עבודה"],["evidence","ראיות חסרות"],["ledgers","פנקסים"],["tasks","משימות ויומן"],["legal","מסמכים משפטיים"],["research","מחקר"]];
 
   const changeStage=async(stage:string)=>{
     setStageBusy(true);
@@ -85,7 +86,7 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
       {tabs.map(([key,label])=><button key={key} aria-current={tab===key?"page":undefined} className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
     </nav>
     <div className="tab-body">
-      {tab==="overview"?<OverviewTab matter={matter}/>:tab==="documents"?<DocumentsTab matterId={matterId}/>:tab==="facts"?<FactsAITab matterId={matterId}/>:tab==="damage"?<DamageTab matterId={matterId}/>:tab==="workstreams"?<WorkstreamsTab matterId={matterId}/>:tab==="evidence"?<MissingEvidenceTab matterId={matterId}/>:tab==="ledgers"?<LedgersTab matterId={matterId}/>:tab==="tasks"?<TasksCalendarTab matterId={matterId}/>:tab==="legal"?<LegalDocumentsTab matterId={matterId}/>:<AuthoritiesTab matterId={matterId}/>}
+      {tab==="overview"?<OverviewTab matter={matter}/>:tab==="documents"?<DocumentsTab matterId={matterId}/>:tab==="facts"?<FactsAITab matterId={matterId}/>:tab==="damage"?<DamageTab matterId={matterId}/>:tab==="negotiation"?<NegotiationTab matterId={matterId}/>:tab==="workstreams"?<WorkstreamsTab matterId={matterId}/>:tab==="evidence"?<MissingEvidenceTab matterId={matterId}/>:tab==="ledgers"?<LedgersTab matterId={matterId}/>:tab==="tasks"?<TasksCalendarTab matterId={matterId}/>:tab==="legal"?<LegalDocumentsTab matterId={matterId}/>:<AuthoritiesTab matterId={matterId}/>}
     </div>
     {editing && <EditMatterModal matter={matter} onClose={()=>setEditing(false)} onSaved={reload}/>}
   </div>;
