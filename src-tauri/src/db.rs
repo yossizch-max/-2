@@ -24,6 +24,7 @@ impl DbState {
         conn.execute_batch(include_str!("../migrations/005_matter_requirements_v16.sql"))?;
         conn.execute_batch(include_str!("../migrations/006_matter_ledgers_v17.sql"))?;
         conn.execute_batch(include_str!("../migrations/007_retrieval_context_v18.sql"))?;
+        conn.execute_batch(include_str!("../migrations/008_negotiation_insurance_v19.sql"))?;
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
@@ -67,6 +68,7 @@ mod tests {
     const MIGRATION_005: &str = include_str!("../migrations/005_matter_requirements_v16.sql");
     const MIGRATION_006: &str = include_str!("../migrations/006_matter_ledgers_v17.sql");
     const MIGRATION_007: &str = include_str!("../migrations/007_retrieval_context_v18.sql");
+    const MIGRATION_008: &str = include_str!("../migrations/008_negotiation_insurance_v19.sql");
 
     /// Phase B, milestone B5a step 0: FTS5 is not a Cargo feature on rusqlite - the
     /// bundled SQLCipher build this project already links (`bundled-sqlcipher-
@@ -99,6 +101,7 @@ mod tests {
         conn.execute_batch(MIGRATION_005).unwrap();
         conn.execute_batch(MIGRATION_006).unwrap();
         conn.execute_batch(MIGRATION_007).unwrap();
+        conn.execute_batch(MIGRATION_008).unwrap();
         // A real app re-runs the full schema on every launch against an
         // already-initialized database; every statement must tolerate that.
         conn.execute_batch(MIGRATION_001).unwrap();
@@ -108,6 +111,7 @@ mod tests {
         conn.execute_batch(MIGRATION_005).unwrap();
         conn.execute_batch(MIGRATION_006).unwrap();
         conn.execute_batch(MIGRATION_007).unwrap();
+        conn.execute_batch(MIGRATION_008).unwrap();
         // Counted excluding document_pages_fts and its own FTS5-internal shadow
         // tables (_data/_idx/_docsize/_config/_content) - their exact number is an
         // FTS5 implementation detail, not something to hardcode a guess for here;
@@ -117,9 +121,9 @@ mod tests {
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'document_pages_fts%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 49, "the 49 real application tables must be unaffected by FTS5's own shadow tables");
+        assert_eq!(table_count, 52, "the 52 real application tables must be unaffected by FTS5's own shadow tables");
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(user_version, 18);
+        assert_eq!(user_version, 19);
     }
 
     #[test]
@@ -331,6 +335,44 @@ mod tests {
             "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
         ).unwrap();
         assert_eq!(matter_survived, "existing matter");
+    }
+
+    #[test]
+    fn a_v18_database_upgrades_cleanly_to_v19_and_preserves_existing_matter_data() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
+        conn.execute_batch(MIGRATION_007).unwrap();
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES('m1','existing matter','traffic_accident','active','intake','x','x')",
+            [],
+        ).unwrap();
+
+        conn.execute_batch(MIGRATION_008).unwrap();
+
+        let b7_tables: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
+             ('insurance_claims','negotiation_events','negotiation_positions')",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(b7_tables, 3);
+        let title: String = conn.query_row(
+            "SELECT title FROM matters WHERE id='m1'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "existing matter");
+        let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(user_version, 19);
+
+        conn.execute_batch(MIGRATION_008).unwrap();
+        let user_version_after_rerun: i64 =
+            conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(user_version_after_rerun, 19);
     }
 
     #[test]
