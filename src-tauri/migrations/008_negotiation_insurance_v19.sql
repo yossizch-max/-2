@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS insurance_claim_insurers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (claim_id, matter_id) REFERENCES insurance_claims(id, matter_id) ON DELETE CASCADE,
-  FOREIGN KEY (insurer_party_id, matter_id) REFERENCES matter_parties(id, matter_id),
+  FOREIGN KEY (insurer_party_id, matter_id) REFERENCES matter_parties(id, matter_id) ON DELETE CASCADE,
   UNIQUE(claim_id, matter_id)
 );
 
@@ -165,6 +165,16 @@ WHEN EXISTS (
 ) AND (NEW.role <> 'insurer' OR NEW.matter_id <> OLD.matter_id)
 BEGIN
   SELECT RAISE(ABORT, 'INSURER_PARTY_REQUIRED');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_insurance_claim_insurer_party_delete_guard
+BEFORE DELETE ON matter_parties
+WHEN EXISTS (
+  SELECT 1 FROM insurance_claim_insurers i
+  WHERE i.insurer_party_id = OLD.id AND i.matter_id = OLD.matter_id
+) AND (SELECT active FROM ledger_delete_guard WHERE id = 1) = 0
+BEGIN
+  SELECT RAISE(ABORT, 'INSURER_PARTY_IN_USE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_negotiation_events_no_update
