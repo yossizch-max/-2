@@ -4,7 +4,9 @@
 -- B7 records operational insurance/negotiation history. It does NOT decide whether
 -- a settlement should be accepted and it exposes no automatic settlement-approval
 -- state transition. Offers/demands and interaction history are append-only records;
--- corrections are represented by a new row, preserving the audit trail.
+-- corrections are represented by a new row, preserving the audit trail. Direct
+-- history deletes are blocked unless the existing guarded whole-matter cascade path
+-- is active.
 
 CREATE TABLE IF NOT EXISTS insurance_claims(
  id TEXT PRIMARY KEY,
@@ -65,8 +67,18 @@ CREATE TRIGGER IF NOT EXISTS trg_negotiation_event_no_update
 BEFORE UPDATE ON negotiation_events
 BEGIN SELECT RAISE(ABORT,'NEGOTIATION_HISTORY_APPEND_ONLY'); END;
 
+CREATE TRIGGER IF NOT EXISTS trg_negotiation_event_no_delete
+BEFORE DELETE ON negotiation_events
+WHEN (SELECT active FROM ledger_delete_guard WHERE id=1)=0
+BEGIN SELECT RAISE(ABORT,'NEGOTIATION_HISTORY_APPEND_ONLY'); END;
+
 CREATE TRIGGER IF NOT EXISTS trg_negotiation_position_no_update
 BEFORE UPDATE ON negotiation_positions
+BEGIN SELECT RAISE(ABORT,'NEGOTIATION_HISTORY_APPEND_ONLY'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_negotiation_position_no_delete
+BEFORE DELETE ON negotiation_positions
+WHEN (SELECT active FROM ledger_delete_guard WHERE id=1)=0
 BEGIN SELECT RAISE(ABORT,'NEGOTIATION_HISTORY_APPEND_ONLY'); END;
 
 PRAGMA user_version = 19;

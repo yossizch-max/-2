@@ -371,7 +371,7 @@ mod tests {
         .unwrap();
         let event_id = event["id"].as_str().unwrap().to_string();
 
-        add_position(
+        let position = add_position(
             &db,
             &json!({
                 "matterId": matter_a,
@@ -383,6 +383,7 @@ mod tests {
             }),
         )
         .unwrap();
+        let position_id = position["id"].as_str().unwrap().to_string();
 
         assert_eq!(list_claims(&db, &matter_a).unwrap().len(), 1);
         assert_eq!(list_events(&db, &matter_a).unwrap().len(), 1);
@@ -401,14 +402,44 @@ mod tests {
         );
         assert!(cross_matter.is_err());
 
-        let update_result = db.write(|conn| {
+        let update_event_result = db.write(|conn| {
             conn.execute(
                 "UPDATE negotiation_events SET summary='rewritten' WHERE id=?1",
-                [event_id],
+                [event_id.as_str()],
             )?;
             Ok(())
         });
-        assert!(update_result.is_err());
+        assert!(update_event_result.is_err());
+
+        let delete_event_result = db.write(|conn| {
+            conn.execute(
+                "DELETE FROM negotiation_events WHERE id=?1",
+                [event_id.as_str()],
+            )?;
+            Ok(())
+        });
+        assert!(delete_event_result.is_err());
+
+        let update_position_result = db.write(|conn| {
+            conn.execute(
+                "UPDATE negotiation_positions SET amount_cents=1 WHERE id=?1",
+                [position_id.as_str()],
+            )?;
+            Ok(())
+        });
+        assert!(update_position_result.is_err());
+
+        let delete_position_result = db.write(|conn| {
+            conn.execute(
+                "DELETE FROM negotiation_positions WHERE id=?1",
+                [position_id.as_str()],
+            )?;
+            Ok(())
+        });
+        assert!(delete_position_result.is_err());
+
+        assert_eq!(list_events(&db, &matter_a).unwrap().len(), 1);
+        assert_eq!(list_positions(&db, &matter_a).unwrap().len(), 1);
 
         drop(db);
         let _ = fs::remove_dir_all(root);
