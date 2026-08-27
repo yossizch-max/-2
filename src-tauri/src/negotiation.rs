@@ -10,8 +10,11 @@ use serde_json::{json, Value};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::DbState;
-use crate::error::{AppError, AppResult};
+use crate::{
+    db::DbState,
+    error::{AppError, AppResult},
+    AppState,
+};
 
 const CLAIM_STATUSES: &[&str] = &["open", "awaiting_response", "negotiating", "settled", "closed"];
 const EVENT_KINDS: &[&str] = &["call", "email", "letter", "meeting", "request", "follow_up", "other"];
@@ -1143,93 +1146,89 @@ pub(crate) fn snapshot(db: &DbState, matter_id: &str) -> AppResult<Value> {
 }
 
 #[tauri::command]
-pub fn list_insurance_claims(state: State<'_, DbState>, matter_id: String) -> AppResult<Vec<Value>> {
-    list_claims(&state, &matter_id)
+pub fn list_insurance_claims(state: State<'_, AppState>, matter_id: String) -> AppResult<Vec<Value>> {
+    list_claims(&state.db, &matter_id)
 }
 
 #[tauri::command]
-pub fn save_insurance_claim(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    save_claim(&state, &payload)
+pub fn save_insurance_claim(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    save_claim(&state.db, &payload)
 }
 
 #[tauri::command]
-pub fn change_insurance_claim_status(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    change_claim_status(&state, &payload)
+pub fn change_insurance_claim_status(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    change_claim_status(&state.db, &payload)
 }
 
 #[tauri::command]
 pub fn list_insurance_claim_status_history(
-    state: State<'_, DbState>,
+    state: State<'_, AppState>,
     matter_id: String,
     claim_id: String,
 ) -> AppResult<Vec<Value>> {
-    list_status_history(&state, &matter_id, &claim_id)
+    list_status_history(&state.db, &matter_id, &claim_id)
 }
 
 #[tauri::command]
-pub fn list_negotiation_events(state: State<'_, DbState>, matter_id: String) -> AppResult<Vec<Value>> {
-    list_events(&state, &matter_id)
+pub fn list_negotiation_events(state: State<'_, AppState>, matter_id: String) -> AppResult<Vec<Value>> {
+    list_events(&state.db, &matter_id)
 }
 
 #[tauri::command]
-pub fn add_negotiation_event(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    add_event(&state, &payload)
+pub fn add_negotiation_event(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    add_event(&state.db, &payload)
 }
 
 #[tauri::command]
-pub fn correct_negotiation_event(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    correct_event(&state, &payload)
+pub fn correct_negotiation_event(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    correct_event(&state.db, &payload)
 }
 
 #[tauri::command]
-pub fn list_negotiation_positions(state: State<'_, DbState>, matter_id: String) -> AppResult<Vec<Value>> {
-    list_positions(&state, &matter_id)
+pub fn list_negotiation_positions(state: State<'_, AppState>, matter_id: String) -> AppResult<Vec<Value>> {
+    list_positions(&state.db, &matter_id)
 }
 
 #[tauri::command]
-pub fn add_negotiation_position(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    add_position(&state, &payload)
+pub fn add_negotiation_position(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    add_position(&state.db, &payload)
 }
 
 #[tauri::command]
-pub fn correct_negotiation_position(state: State<'_, DbState>, payload: Value) -> AppResult<Value> {
-    correct_position(&state, &payload)
+pub fn correct_negotiation_position(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    correct_position(&state.db, &payload)
 }
 
 #[tauri::command]
-pub fn get_negotiation_snapshot(state: State<'_, DbState>, matter_id: String) -> AppResult<Value> {
-    snapshot(&state, &matter_id)
+pub fn get_negotiation_snapshot(state: State<'_, AppState>, matter_id: String) -> AppResult<Value> {
+    snapshot(&state.db, &matter_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands;
     use crate::ledger;
     use tempfile::TempDir;
 
     fn temp_db() -> (TempDir, DbState) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.sqlite3");
-        let db = DbState::open_at(&db_path).unwrap();
+        let db = DbState::open(db_path).unwrap();
         (dir, db)
     }
 
     fn add_matter(db: &DbState, title: &str) -> String {
-        commands::create_matter(
-            db,
-            &json!({
-                "title": title,
-                "clientName": "Client",
-                "matterType": "tort",
-                "jurisdiction": "IL"
-            }),
-        )
-        .unwrap()
-        .get("id")
-        .and_then(Value::as_str)
-        .unwrap()
-        .to_string()
+        let matter_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+                 VALUES(?1,?2,'generic_civil','active','intake',?3,?3)",
+                params![matter_id, title, now_utc()],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        matter_id
     }
 
     fn add_party(db: &DbState, matter_id: &str, role: &str, display_name: &str) -> String {
@@ -1252,15 +1251,14 @@ mod tests {
         let version_id = Uuid::new_v4().to_string();
         db.write(|conn| {
             conn.execute(
-                "INSERT INTO documents
-                   (id, matter_id, logical_title, source_path, file_type, category, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'source.pdf', 'pdf', 'correspondence', ?4, ?4)",
+                "INSERT INTO documents(id, matter_id, logical_title, category, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'correspondence', ?4, ?4)",
                 params![document_id, matter_id, title, now_utc()],
             )?;
             conn.execute(
                 "INSERT INTO document_versions
-                   (id, document_id, matter_id, content_sha256, version_label, ocr_status, stale, created_at)
-                 VALUES (?1, ?2, ?3, ?4, 'v1', 'complete', 0, ?5)",
+                   (id, document_id, matter_id, content_sha256, extraction_state, stale, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'complete', 0, ?5)",
                 params![version_id, document_id, matter_id, Uuid::new_v4().to_string(), now_utc()],
             )?;
             Ok(())
