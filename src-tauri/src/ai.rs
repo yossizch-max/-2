@@ -20,6 +20,25 @@ use url::Url;
 use uuid::Uuid;
 
 const MAX_LEDGER_PROPOSALS_PER_RUN: usize = 20;
+/// Phase C, milestone C2: a single `extract_matter_understanding` run returns up to
+/// 7 arrays (entities/events/claims/amounts/dates/contradictions/suggestedQuestions).
+/// This bounds their combined size - a safety valve against a runaway response, not
+/// a claim about how many items a matter typically has.
+const MAX_UNDERSTANDING_ITEMS_PER_RUN: usize = 60;
+
+const ENTITY_TYPES: &[&str] = &[
+    "person","company","insurer","employer","medical_provider","court","government_body","expert","other",
+];
+const EVENT_TYPES: &[&str] = &[
+    "accident","medical_treatment","hospitalization","examination","correspondence","claim_submission",
+    "insurer_response","payment","court_filing","court_decision","employment_absence","expert_examination","other",
+];
+const AMOUNT_TYPES: &[&str] = &[
+    "claim_amount","salary","medical_expense","insurer_offer","payment","deduction","settlement_proposal","other",
+];
+const DATE_TYPES: &[&str] = &[
+    "event_date","document_date","filing_date","treatment_date","payment_date","correspondence_date","other",
+];
 
 struct Profile {
     id:String, provider_kind:String, base_url:String, model:String,
@@ -32,6 +51,17 @@ enum ProposalKind {
     MedicalEvent,
     WageRecord,
     LiabilityFact,
+    /// Phase C, milestone C2: a bundle capability only - `run_capability` accepts it
+    /// and its provider output is split into the 7 item kinds below, each persisted
+    /// as its own `ai_proposals` row. It is never itself a stored `proposal_kind`.
+    MatterUnderstanding,
+    UnderstandingEntity,
+    UnderstandingEvent,
+    UnderstandingClaim,
+    UnderstandingAmount,
+    UnderstandingDate,
+    UnderstandingContradiction,
+    UnderstandingQuestion,
 }
 
 impl ProposalKind {
@@ -41,7 +71,35 @@ impl ProposalKind {
             "extract_medical_event"=>Ok(Self::MedicalEvent),
             "extract_wage_record"=>Ok(Self::WageRecord),
             "extract_liability_fact"=>Ok(Self::LiabilityFact),
+            "extract_matter_understanding"=>Ok(Self::MatterUnderstanding),
+            "understanding_entity"=>Ok(Self::UnderstandingEntity),
+            "understanding_event"=>Ok(Self::UnderstandingEvent),
+            "understanding_claim"=>Ok(Self::UnderstandingClaim),
+            "understanding_amount"=>Ok(Self::UnderstandingAmount),
+            "understanding_date"=>Ok(Self::UnderstandingDate),
+            "understanding_contradiction"=>Ok(Self::UnderstandingContradiction),
+            "understanding_question"=>Ok(Self::UnderstandingQuestion),
             _=>Err(AppError::Validation(format!("unknown AI proposal kind \"{v}\""))),
+        }
+    }
+
+    /// The canonical capability/proposal_kind string for this variant - the inverse
+    /// of `parse`. Used to fill `ai_proposals.proposal_kind` for each item produced
+    /// by a bundle capability, where it can differ from the run's own `capability`.
+    fn capability_str(&self)->&'static str{
+        match self{
+            Self::Facts=>"extract_facts",
+            Self::MedicalEvent=>"extract_medical_event",
+            Self::WageRecord=>"extract_wage_record",
+            Self::LiabilityFact=>"extract_liability_fact",
+            Self::MatterUnderstanding=>"extract_matter_understanding",
+            Self::UnderstandingEntity=>"understanding_entity",
+            Self::UnderstandingEvent=>"understanding_event",
+            Self::UnderstandingClaim=>"understanding_claim",
+            Self::UnderstandingAmount=>"understanding_amount",
+            Self::UnderstandingDate=>"understanding_date",
+            Self::UnderstandingContradiction=>"understanding_contradiction",
+            Self::UnderstandingQuestion=>"understanding_question",
         }
     }
 
@@ -59,6 +117,10 @@ impl ProposalKind {
             Self::MedicalEvent=>"{\"sourceIds\":[\"...\"],\"eventDate\":\"YYYY-MM-DD or null\",\"providerName\":\"string or null\",\"treatmentSummary\":\"grounded summary\"}. Do not invent dates, providers, diagnoses, disability, or treatment.",
             Self::WageRecord=>"{\"sourceIds\":[\"...\"],\"periodStart\":\"YYYY-MM-DD or null\",\"periodEnd\":\"YYYY-MM-DD or null\",\"employerName\":\"string or null\",\"grossAmountCents\":12345}. Do not estimate missing amounts or employers.",
             Self::LiabilityFact=>"{\"sourceIds\":[\"...\"],\"claimBasis\":\"string or null\",\"liablePartyName\":\"string or null\",\"description\":\"grounded factual statement\"}. Do not state legal conclusions as facts.",
+            Self::MatterUnderstanding=>"{\"entities\":[{\"sourceIds\":[\"...\"],\"entityType\":\"person|company|insurer|employer|medical_provider|court|government_body|expert|other\",\"displayName\":\"...\",\"confidence\":0.0}],\"events\":[{\"sourceIds\":[\"...\"],\"eventType\":\"accident|medical_treatment|hospitalization|examination|correspondence|claim_submission|insurer_response|payment|court_filing|court_decision|employment_absence|expert_examination|other\",\"title\":\"...\",\"description\":\"neutral, grounded\",\"eventDate\":\"YYYY-MM-DD or null\",\"involvedEntities\":[\"...\"],\"confidence\":0.0}],\"claims\":[{\"sourceIds\":[\"...\"],\"assertedBy\":\"who asserts this\",\"statement\":\"the assertion, never rewritten as an established fact\",\"target\":\"string or null\",\"confidence\":0.0}],\"amounts\":[{\"sourceIds\":[\"...\"],\"amountType\":\"claim_amount|salary|medical_expense|insurer_offer|payment|deduction|settlement_proposal|other\",\"amountCents\":12345,\"currency\":\"ILS unless the source states otherwise\",\"context\":\"string or null\",\"eventDate\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"dates\":[{\"sourceIds\":[\"...\"],\"date\":\"YYYY-MM-DD\",\"dateType\":\"event_date|document_date|filing_date|treatment_date|payment_date|correspondence_date|other\",\"context\":\"why this date matters\",\"confidence\":0.0}],\"contradictions\":[{\"sourceIds\":[\"sourceAId\",\"sourceBId\"],\"itemA\":\"...\",\"sourceAId\":\"...\",\"itemB\":\"...\",\"sourceBId\":\"...\",\"reason\":\"why these may conflict\"}],\"suggestedQuestions\":[{\"sourceIds\":[\"...\"],\"question\":\"...\"}]}. Every array may be empty; omit an item rather than inventing a date, amount, or entity the source does not support. A claim is never rewritten as an established fact. confidence reflects only model certainty, never legal certainty, and is optional.",
+            Self::UnderstandingEntity|Self::UnderstandingEvent|Self::UnderstandingClaim|Self::UnderstandingAmount|
+            Self::UnderstandingDate|Self::UnderstandingContradiction|Self::UnderstandingQuestion=>
+                "internal per-item schema - see extract_matter_understanding",
         }
     }
 }
@@ -68,6 +130,19 @@ enum ProposalPayload {
     MedicalEvent { source_ids:Vec<String>, event_date:Option<String>, provider_name:Option<String>, treatment_summary:String },
     WageRecord { source_ids:Vec<String>, period_start:Option<String>, period_end:Option<String>, employer_name:Option<String>, gross_amount_cents:i64 },
     LiabilityFact { source_ids:Vec<String>, claim_basis:Option<String>, liable_party_name:Option<String>, description:String },
+    UnderstandingEntity { source_ids:Vec<String>, entity_type:String, display_name:String, confidence:Option<f64> },
+    UnderstandingEvent {
+        source_ids:Vec<String>, event_type:String, title:String, description:String,
+        event_date:Option<String>, involved_entities:Vec<String>, confidence:Option<f64>,
+    },
+    UnderstandingClaim { source_ids:Vec<String>, asserted_by:String, statement:String, target:Option<String>, confidence:Option<f64> },
+    UnderstandingAmount {
+        source_ids:Vec<String>, amount_type:String, amount_cents:i64, currency:String,
+        context:Option<String>, event_date:Option<String>, confidence:Option<f64>,
+    },
+    UnderstandingDate { source_ids:Vec<String>, date:String, date_type:String, context:String, confidence:Option<f64> },
+    UnderstandingContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
+    UnderstandingQuestion { source_ids:Vec<String>, question:String },
 }
 
 impl ProposalPayload {
@@ -76,7 +151,14 @@ impl ProposalPayload {
             Self::Fact{source_ids,..}|
             Self::MedicalEvent{source_ids,..}|
             Self::WageRecord{source_ids,..}|
-            Self::LiabilityFact{source_ids,..}=>source_ids,
+            Self::LiabilityFact{source_ids,..}|
+            Self::UnderstandingEntity{source_ids,..}|
+            Self::UnderstandingEvent{source_ids,..}|
+            Self::UnderstandingClaim{source_ids,..}|
+            Self::UnderstandingAmount{source_ids,..}|
+            Self::UnderstandingDate{source_ids,..}|
+            Self::UnderstandingContradiction{source_ids,..}|
+            Self::UnderstandingQuestion{source_ids,..}=>source_ids,
         }
     }
 
@@ -106,6 +188,56 @@ impl ProposalPayload {
                 "claimBasis":claim_basis,
                 "liablePartyName":liable_party_name,
                 "description":description,
+            }),
+            Self::UnderstandingEntity{source_ids,entity_type,display_name,confidence}=>json!({
+                "sourceIds":source_ids,
+                "entityType":entity_type,
+                "displayName":display_name,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingEvent{source_ids,event_type,title,description,event_date,involved_entities,confidence}=>json!({
+                "sourceIds":source_ids,
+                "eventType":event_type,
+                "title":title,
+                "description":description,
+                "eventDate":event_date,
+                "involvedEntities":involved_entities,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingClaim{source_ids,asserted_by,statement,target,confidence}=>json!({
+                "sourceIds":source_ids,
+                "assertedBy":asserted_by,
+                "statement":statement,
+                "target":target,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingAmount{source_ids,amount_type,amount_cents,currency,context,event_date,confidence}=>json!({
+                "sourceIds":source_ids,
+                "amountType":amount_type,
+                "amountCents":amount_cents,
+                "currency":currency,
+                "context":context,
+                "eventDate":event_date,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingDate{source_ids,date,date_type,context,confidence}=>json!({
+                "sourceIds":source_ids,
+                "date":date,
+                "dateType":date_type,
+                "context":context,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingContradiction{source_ids,item_a,source_a_id,item_b,source_b_id,reason}=>json!({
+                "sourceIds":source_ids,
+                "itemA":item_a,
+                "sourceAId":source_a_id,
+                "itemB":item_b,
+                "sourceBId":source_b_id,
+                "reason":reason,
+            }),
+            Self::UnderstandingQuestion{source_ids,question}=>json!({
+                "sourceIds":source_ids,
+                "question":question,
             }),
         }
     }
@@ -220,6 +352,46 @@ fn optional_date_field(proposal:&Value,key:&str)->AppResult<Option<String>>{
     Ok(Some(value))
 }
 
+/// Phase C, milestone C2: model confidence, never legal certainty - optional, and
+/// bounded to [0,1] when present so a malformed provider value fails closed instead
+/// of silently persisting a meaningless number.
+fn optional_confidence_field(proposal:&Value,key:&str)->AppResult<Option<f64>>{
+    match proposal.get(key){
+        None|Some(Value::Null)=>Ok(None),
+        Some(Value::Number(n))=>{
+            let v=n.as_f64().ok_or_else(||AppError::Validation(format!("proposal field {key} must be a number")))?;
+            if !(0.0..=1.0).contains(&v){
+                return Err(AppError::Validation(format!("proposal field {key} must be between 0 and 1")));
+            }
+            Ok(Some(v))
+        },
+        _=>Err(AppError::Validation(format!("proposal field {key} must be a number or null"))),
+    }
+}
+
+fn optional_string_array_field(proposal:&Value,key:&str)->AppResult<Vec<String>>{
+    match proposal.get(key){
+        None|Some(Value::Null)=>Ok(Vec::new()),
+        Some(Value::Array(items))=>{
+            let mut out=Vec::with_capacity(items.len());
+            for item in items{
+                let s=item.as_str().ok_or_else(||AppError::Validation(format!("proposal field {key} must be an array of strings")))?;
+                let trimmed=s.trim();
+                if !trimmed.is_empty(){ out.push(trimmed.to_string()); }
+            }
+            Ok(out)
+        },
+        _=>Err(AppError::Validation(format!("proposal field {key} must be an array or null"))),
+    }
+}
+
+fn validate_in(v:&str,allowed:&[&str],field:&str)->AppResult<()>{
+    if !allowed.contains(&v){
+        return Err(AppError::Validation(format!("proposal field {field} has unknown value \"{v}\"")));
+    }
+    Ok(())
+}
+
 fn required_non_negative_i64_field(proposal:&Value,key:&str)->AppResult<i64>{
     let value=match proposal.get(key){
         Some(Value::Number(n))=>n.as_i64().ok_or_else(||AppError::Validation(format!("proposal field {key} must be an integer")))?,
@@ -267,6 +439,87 @@ fn parse_structured_proposal(kind:ProposalKind,proposal:&Value)->AppResult<Propo
             liable_party_name:optional_string_field(proposal,"liablePartyName")?,
             description:required_string_field(proposal,"description")?,
         }),
+        ProposalKind::MatterUnderstanding=>Err(AppError::Validation(
+            "extract_matter_understanding is a bundle capability and never a stored proposal kind".into()
+        )),
+        ProposalKind::UnderstandingEntity=>{
+            let entity_type=required_string_field(proposal,"entityType")?;
+            validate_in(&entity_type,ENTITY_TYPES,"entityType")?;
+            Ok(ProposalPayload::UnderstandingEntity{
+                source_ids,
+                entity_type,
+                display_name:required_string_field(proposal,"displayName")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::UnderstandingEvent=>{
+            let event_type=required_string_field(proposal,"eventType")?;
+            validate_in(&event_type,EVENT_TYPES,"eventType")?;
+            Ok(ProposalPayload::UnderstandingEvent{
+                source_ids,
+                event_type,
+                title:required_string_field(proposal,"title")?,
+                description:required_string_field(proposal,"description")?,
+                event_date:optional_date_field(proposal,"eventDate")?,
+                involved_entities:optional_string_array_field(proposal,"involvedEntities")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::UnderstandingClaim=>Ok(ProposalPayload::UnderstandingClaim{
+            source_ids,
+            asserted_by:required_string_field(proposal,"assertedBy")?,
+            statement:required_string_field(proposal,"statement")?,
+            target:optional_string_field(proposal,"target")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::UnderstandingAmount=>{
+            let amount_type=required_string_field(proposal,"amountType")?;
+            validate_in(&amount_type,AMOUNT_TYPES,"amountType")?;
+            Ok(ProposalPayload::UnderstandingAmount{
+                source_ids,
+                amount_type,
+                amount_cents:required_non_negative_i64_field(proposal,"amountCents")?,
+                currency:required_string_field(proposal,"currency")?,
+                context:optional_string_field(proposal,"context")?,
+                event_date:optional_date_field(proposal,"eventDate")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::UnderstandingDate=>{
+            let date_type=required_string_field(proposal,"dateType")?;
+            validate_in(&date_type,DATE_TYPES,"dateType")?;
+            let date=optional_date_field(proposal,"date")?
+                .ok_or_else(||AppError::Validation("proposal missing date".into()))?;
+            Ok(ProposalPayload::UnderstandingDate{
+                source_ids,
+                date,
+                date_type,
+                context:required_string_field(proposal,"context")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::UnderstandingContradiction=>{
+            let source_a_id=required_string_field(proposal,"sourceAId")?;
+            let source_b_id=required_string_field(proposal,"sourceBId")?;
+            if source_a_id==source_b_id{
+                return Err(AppError::Validation("a contradiction must cite two distinct sources".into()));
+            }
+            if !source_ids.contains(&source_a_id) || !source_ids.contains(&source_b_id){
+                return Err(AppError::InvalidSourceReference);
+            }
+            Ok(ProposalPayload::UnderstandingContradiction{
+                source_ids,
+                item_a:required_string_field(proposal,"itemA")?,
+                source_a_id,
+                item_b:required_string_field(proposal,"itemB")?,
+                source_b_id,
+                reason:required_string_field(proposal,"reason")?,
+            })
+        },
+        ProposalKind::UnderstandingQuestion=>Ok(ProposalPayload::UnderstandingQuestion{
+            source_ids,
+            question:required_string_field(proposal,"question")?,
+        }),
     }
 }
 
@@ -284,13 +537,20 @@ fn validate_source_ids(source_ids:&[String],allowed:&HashSet<String>)->AppResult
 /// remains a single-object capability for backward compatibility. The returned JSON
 /// is generated from typed payloads, so arbitrary provider fields never enter
 /// `ai_proposals.structured_json` and compatible numeric strings become numbers.
+/// Each returned pair is `(proposal_kind, canonical_json)` - for every kind except
+/// `extract_matter_understanding` the kind is always the capability itself; the
+/// bundle capability is the one case where a single run produces several distinct
+/// proposal kinds (see `canonicalize_understanding_bundle`).
 fn canonicalize_provider_output(
     kind:ProposalKind,provider_output:&Value,allowed:&HashSet<String>,
-)->AppResult<Vec<Value>>{
+)->AppResult<Vec<(String,Value)>>{
+    if kind==ProposalKind::MatterUnderstanding{
+        return canonicalize_understanding_bundle(provider_output,allowed);
+    }
     if !kind.is_ledger(){
         let payload=parse_structured_proposal(kind,provider_output)?;
         validate_source_ids(payload.source_ids(),allowed)?;
-        return Ok(vec![payload.canonical_json()]);
+        return Ok(vec![(kind.capability_str().to_string(),payload.canonical_json())]);
     }
 
     let items=provider_output.as_array().ok_or_else(||AppError::Validation(
@@ -308,7 +568,53 @@ fn canonicalize_provider_output(
         }
         let payload=parse_structured_proposal(kind,item)?;
         validate_source_ids(payload.source_ids(),allowed)?;
-        canonical.push(payload.canonical_json());
+        canonical.push((kind.capability_str().to_string(),payload.canonical_json()));
+    }
+    Ok(canonical)
+}
+
+/// Phase C, milestone C2: `extract_matter_understanding`'s provider output is one
+/// JSON object with up to 7 named arrays, not a single flat array - each array's
+/// items are validated against their own item-type schema and become their own
+/// `proposal_kind` (`understanding_entity`, `understanding_event`, ...), all sharing
+/// one `ai_run_id`. A missing key is treated as an empty array (the model found
+/// nothing of that kind), not an error - matching the ledger capabilities' "return
+/// [] if the evidence supports no proposal" tolerance.
+fn canonicalize_understanding_bundle(
+    provider_output:&Value,allowed:&HashSet<String>,
+)->AppResult<Vec<(String,Value)>>{
+    let obj=provider_output.as_object().ok_or_else(||AppError::Validation(
+        "matter understanding output must be a JSON object".into()
+    ))?;
+    let sections:[(&str,ProposalKind);7]=[
+        ("entities",ProposalKind::UnderstandingEntity),
+        ("events",ProposalKind::UnderstandingEvent),
+        ("claims",ProposalKind::UnderstandingClaim),
+        ("amounts",ProposalKind::UnderstandingAmount),
+        ("dates",ProposalKind::UnderstandingDate),
+        ("contradictions",ProposalKind::UnderstandingContradiction),
+        ("suggestedQuestions",ProposalKind::UnderstandingQuestion),
+    ];
+    let mut canonical=Vec::new();
+    for (key,item_kind) in sections{
+        let Some(items)=obj.get(key) else { continue; };
+        if items.is_null(){ continue; }
+        let items=items.as_array().ok_or_else(||AppError::Validation(
+            format!("matter understanding field {key} must be an array")
+        ))?;
+        for item in items{
+            if !item.is_object(){
+                return Err(AppError::Validation(format!("every {key} item must be a JSON object")));
+            }
+            let payload=parse_structured_proposal(item_kind,item)?;
+            validate_source_ids(payload.source_ids(),allowed)?;
+            canonical.push((item_kind.capability_str().to_string(),payload.canonical_json()));
+        }
+    }
+    if canonical.len()>MAX_UNDERSTANDING_ITEMS_PER_RUN{
+        return Err(AppError::Validation(format!(
+            "matter understanding output exceeds maximum item count ({MAX_UNDERSTANDING_ITEMS_PER_RUN})"
+        )));
     }
     Ok(canonical)
 }
@@ -329,8 +635,8 @@ fn fail_run<T>(db:&DbState,run_id:&str,err:AppError)->AppResult<T>{
 }
 
 fn persist_completed_run(
-    db:&DbState,run_id:&str,matter_id:&str,capability:&str,context_sha:&str,
-    response_sha:&str,context:&Value,proposals:&[Value],
+    db:&DbState,run_id:&str,matter_id:&str,context_sha:&str,
+    response_sha:&str,context:&Value,proposals:&[(String,Value)],
 )->AppResult<()> {
     let manifest_json=serde_json::to_string(context)?;
     db.write(|conn|{
@@ -341,13 +647,13 @@ fn persist_completed_run(
              ) VALUES(?1,?2,0,?3,?4,'complete')",
             params![Uuid::new_v4().to_string(),run_id,context_sha,response_sha]
         )?;
-        for proposal in proposals{
+        for (proposal_kind,proposal) in proposals{
             tx.execute(
                 "INSERT INTO ai_proposals(
                     id,ai_run_id,matter_id,proposal_kind,structured_json,source_manifest_json,status
                  ) VALUES(?1,?2,?3,?4,?5,?6,'pending')",
                 params![
-                    Uuid::new_v4().to_string(),run_id,matter_id,capability,
+                    Uuid::new_v4().to_string(),run_id,matter_id,proposal_kind,
                     serde_json::to_string(proposal)?,&manifest_json
                 ]
             )?;
@@ -411,7 +717,12 @@ pub fn run_capability(
         Ok(())
     })?;
 
-    let output_instruction=if kind.is_ledger(){
+    let output_instruction=if kind==ProposalKind::MatterUnderstanding{
+        format!(
+            "Return one JSON object only (not an array) with up to {MAX_UNDERSTANDING_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
+            kind.schema_instruction()
+        )
+    }else if kind.is_ledger(){
         format!(
             "Return a JSON array containing zero to {MAX_LEDGER_PROPOSALS_PER_RUN} proposal objects. Return [] if the evidence supports no proposal. Every item must independently cite its own sourceIds and match this schema: {}",
             kind.schema_instruction()
@@ -464,7 +775,7 @@ pub fn run_capability(
 
     let response_sha=hex::encode(Sha256::digest(output_text.as_bytes()));
     if let Err(e)=persist_completed_run(
-        db,&run_id,matter_id,capability,&context_sha,&response_sha,&context,&proposals,
+        db,&run_id,matter_id,&context_sha,&response_sha,&context,&proposals,
     ){
         return fail_run(db,&run_id,e);
     }
@@ -586,12 +897,12 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
     db.write(|conn|{
         let tx=conn.transaction()?;
 
-        let (matter_id,proposal_kind,structured_json,source_manifest_json,status,run_context_sha):(String,String,String,String,String,String)=tx.query_row(
-            "SELECT p.matter_id,p.proposal_kind,p.structured_json,p.source_manifest_json,p.status,r.context_manifest_sha256
+        let (matter_id,proposal_kind,structured_json,source_manifest_json,status,run_context_sha,run_capability):(String,String,String,String,String,String,String)=tx.query_row(
+            "SELECT p.matter_id,p.proposal_kind,p.structured_json,p.source_manifest_json,p.status,r.context_manifest_sha256,r.capability
              FROM ai_proposals p
              JOIN ai_runs r ON r.id=p.ai_run_id
              WHERE p.id=?1",
-            [proposal_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))
+            [proposal_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))
         ).map_err(|_|AppError::NotFound("ai proposal".into()))?;
         if status!="pending"{
             return Err(AppError::Validation("proposal not pending".into()));
@@ -602,8 +913,14 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             .map_err(|_|AppError::Validation("proposal structured_json is not valid JSON".into()))?;
         let payload=parse_structured_proposal(kind,&parsed)?;
         let source_ids=payload.source_ids().to_vec();
+        // The manifest's own `capability` field always matches the *run's*
+        // capability (`ai_runs.capability`), never the per-item `proposal_kind` -
+        // for most capabilities these are the same string, but a bundle capability
+        // like `extract_matter_understanding` produces several distinct
+        // `proposal_kind` values from one run, so the run's capability is what must
+        // be checked here.
         let manifest_sources=load_manifest_sources(
-            &source_manifest_json,&run_context_sha,&matter_id,&proposal_kind,&source_ids,kind.requires_context_manifest(),
+            &source_manifest_json,&run_context_sha,&matter_id,&run_capability,&source_ids,kind.requires_context_manifest(),
         )?;
         let sources=resolve_live_sources(&tx,&matter_id,&source_ids,manifest_sources.as_ref())?;
 
@@ -633,6 +950,17 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
                 attach_ledger_sources(&tx,ledger::LedgerKind::Liability,&matter_id,&entry_id,&sources)?;
                 entry_id
             },
+            // Phase C, milestone C2: approving a Matter Understanding item writes no
+            // domain row. `ai_proposals.status='approved'` IS the durable, audited,
+            // item-level "reviewed and accepted" state - never a Verified Fact, a
+            // ledger entry, or a Matter Profile party edit. Linking an entity to a
+            // party, or promoting an event/amount into a ledger, remains a separate,
+            // explicit lawyer action outside this generic approval path (see the C2
+            // safety boundary: AI proposes, lawyer approves each *specific* effect).
+            ProposalPayload::UnderstandingEntity{..}|ProposalPayload::UnderstandingEvent{..}|
+            ProposalPayload::UnderstandingClaim{..}|ProposalPayload::UnderstandingAmount{..}|
+            ProposalPayload::UnderstandingDate{..}|ProposalPayload::UnderstandingContradiction{..}|
+            ProposalPayload::UnderstandingQuestion{..}=>proposal_id.to_string(),
         };
 
         let changed=tx.execute(
@@ -678,12 +1006,17 @@ pub(crate) fn create_pending_proposal_for_test(
     let response_sha=hex::encode(Sha256::digest(proposal_text.as_bytes()));
     db.write(|conn|{
         let tx=conn.transaction()?;
+        // The run's own capability always comes from the manifest itself, never
+        // from `capability` (the item's `proposal_kind`) - for most kinds the two
+        // are the same string, but a bundle capability like
+        // `extract_matter_understanding` produces several distinct proposal kinds
+        // from one run, so only `context.capability` is guaranteed correct here.
         tx.execute(
             "INSERT INTO ai_runs(
                 id,matter_id,capability,provider_profile_id,model,status,
                 context_manifest_sha256,client_egress_approved,started_at,finished_at
              ) VALUES(?1,?2,?3,NULL,NULL,'completed',?4,0,?5,?5)",
-            params![run_id,matter_id,capability,&context.manifest_sha256,Utc::now().to_rfc3339()]
+            params![run_id,matter_id,&context.capability,&context.manifest_sha256,Utc::now().to_rfc3339()]
         )?;
         tx.execute(
             "INSERT INTO ai_run_chunks(
@@ -1147,7 +1480,7 @@ mod tests {
         let canonical=canonicalize_provider_output(ProposalKind::MedicalEvent,&provider,&allowed).unwrap();
         let run_id=insert_running_run(&t.db,&matter_id,"extract_medical_event",&context);
         let context_value=serde_json::to_value(&context).unwrap();
-        persist_completed_run(&t.db,&run_id,&matter_id,"extract_medical_event",&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
+        persist_completed_run(&t.db,&run_id,&matter_id,&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
         assert_eq!(count_run_proposals(&t.db,&run_id),2);
         assert_eq!(count_table(&t.db,"medical_events",&matter_id),0);
     }
@@ -1171,7 +1504,7 @@ mod tests {
         let canonical=canonicalize_provider_output(ProposalKind::WageRecord,&provider,&allowed).unwrap();
         let run_id=insert_running_run(&t.db,&matter_id,"extract_wage_record",&context);
         let context_value=serde_json::to_value(&context).unwrap();
-        persist_completed_run(&t.db,&run_id,&matter_id,"extract_wage_record",&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
+        persist_completed_run(&t.db,&run_id,&matter_id,&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
         assert_eq!(count_run_proposals(&t.db,&run_id),2);
         assert_eq!(count_table(&t.db,"wage_records",&matter_id),0);
     }
@@ -1219,10 +1552,11 @@ mod tests {
         }]);
         let canonical=canonicalize_provider_output(ProposalKind::WageRecord,&provider,&allowed).unwrap();
         assert_eq!(canonical.len(),1);
-        assert_eq!(canonical[0]["grossAmountCents"],1200000);
-        assert!(canonical[0]["grossAmountCents"].is_number());
-        assert!(canonical[0].get("arbitrary").is_none());
-        assert!(canonical[0].get("explanation").is_none());
+        assert_eq!(canonical[0].0,"extract_wage_record");
+        assert_eq!(canonical[0].1["grossAmountCents"],1200000);
+        assert!(canonical[0].1["grossAmountCents"].is_number());
+        assert!(canonical[0].1.get("arbitrary").is_none());
+        assert!(canonical[0].1.get("explanation").is_none());
     }
 
     #[test]
@@ -1233,7 +1567,278 @@ mod tests {
         });
         let canonical=canonicalize_provider_output(ProposalKind::Facts,&provider,&allowed).unwrap();
         assert_eq!(canonical.len(),1);
-        assert_eq!(canonical[0]["subject"],"א");
-        assert!(canonical[0].get("extra").is_none());
+        assert_eq!(canonical[0].0,"extract_facts");
+        assert_eq!(canonical[0].1["subject"],"א");
+        assert!(canonical[0].1.get("extra").is_none());
+    }
+
+    // ---- Phase C, milestone C2: Matter Understanding Core ----------------------
+
+    /// No query - `extract_matter_understanding` has no default query term (like
+    /// `extract_facts`), so this exercises the recency-ordered fallback and reliably
+    /// includes every fixture page regardless of its exact wording.
+    fn understanding_context(db:&DbState,matter_id:&str)->ContextManifest{
+        retrieval::build_context_manifest(db,matter_id,"extract_matter_understanding",None).unwrap()
+    }
+
+    #[test]
+    fn entity_proposal_schema_is_pending_and_never_touches_matter_parties(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"general",&["חברת הביטוח פניקס אחראית על התביעה"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_entity",&context,json!({
+            "sourceIds":[source_id],"entityType":"insurer","displayName":"פניקס","confidence":0.8
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+        let party_count:i64=t.db.read(|conn|conn.query_row(
+            "SELECT count(*) FROM matter_parties WHERE matter_id=?1",[&matter_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(party_count,0,"an entity proposal must never automatically modify Matter Profile parties");
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let party_count_after:i64=t.db.read(|conn|conn.query_row(
+            "SELECT count(*) FROM matter_parties WHERE matter_id=?1",[&matter_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(party_count_after,0,"even approving the entity proposal must not auto-create a party - linking is a separate explicit action");
+    }
+
+    #[test]
+    fn event_proposal_schema_allows_an_unknown_date(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["אשפוז בבית חולים בעקבות התאונה"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_event",&context,json!({
+            "sourceIds":[source_id],"eventType":"hospitalization","title":"אשפוז","description":"אשפוז בבית חולים",
+            "eventDate":null,"involvedEntities":[],"confidence":0.6
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending",
+            "the source does not support a precise date - unknown must stay unknown, never fabricated");
+    }
+
+    #[test]
+    fn claim_stays_a_claim_and_is_never_auto_converted_to_a_verified_fact(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["התובע טוען שהנתבע נכנס לצומת באור אדום"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_claim",&context,json!({
+            "sourceIds":[source_id],"assertedBy":"התובע","statement":"הנתבע נכנס לצומת באור אדום",
+            "target":"הנתבע","confidence":0.5
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0,
+            "approving a claim must never create a Verified Fact - a claim is an assertion, not an established fact");
+    }
+
+    #[test]
+    fn amount_proposal_is_never_auto_fed_into_the_damage_engine(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["הצעת פשרה מחברת הביטוח בסך 50000 שח"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_amount",&context,json!({
+            "sourceIds":[source_id],"amountType":"insurer_offer","amountCents":5000000,"currency":"ILS",
+            "context":"הצעת פשרה","eventDate":null,"confidence":0.7
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"damage_calculations",&matter_id),0,
+            "an amount proposal must never automatically feed the Damage Engine");
+    }
+
+    #[test]
+    fn date_item_requires_a_real_date_and_a_known_date_type(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let missing_date=json!({"sourceIds":["s1"],"dateType":"filing_date","context":"הגשת תביעה","date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::UnderstandingDate,&missing_date).is_err());
+
+        let unknown_type=json!({"sourceIds":["s1"],"dateType":"made_up","context":"x","date":"2026-01-01","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::UnderstandingDate,&unknown_type).is_err());
+
+        let valid=json!({"sourceIds":["s1"],"dateType":"filing_date","context":"הגשת תביעה","date":"2026-01-01","confidence":0.9});
+        let payload=parse_structured_proposal(ProposalKind::UnderstandingDate,&valid).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+    }
+
+    #[test]
+    fn contradiction_cites_two_real_distinct_sources(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&[
+            "בדו״ח המשטרה נכתב שהתאונה אירעה ב-1 בינואר",
+            "בעדות הנהג נכתב שהתאונה אירעה ב-5 בינואר",
+        ]);
+        let context=understanding_context(&t.db,&matter_id);
+        let a=context.sources[0].source_id.clone();
+        let b=context.sources[1].source_id.clone();
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_contradiction",&context,json!({
+            "sourceIds":[a.clone(),b.clone()],"itemA":"תאריך התאונה 1 בינואר","sourceAId":a,
+            "itemB":"תאריך התאונה 5 בינואר","sourceBId":b,"reason":"תאריכים סותרים לאותו אירוע"
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+
+        // the same source cited twice is not a real contradiction
+        let allowed:HashSet<String>=[a.clone()].into_iter().collect();
+        let self_conflict=json!({"sourceIds":[a.clone(),a.clone()],"itemA":"x","sourceAId":a.clone(),"itemB":"y","sourceBId":a,"reason":"z"});
+        let payload=parse_structured_proposal(ProposalKind::UnderstandingContradiction,&self_conflict);
+        assert!(payload.is_err() || validate_source_ids(payload.unwrap().source_ids(),&allowed).is_err());
+    }
+
+    #[test]
+    fn understanding_items_without_a_real_source_are_rejected(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let no_sources=json!({"entities":[{"entityType":"person","displayName":"X","sourceIds":[]}]});
+        assert!(canonicalize_understanding_bundle(&no_sources,&allowed).is_err());
+
+        let missing_key=json!({"entities":[{"entityType":"person","displayName":"X"}]});
+        assert!(canonicalize_understanding_bundle(&missing_key,&allowed).is_err());
+
+        let unknown_source=json!({"claims":[{"sourceIds":["not-a-real-source"],"assertedBy":"a","statement":"b"}]});
+        assert!(canonicalize_understanding_bundle(&unknown_source,&allowed).is_err());
+    }
+
+    #[test]
+    fn stale_source_cannot_approve_an_understanding_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        let (version_id,_)=new_document_with_pages(&t.db,&matter_id,"court",&["עדות מתארת תאונה"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_claim",&context,json!({
+            "sourceIds":[source_id],"assertedBy":"עד","statement":"עדות מתארת תאונה","target":null,"confidence":null
+        })).unwrap();
+        t.db.write(|conn|{conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1",[version_id])?;Ok(())}).unwrap();
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+    }
+
+    #[test]
+    fn cross_matter_source_cannot_approve_an_understanding_item(){
+        let t=new_test_db();
+        let matter_a=new_matter(&t.db);
+        let matter_b=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_b,"court",&["עדות בתיק אחר"]);
+        let context_b=understanding_context(&t.db,&matter_b);
+        let source_b=first_source_id(&context_b);
+        let proposal_id=insert_raw_pending_proposal(&t.db,&matter_a,"understanding_claim",json!({
+            "sourceIds":[source_b],"assertedBy":"עד","statement":"עדות בתיק אחר","target":null,"confidence":null
+        }),serde_json::to_string(&context_b).unwrap(),context_b.manifest_sha256.clone());
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+    }
+
+    #[test]
+    fn malformed_matter_understanding_output_fails_closed(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        assert!(canonicalize_understanding_bundle(&json!(["not","an","object"]),&allowed).is_err());
+        assert!(canonicalize_understanding_bundle(&json!({"entities":"not-an-array"}),&allowed).is_err());
+        assert!(canonicalize_understanding_bundle(&json!({"entities":["not-an-object"]}),&allowed).is_err());
+        // a well-formed but empty bundle is valid - "no proposal" is a legitimate outcome
+        assert_eq!(canonicalize_understanding_bundle(&json!({}),&allowed).unwrap().len(),0);
+    }
+
+    #[test]
+    fn item_level_approval_is_independent_per_item_within_one_run(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["אירוע תאונה", "טענת התובע", "הצעת פשרה 10000"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let allowed:HashSet<String>=context.sources.iter().map(|s|s.source_id.clone()).collect();
+        let (event_src,claim_src,amount_src)=(
+            context.sources[0].source_id.clone(),context.sources[1].source_id.clone(),context.sources[2].source_id.clone(),
+        );
+        let bundle=json!({
+            "events":[{"sourceIds":[event_src],"eventType":"accident","title":"תאונה","description":"אירוע תאונה","eventDate":null,"involvedEntities":[],"confidence":null}],
+            "claims":[{"sourceIds":[claim_src],"assertedBy":"תובע","statement":"טענת התובע","target":null,"confidence":null}],
+            "amounts":[{"sourceIds":[amount_src],"amountType":"settlement_proposal","amountCents":1000000,"currency":"ILS","context":null,"eventDate":null,"confidence":null}],
+        });
+        let canonical=canonicalize_understanding_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(canonical.len(),3);
+        let run_id=insert_running_run(&t.db,&matter_id,"extract_matter_understanding",&context);
+        let context_value=serde_json::to_value(&context).unwrap();
+        persist_completed_run(&t.db,&run_id,&matter_id,&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
+
+        let ids:Vec<(String,String)>=t.db.read(|conn|{
+            let mut stmt=conn.prepare("SELECT id,proposal_kind FROM ai_proposals WHERE ai_run_id=?1 ORDER BY proposal_kind")?;
+            let rows=stmt.query_map([&run_id],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(rows)
+        }).unwrap();
+        assert_eq!(ids.len(),3);
+        let event_id=&ids.iter().find(|(_,k)|k=="understanding_event").unwrap().0;
+        let claim_id=&ids.iter().find(|(_,k)|k=="understanding_claim").unwrap().0;
+        let amount_id=&ids.iter().find(|(_,k)|k=="understanding_amount").unwrap().0;
+
+        approve_proposal(&t.db,event_id,None).unwrap();
+        assert_eq!(proposal_status(&t.db,event_id),"approved");
+        assert_eq!(proposal_status(&t.db,claim_id),"pending","approving one item from a bundle must not approve unrelated items");
+        assert_eq!(proposal_status(&t.db,amount_id),"pending");
+
+        reject_proposal(&t.db,claim_id,"rejected",Some("not grounded enough")).unwrap();
+        assert_eq!(proposal_status(&t.db,claim_id),"rejected");
+        assert_eq!(proposal_status(&t.db,event_id),"approved","rejecting one item must not affect a sibling item's own status");
+        assert_eq!(proposal_status(&t.db,amount_id),"pending","rejecting one item must not affect an unrelated pending item");
+    }
+
+    #[test]
+    fn provider_extra_fields_are_stripped_from_understanding_items(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let bundle=json!({
+            "entities":[{
+                "sourceIds":["s1"],"entityType":"person","displayName":"ישראל ישראלי","confidence":0.5,
+                "explanation":"provider prose","arbitrary":"must not persist","chainOfThought":"must not persist"
+            }]
+        });
+        let canonical=canonicalize_understanding_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(canonical.len(),1);
+        assert_eq!(canonical[0].0,"understanding_entity");
+        assert!(canonical[0].1.get("arbitrary").is_none());
+        assert!(canonical[0].1.get("explanation").is_none());
+        assert!(canonical[0].1.get("chainOfThought").is_none());
+    }
+
+    #[test]
+    fn the_same_structured_response_canonicalizes_identically_every_time(){
+        let allowed:HashSet<String>=["s1".to_string(),"s2".to_string()].into_iter().collect();
+        let bundle=json!({
+            "entities":[{"sourceIds":["s1"],"entityType":"court","displayName":"בית משפט שלום","confidence":0.4}],
+            "contradictions":[{"sourceIds":["s1","s2"],"itemA":"a","sourceAId":"s1","itemB":"b","sourceBId":"s2","reason":"r"}],
+        });
+        let once=canonicalize_understanding_bundle(&bundle,&allowed).unwrap();
+        let twice=canonicalize_understanding_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(serde_json::to_string(&once).unwrap(),serde_json::to_string(&twice).unwrap(),
+            "identical provider output must canonicalize to byte-identical persisted JSON every run");
+    }
+
+    // Reopening a real on-disk encrypted DB depends on the OS keyring for the
+    // SQLCipher key (`security::load_or_create_db_key`) - only the `windows-native`
+    // keyring backend is compiled in (see `Cargo.toml`), so a second `DbState::open`
+    // against the same path only succeeds on real Windows. Gating this test lets it
+    // run for real on the Windows Release Gate instead of asserting it works
+    // without ever having run it anywhere - the same pattern already established by
+    // `integrity_tests::core_entities_survive_a_full_app_close_and_reopen`.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reopening_the_database_preserves_approved_understanding_state(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["עדות מתארת תאונה"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_claim",&context,json!({
+            "sourceIds":[source_id],"assertedBy":"עד","statement":"עדות מתארת תאונה","target":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+
+        // A fresh DbState re-applies the same idempotent migrations against the same
+        // file - simulating a full app close/reopen without touching the file itself.
+        let reopened=DbState::open(t.root.join("app.db")).unwrap();
+        let status:String=reopened.read(|conn|conn.query_row(
+            "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"approved","an approved Matter Understanding item must survive a full close/reopen");
     }
 }

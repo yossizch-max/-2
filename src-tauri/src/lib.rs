@@ -29,6 +29,7 @@ mod scanner;
 mod search;
 mod security;
 mod source_snapshot;
+mod understanding;
 mod workstreams;
 
 use db::DbState;
@@ -181,7 +182,9 @@ pub fn run() {
             negotiation::list_negotiation_positions,
             negotiation::add_negotiation_position,
             negotiation::correct_negotiation_position,
-            negotiation_ops::get_negotiation_snapshot
+            negotiation_ops::get_negotiation_snapshot,
+            commands::get_matter_timeline,
+            commands::get_matter_brief
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");

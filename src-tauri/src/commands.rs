@@ -1,6 +1,6 @@
 use crate::{
     ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
-    workstreams,
+    understanding, workstreams,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -1129,6 +1129,21 @@ pub fn review_ai_proposal(state: State<'_, AppState>, payload: Value) -> AppResu
         params![proposal_id,decision,Utc::now().to_rfc3339(),note]
     )?;if changed!=1{return Err(AppError::Validation("proposal not pending".into()));}Ok(())})?;
     Ok(json!({"ok":true}))
+}
+
+/// Phase C, milestone C2: read-only unified matter timeline - see `understanding.rs`.
+#[tauri::command]
+pub fn get_matter_timeline(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(understanding::build_matter_timeline(&state.db,matter_id)?)?)
+}
+
+/// Phase C, milestone C2: generated Matter Brief over approved/verified state - see
+/// `understanding.rs`.
+#[tauri::command]
+pub fn get_matter_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    understanding::build_matter_brief(&state.db,matter_id)
 }
 
 #[tauri::command]

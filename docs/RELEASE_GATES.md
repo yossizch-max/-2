@@ -1252,6 +1252,111 @@ tampered-then-restored file's page content is never partially overwritten by the
 rejected attempt), and that a version `scanner.rs` has marked stale is neither
 re-extracted by intake nor ever returned by `retrieval::build_context_manifest`.
 
+## Phase C, milestone C2 — Matter Understanding Core (2026-08-28)
+
+First provider-agnostic case-understanding layer built entirely on the existing AI
+architecture (`ai.rs`, `retrieval.rs`/`ContextManifest`, `ai_runs`, `ai_proposals`,
+`ai_review.rs`, `verified_facts`) - no second AI pipeline, no new "agent memory"
+database, and no model-generated conclusion is ever stored as trusted state. **No
+migration 009** - see the reasoning below; migrations 001-008 are untouched.
+
+**New capability `extract_matter_understanding`**: a single bundle capability whose
+provider output is one JSON object with up to 7 arrays (`entities`, `events`,
+`claims`, `amounts`, `dates`, `contradictions`, `suggestedQuestions`). Each array's
+items are validated against their own schema and split into their own `ai_proposals`
+row with its own `proposal_kind` (`understanding_entity`, `understanding_event`,
+`understanding_claim`, `understanding_amount`, `understanding_date`,
+`understanding_contradiction`, `understanding_question`) - all sharing one
+`ai_run_id`. This is the one place a single run produces several distinct proposal
+kinds, which required two small, fully backward-compatible fixes to the pre-existing
+B5b machinery: `persist_completed_run`/`canonicalize_provider_output` now return
+`(proposal_kind, json)` pairs instead of assuming `proposal_kind == capability`, and
+`approve_proposal`'s stored-manifest capability check now reads `ai_runs.capability`
+(the run's real capability) instead of the row's own `proposal_kind` - for every
+pre-existing kind the two strings were always identical, so this is a bug fix with
+zero behavior change for `extract_facts`/`extract_medical_event`/`extract_wage_record`/
+`extract_liability_fact`, exercised by all their existing regression tests.
+
+**Every item requires real sourceIds**, validated against the run's own
+`ContextManifest` exactly like every existing capability - `parse_source_ids`/
+`validate_source_ids` are reused unchanged. `confidence` is optional, bounded to
+`[0,1]` when present, and is documented everywhere as model certainty only, never
+legal certainty. Controlled vocabularies (`entityType`, `eventType`, `amountType`,
+`dateType`) are Rust-only validated lists, matching this codebase's established
+idiom (no DB `CHECK`s on free-text proposal JSON).
+
+**Approving a Matter Understanding item writes no domain row.**
+`ai_proposals.status='approved'` *is* the durable, audited, item-level "reviewed and
+accepted" state:
+- A **claim** never becomes a `verified_facts` row - it stays an assertion
+  ("plaintiff says X" is never rewritten as "X").
+- An **amount** never feeds `damage_calculations`/the Damage Engine.
+- An **entity** never automatically writes `matter_parties` - linking an entity to
+  an existing party or creating a new one is a separate, explicit lawyer action
+  outside this generic approval path (not yet wired to a dedicated UI action in this
+  milestone; `matter_profile::add_party`/`update_party` already exist for it).
+  `matter_profile::ALLOWED_PARTY_ROLES` gained `government_body` to cover the
+  entity taxonomy's court/government-body category.
+- A **contradiction** is a review item only - it is deliberately *not* stored in the
+  existing `fact_conflicts` table, because that table's `fact_a_id`/`fact_b_id`
+  columns are hard foreign keys into `verified_facts`; a Matter Understanding
+  contradiction is between two *pre-verification* candidate items, and forcing it
+  through `fact_conflicts` would require fabricating `verified_facts` rows for
+  unverified assertions, corrupting that table's meaning. `fact_conflicts` remains
+  exactly what it was: post-verification conflict review between two real
+  `verified_facts`.
+- Item-level approval falls directly out of `ai_proposals` already being one row per
+  item with its own `status` - approving one event from a bundle run leaves every
+  sibling claim/amount/entity from the same run untouched at `pending`, and
+  rejecting one never affects another.
+
+**Why migration 009 was not needed**: `ai_proposals.proposal_kind`/`structured_json`
+have no DB `CHECK` (free TEXT, Rust-validated) - 7 new kind strings and their JSON
+shapes required zero schema change. `matter_parties` already existed with a role
+taxonomy needing only one new allowed value, `government_body`, added in Rust code.
+`verified_facts`, ledger tables, and `fact_conflicts` were inspected and found
+*unsuitable* for representing unverified understanding items without misrepresenting
+them as verified/committed state - the correct answer per the milestone's own
+instruction was to *not* force them in, not to invent a parallel table that would
+just duplicate what `ai_proposals` already provides for free.
+
+**`understanding.rs`** (new module) - two pure read models, no writes, no AI calls:
+- `build_matter_timeline`: unions approved `understanding_event` proposals (only
+  when `eventDate` is known - "unknown stays unknown", so a dateless event is never
+  given a fabricated sort key, though it stays fully visible in the review screen)
+  with verified `medical_events`/`wage_records`, `insurance_claim_status_history`,
+  `negotiation_events`, and `calendar_events`. Sorted strictly by business/event
+  date; `insertedAt` (audit time) is a separate field, never the sort key.
+  `liability_facts` has no date column and is not part of the timeline. Matter
+  isolation and `status='verified'`/`status='approved'` filters are re-applied at
+  every query, not trusted from any cache.
+- `build_matter_brief`: a generated summary (parties, entities, chronology, claims,
+  amounts, contradictions, missing-information questions, verified-fact/open-conflict
+  counts) built from the same authoritative sources plus pending+approved
+  understanding items - every non-approved item is labeled `pending: true` in its
+  own JSON so the frontend never renders it as settled.
+
+**Frontend**: `UnderstandingTab.tsx` (new) - one "סרוק והבן את התיק" action running
+`extract_matter_understanding`, and a review queue reusing the existing
+`list_ai_proposals`/`review_ai_proposal` commands, grouped into the sections the
+milestone specified (Events, Entities, Claims, Amounts, Contradictions, Questions;
+`understanding_date` items render inside the Events group). `MatterTimelineTab.tsx`
+and `MatterBriefTab.tsx` (new, both read-only) round out the three new matter tabs
+("הבנת התיק" / "ציר זמן" / "תדריך תיק"). No existing tab or command changed shape.
+
+**Tests**: 16 new tests in `ai.rs` (entity/event/claim/amount/date/contradiction
+schema and safety-boundary coverage; sourceId/stale/cross-matter rejection reused
+against the new kinds; malformed-bundle fail-closed; item-level partial
+approve/reject within one run; provider-extra-field stripping; canonicalization
+determinism; a Windows-gated close/reopen persistence test matching the pattern
+`integrity_tests::core_entities_survive_a_full_app_close_and_reopen` already
+established, since a second real `DbState::open` depends on the Windows-only
+keyring backend) plus 3 new tests in `understanding.rs` (business-date-not-
+insertion-order sort, matter isolation, pending-content labeling in the brief).
+216/216 local tests pass (`cargo test --locked -- --test-threads=1`); the Windows
+Release Gate is the authority on the full count including the Windows-gated test,
+not asserted here.
+
 ## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
 The full 24-step checklist below needs a running packaged Windows app, real scanned
