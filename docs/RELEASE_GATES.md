@@ -1409,6 +1409,125 @@ was written; this addendum documents what changed on top of it, on the same
   its original content and review note intact; an existing `calendar_events` row
   proven to appear exactly once across repeated timeline reads (no duplication).
 
+## Phase C, milestone C3 — Medical Evidence Intelligence (2026-08-28)
+
+Built on `codex/c3-medical-evidence-intelligence`, branched from the exact green
+C2-merge-to-main commit `d798363e4d3043b3918d98cd52abd3821b4b5168`. Same architecture
+as C2 - reuses `ai_runs`/`ai_proposals`/`ai_review.rs`/B5a retrieval unchanged, no
+second AI pipeline, no new "agent memory" store. **No migration 009** - same
+reasoning as C2: `ai_proposals.proposal_kind`/`structured_json` are free-TEXT and
+Rust-validated, so 15 new item-type schemas required zero DB schema change, and the
+pre-existing Medical Ledger (`medical_events`, migration 006) is read from, never
+altered or duplicated.
+
+**New capability `extract_medical_evidence`**: a bundle capability (same pattern as
+C2's `extract_matter_understanding`) whose provider output is one JSON object with
+up to 15 arrays, each item validated and split into its own `ai_proposals` row:
+`medical_encounter`, `medical_complaint`, `medical_finding`, `medical_diagnosis`,
+`medical_test`, `medical_treatment`, `medical_medication`, `medical_referral`,
+`medical_functional_status`, `medical_disability_determination`,
+`medical_prior_history`, `medical_opinion`, `medical_gap_signal`,
+`medical_missing_evidence_signal`, `medical_contradiction`. Its `retrieval.rs`
+capability profile has **no fixed default query** (unlike the narrower, pre-existing
+`extract_medical_event`) - the taxonomy is too broad for one keyword set to
+represent honestly, so it boosts the `medical`/`expert_opinion` categories and relies
+on a lawyer-typed query to narrow a run, exactly like `extract_matter_understanding`.
+
+**Strict semantic separation, enforced in the type system, not just prose**: each
+item type is its own `ProposalPayload` variant with only the fields that type
+actually has -
+- a **complaint** has no certainty/finding field at all, so it structurally cannot
+  be "upgraded" into an objective **finding**;
+- a **diagnosis**'s `certainty` (`suspected`/`provisional`/`differential`/
+  `confirmed`/`ruled_out`) is Rust-validated against that fixed vocabulary and
+  persisted verbatim - never silently changed by TAHRIR;
+- a **test**'s `stage` (`ordered`/`performed`/`resulted`/`interpreted`) is a single
+  required field with three independent optional date fields
+  (`orderedDate`/`performedDate`/`resultDate`) - an "ordered" proposal has no
+  `performedDate` at all, so an order can never itself imply the test happened;
+- a **disability determination** requires a non-empty `determiningBody` - TAHRIR
+  cannot structurally store a percentage without attributing it to a real
+  authorized source (BTL committee, authorized/court-appointed expert), and never
+  computes the percentage itself;
+- a **prior-history** item and a **medical opinion** are stored as neutral
+  descriptions/attributed text only - approving either writes no `verified_facts`
+  row, so neither can become a TAHRIR-authored causation or "pre-existing condition"
+  conclusion;
+- a **gap signal** requires `startDate`/`endDate` and a fixed `signalReason`
+  (`no_encounter_in_window`/`referral_without_followup`/`other`) but has no
+  "outcome" field of any kind - it cannot represent a recovery/abandonment
+  conclusion because the schema has nowhere to put one;
+- a **missing-evidence signal** has a typed `missingType` plus free-text
+  `description`, and likewise has no "confirmed absent" field - only ever a signal
+  that something specific was not found in the currently ingested sources.
+
+**Medical time model**: `eventDate`/`datePrecision` (reusing C2's `exact`/`month`/
+`year`/`approximate`/`unknown` vocabulary) and `documentDate` are independent
+optional fields on every dated item type, populated only from the source text -
+never derived from `ai_runs.started_at` or any other ingestion/audit timestamp.
+Proven directly by two new tests using a historical fixture date decades in the
+past against the test suite's real current-time run timestamp, and by a dedicated
+historical-backfill test asserting the Medical Timeline sorts a 2012 item by its
+2012 date, never by today's approval date.
+
+**`medical.rs`** (new module) - three pure read models, no writes, no AI calls,
+mirroring `understanding.rs`'s pattern exactly:
+- `build_medical_timeline`: unions approved dated medical items with verified
+  `medical_events` (the pre-existing Ledger). Items whose type has no date field at
+  all (complaint/finding/diagnosis/missing-evidence-signal/contradiction) appear as
+  **undated**, in their own stable block - never dropped, never given today's date.
+- `build_prior_vs_post_incident`: a neutral comparison only, bucketing approved
+  items as documented strictly before vs. on/after `matter_profile.
+  primary_event_date`. Anything whose own date is unknown, or whose comparison is
+  impossible because the matter has no recorded incident date, lands in a third
+  `undated` bucket rather than being guessed into either side. Never asserts
+  causation - verified by an explicit test that the serialized view never contains
+  the word "caused".
+- `build_medical_brief`: assembles all 15 item-type sections plus a unified
+  chronology, labeling every not-yet-approved item `pending: true`.
+
+**Medical Ledger integration**: approving a C3 item writes no domain row and never
+touches `medical_events` - `ai_proposals.status='approved'` is itself the durable,
+item-level state, exactly like C2. A lawyer wanting a real Medical Ledger entry
+still uses the pre-existing, separate `extract_medical_event`/ledger-verify flow;
+C3 does not change that flow's semantics at all.
+
+**Expert-material boundary**: satisfied by the existing three-tier separation
+already inherent in the architecture - original source text lives in
+`document_pages`, lawyer-approved work product lives in verified/committed domain
+tables (`medical_events`, `verified_facts`), and AI-generated analysis lives in
+`ai_proposals` and nowhere else. No new metadata column was needed to distinguish
+these tiers; a future export/package feature can exclude `ai_proposals` content by
+construction, simply by never reading from that table.
+
+**Frontend**: `MedicalEvidenceTab.tsx` (new) - one action button labeled
+"בניית תמונה רפואית מחומר קיים" on a matter's first run, "עדכון התמונה הרפואית"
+afterward (a frontend label only, computed from already-fetched data - both call
+the identical `extract_medical_evidence` command), and a review queue reusing
+`list_ai_proposals`/`review_ai_proposal`, grouped into the 15 sections above.
+`MedicalTimelineTab.tsx` (new, read-only) shows the dated chronology plus an
+explicit "תאריך לא ידוע" (unknown date) section, with an in-tab toggle to the
+Prior-vs-Post-Incident neutral comparison (no separate nav tab, same backend
+command). `MedicalBriefTab.tsx` (new, read-only) rounds out three new matter tabs
+("ראיות רפואיות" / "ציר זמן רפואי" / "תדריך רפואי"), backed by three new commands
+(`get_medical_timeline`, `get_prior_vs_post_incident`, `get_medical_brief`). No
+existing tab or command changed shape.
+
+**Tests**: 26 new tests in `ai.rs` and 5 new tests in `medical.rs` (31 new, 254/254
+local total up from 223), covering per-item schema validation and controlled
+vocabularies; the complaint/finding/diagnosis-certainty/test-stage semantic
+separations; the disability-determination authorized-source requirement; the
+event-date-vs-import-timestamp and historical-backfill boundaries; sourceId/
+staleness/cross-matter rejection reused against the new kinds; malformed-bundle
+fail-closed handling; item-level partial approve/reject within one run; provider-
+extra-field stripping; canonicalization determinism; a treatment-gap-signal test
+asserting no recovery/abandonment wording ever appears; a missing-evidence-signal
+schema test; a medical-contradiction two-real-sources test; an incremental-update
+test proving a later document's processing never overwrites an earlier approved
+item; the Timeline/Prior-vs-Post/Brief neutrality and matter-isolation tests in
+`medical.rs`; and a Windows-gated close/reopen persistence test matching the
+established pattern.
+
 ## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
 The full 24-step checklist below needs a running packaged Windows app, real scanned

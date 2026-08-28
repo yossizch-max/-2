@@ -142,6 +142,53 @@ export type AiStructuredProposal = {
   reason?: string;
   question?: string;
   confidence?: number | null;
+  // Phase C, milestone C3: Medical Evidence Intelligence item fields
+  encounterType?: string;
+  provider?: string | null;
+  institution?: string | null;
+  specialty?: string | null;
+  complaint?: string;
+  bodyRegion?: string | null;
+  laterality?: string | null;
+  severity?: string | null;
+  duration?: string | null;
+  finding?: string;
+  measurement?: string | null;
+  diagnosisText?: string;
+  code?: string | null;
+  certainty?: string;
+  testType?: string;
+  stage?: string;
+  orderedDate?: string | null;
+  performedDate?: string | null;
+  resultDate?: string | null;
+  interpretation?: string | null;
+  treatmentType?: string;
+  frequency?: string | null;
+  outcome?: string | null;
+  medication?: string;
+  dosage?: string | null;
+  route?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: string;
+  planType?: string;
+  urgency?: string | null;
+  limitation?: string;
+  workCapacityStatus?: string;
+  determiningBody?: string;
+  disabilityType?: string | null;
+  percentage?: number | null;
+  durationType?: string;
+  regulation?: string | null;
+  opinionType?: string;
+  opinionText?: string;
+  author?: string | null;
+  bodyRegionOrStream?: string | null;
+  priorEncounterRef?: string | null;
+  nextEncounterRef?: string | null;
+  signalReason?: string;
+  missingType?: string;
 };
 
 // Phase C, milestone C2: Matter Understanding Core
@@ -167,6 +214,40 @@ export type MatterBrief = {
   verifiedFactCount: number;
   openConflictCount: number;
   pendingReviewCount: number;
+};
+
+// Phase C, milestone C3: Medical Evidence Intelligence
+export type MedicalTimelineItem = {
+  id: string; kind: string; businessDate?: string | null; datePrecision?: string | null;
+  title: string; description?: string | null; verified: boolean; insertedAt: string;
+};
+
+export type PriorVsPostIncidentView = {
+  incidentDate?: string | null;
+  documentedBefore: MedicalTimelineItem[];
+  documentedAfter: MedicalTimelineItem[];
+  undated: MedicalTimelineItem[];
+};
+
+export type MedicalBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+export type MedicalBrief = {
+  matterId: string;
+  mainTreatmentHistory: MedicalBriefItem[];
+  keyComplaints: MedicalBriefItem[];
+  objectiveFindings: MedicalBriefItem[];
+  diagnoses: MedicalBriefItem[];
+  testsImaging: MedicalBriefItem[];
+  treatments: MedicalBriefItem[];
+  functionalWorkLimitations: MedicalBriefItem[];
+  disabilityDeterminations: MedicalBriefItem[];
+  priorDocumentedHistory: MedicalBriefItem[];
+  medicalOpinions: MedicalBriefItem[];
+  candidateGaps: MedicalBriefItem[];
+  missingEvidenceSignals: MedicalBriefItem[];
+  contradictions: MedicalBriefItem[];
+  chronology: MedicalTimelineItem[];
+  pendingMedicalReviewCount: number;
 };
 
 export type AiProposal = {

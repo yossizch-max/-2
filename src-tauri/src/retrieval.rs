@@ -64,6 +64,17 @@ fn capability_profile(capability: &str) -> CapabilityProfile {
         // keyword focus and no category boost. A lawyer-typed `query` still narrows
         // the run the same way it does for every other capability.
         "extract_matter_understanding" => CapabilityProfile { default_query: None, boosted_categories: &[] },
+        // Phase C, milestone C3: unlike extract_medical_event (one narrow flat
+        // ledger row), this capability's 15-item taxonomy spans encounters,
+        // complaints, findings, diagnoses, tests, treatments, medications,
+        // referrals, functional status, and disability determinations - too broad
+        // for one fixed keyword set to represent honestly, so - like
+        // extract_matter_understanding - it has no default query and instead
+        // relies on category boosting plus a lawyer-typed query to narrow a run.
+        "extract_medical_evidence" => CapabilityProfile {
+            default_query: None,
+            boosted_categories: &["medical", "expert_opinion"],
+        },
         _ => CapabilityProfile { default_query: None, boosted_categories: &[] },
     }
 }
