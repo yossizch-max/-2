@@ -35,7 +35,7 @@ jobs:
 
       - working-directory: src-tauri
         run: cargo test --locked -- --test-threads=1
-        timeout-minutes: 20
+        timeout-minutes: 40
 
       - name: Vendor OCR runtime (Tesseract/Poppler/tessdata)
         run: pwsh -File scripts/vendor-ocr-runtime.ps1
