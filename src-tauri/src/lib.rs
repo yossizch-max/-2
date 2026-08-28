@@ -2,9 +2,7 @@ mod ai;
 mod ai_review;
 mod authorities;
 mod case_health;
-mod commands {
-    include!(concat!(env!("OUT_DIR"), "/commands.rs"));
-}
+mod commands;
 mod damage;
 mod db;
 mod error;
@@ -19,9 +17,7 @@ mod legal_docs;
 mod legal_rules;
 mod matter_profile;
 mod models;
-mod negotiation {
-    include!(concat!(env!("OUT_DIR"), "/negotiation.rs"));
-}
+mod negotiation;
 mod negotiation_ops;
 mod requirements;
 mod retrieval;

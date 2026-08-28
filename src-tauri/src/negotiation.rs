@@ -1155,7 +1155,6 @@ pub fn save_insurance_claim(state: State<'_, AppState>, payload: Value) -> AppRe
     save_claim(&state.db, &payload)
 }
 
-#[tauri::command]
 pub fn change_insurance_claim_status(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     change_claim_status(&state.db, &payload)
 }
@@ -1199,7 +1198,6 @@ pub fn correct_negotiation_position(state: State<'_, AppState>, payload: Value) 
     correct_position(&state.db, &payload)
 }
 
-#[tauri::command]
 pub fn get_negotiation_snapshot(state: State<'_, AppState>, matter_id: String) -> AppResult<Value> {
     snapshot(&state.db, &matter_id)
 }
