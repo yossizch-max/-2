@@ -126,7 +126,14 @@ CREATE TABLE IF NOT EXISTS negotiation_waiting_links (
 
 CREATE INDEX IF NOT EXISTS idx_insurance_claims_matter ON insurance_claims(matter_id, status, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_insurance_claim_insurers_party ON insurance_claim_insurers(matter_id, insurer_party_id);
-CREATE INDEX IF NOT EXISTS idx_insurance_claim_status_history ON insurance_claim_status_history(matter_id, insurance_claim_id, changed_at DESC, id DESC);
+-- matches list_status_history's actual ORDER BY (created_at DESC, rowid DESC) -
+-- created_at is the audit/insertion timestamp; changed_at is a free business/
+-- effective time that can be historical and must never be the audit-order key.
+-- rowid (not included here - it's the table's own implicit column, not a
+-- declared one) supplies real insertion-order tie-breaking; the row's UUIDv4
+-- id has no relationship to insertion order and is deliberately not used as
+-- a substitute.
+CREATE INDEX IF NOT EXISTS idx_insurance_claim_status_history ON insurance_claim_status_history(matter_id, insurance_claim_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_negotiation_events_matter ON negotiation_events(matter_id, happened_at DESC, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_negotiation_events_claim ON negotiation_events(matter_id, insurance_claim_id, happened_at DESC);
 CREATE INDEX IF NOT EXISTS idx_negotiation_events_source ON negotiation_events(matter_id, source_document_version_id);

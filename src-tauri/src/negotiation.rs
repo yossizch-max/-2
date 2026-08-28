@@ -393,60 +393,16 @@ pub(crate) fn save_claim(db: &DbState, payload: &Value) -> AppResult<Value> {
     })
 }
 
-pub(crate) fn change_claim_status(db: &DbState, payload: &Value) -> AppResult<Value> {
-    let matter_id = required_str(payload, "matterId")?.to_string();
-    let claim_id = required_str(payload, "claimId")?.to_string();
-    let to_status = required_str(payload, "toStatus")?.to_string();
-    require_allowed(&to_status, CLAIM_STATUSES, "claim status")?;
-    if let Some(actor_kind) = optional_trimmed(payload, "actorKind") {
-        if actor_kind != "human" {
-            return Err(AppError::Validation("actorKind must be human for B7 status transitions".into()));
-        }
-    }
-    let changed_at = normalize_optional_datetime(payload, "changedAt")?.unwrap_or_else(now_utc);
-    let note = optional_trimmed(payload, "note").map(str::to_string);
-
-    db.write(|conn| {
-        ensure_matter(conn, &matter_id)?;
-        let from_status: String = conn
-            .query_row(
-                "SELECT status FROM insurance_claims WHERE id = ?1 AND matter_id = ?2",
-                params![claim_id, matter_id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .ok_or_else(|| AppError::NotFound("Insurance claim not found".into()))?;
-        if from_status == to_status {
-            return Err(AppError::Validation("claim status transition must change status".into()));
-        }
-
-        let tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE insurance_claims SET status = ?3, updated_at = ?4 WHERE id = ?1 AND matter_id = ?2",
-            params![claim_id, matter_id, to_status, changed_at],
-        )?;
-        let history_id = insert_status_history_in_tx(
-            &tx,
-            &matter_id,
-            &claim_id,
-            Some(&from_status),
-            &to_status,
-            &changed_at,
-            note.as_deref(),
-        )?;
-        tx.commit()?;
-        Ok(json!({
-            "id": claim_id,
-            "matterId": matter_id,
-            "fromStatus": from_status,
-            "toStatus": to_status,
-            "historyId": history_id,
-            "changedAt": changed_at,
-            "actorKind": "human"
-        }))
-    })
-}
-
+/// Audit ordering for `insurance_claim_status_history`: the row most recently
+/// *written to the system* comes first. `created_at` is the audit/insertion
+/// timestamp (see `insert_status_history_in_tx`) - never the caller-supplied
+/// business/effective `changed_at`, which can legitimately be historical (a
+/// lawyer recording a settlement that took effect before some later, earlier-
+/// recorded transition). `rowid` (SQLite's own monotonically-assigned insertion
+/// order for a table that is not `WITHOUT ROWID`) breaks ties when two rows
+/// share the same whole-second `created_at` (`now_utc()` truncates to
+/// `SecondsFormat::Secs`) - this is real insertion order, not the row's own
+/// UUIDv4 `id`, which has no relationship to insertion sequence at all.
 pub(crate) fn list_status_history(db: &DbState, matter_id: &str, claim_id: &str) -> AppResult<Vec<Value>> {
     db.read(|conn| {
         ensure_claim_in_matter(conn, matter_id, claim_id)?;
@@ -454,7 +410,7 @@ pub(crate) fn list_status_history(db: &DbState, matter_id: &str, claim_id: &str)
             "SELECT id, matter_id, insurance_claim_id, from_status, to_status, changed_at, note, actor_kind, created_at
              FROM insurance_claim_status_history
              WHERE matter_id = ?1 AND insurance_claim_id = ?2
-             ORDER BY changed_at DESC, created_at DESC, id DESC",
+             ORDER BY created_at DESC, rowid DESC",
         )?;
         let rows = stmt.query_map(params![matter_id, claim_id], |row| {
             Ok(json!({
@@ -1155,10 +1111,6 @@ pub fn save_insurance_claim(state: State<'_, AppState>, payload: Value) -> AppRe
     save_claim(&state.db, &payload)
 }
 
-pub fn change_insurance_claim_status(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
-    change_claim_status(&state.db, &payload)
-}
-
 #[tauri::command]
 pub fn list_insurance_claim_status_history(
     state: State<'_, AppState>,
@@ -1206,6 +1158,7 @@ pub fn get_negotiation_snapshot(state: State<'_, AppState>, matter_id: String) -
 mod tests {
     use super::*;
     use crate::ledger;
+    use crate::negotiation_ops;
     use tempfile::TempDir;
 
     fn temp_db() -> (TempDir, DbState) {
@@ -1377,7 +1330,7 @@ mod tests {
             })
         )
         .is_err());
-        assert!(change_claim_status(
+        assert!(negotiation_ops::change_claim_status(
             &db,
             &json!({
                 "matterId": matter,
@@ -1386,7 +1339,7 @@ mod tests {
             })
         )
         .is_err());
-        assert!(change_claim_status(
+        assert!(negotiation_ops::change_claim_status(
             &db,
             &json!({
                 "matterId": matter,
@@ -1397,23 +1350,96 @@ mod tests {
         )
         .is_err());
 
-        let transition = change_claim_status(
+        // The settlement's effective date is deliberately far in the past - earlier
+        // than the claim's own "open" creation moment - because changed_at is a free
+        // business/effective timestamp with no floor validation against
+        // claim.created_at or any prior history row (by design: see negotiation_ops.rs's
+        // change_claim_status and its own claim_status_history_changed_at_is_not_claim_updated_at test).
+        let transition = negotiation_ops::change_claim_status(
             &db,
             &json!({
                 "matterId": matter,
                 "claimId": claim_id,
                 "toStatus": "settled",
-                "changedAt": "2026-08-27T15:30:00+03:00",
-                "note": "Lawyer confirmed settlement state"
+                "changedAt": "2000-01-01T12:00:00+02:00",
+                "note": "Lawyer confirmed settlement state, effective historically"
             }),
         )
         .unwrap();
         assert_eq!(transition["actorKind"], "human");
-        assert_eq!(transition["changedAt"], "2026-08-27T12:30:00Z");
+        assert_eq!(transition["changedAt"], "2000-01-01T10:00:00Z");
+
+        // insurance_claims.status stays the sole operational source of truth: the
+        // last transition always wins, regardless of how historical its changed_at is.
+        let claim_after = list_claims(&db, &matter).unwrap().remove(0);
+        assert_eq!(claim_after["status"], "settled");
+
         let history = list_status_history(&db, &matter, &claim_id).unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0]["fromStatus"], "open");
+        // Audit ordering: the row most recently WRITTEN TO THE SYSTEM (the
+        // settlement, just inserted) comes first, even though its own changed_at
+        // is far EARLIER than the "open" row's changed_at. This is the exact
+        // contract list_status_history must uphold - audit/insertion order, never
+        // business changed_at, decides list order.
         assert_eq!(history[0]["toStatus"], "settled");
+        assert_eq!(history[0]["fromStatus"], "open");
+        assert_eq!(history[0]["actorKind"], "human");
+        assert_eq!(history[1]["toStatus"], "open");
+        let changed_at_0 = history[0]["changedAt"].as_str().unwrap();
+        let changed_at_1 = history[1]["changedAt"].as_str().unwrap();
+        assert!(
+            changed_at_0 < changed_at_1,
+            "audit ordering must win even though the settlement's business changed_at ({changed_at_0}) is earlier than the open row's ({changed_at_1}) - proves audit order beats business-time order"
+        );
+    }
+
+    #[test]
+    fn list_status_history_tie_breaks_by_insertion_order_not_uuid_lexical_order() {
+        let (_dir, db) = temp_db();
+        let matter = add_matter(&db, "Matter A");
+        let insurer = add_party(&db, &matter, "insurer", "Insurer Ltd");
+        let claim_id = create_claim(&db, &matter, &insurer);
+
+        // Both rows share the exact same created_at, simulating two transitions
+        // that land in the same whole second (now_utc() truncates to
+        // SecondsFormat::Secs, so this is a real, expected collision, not a
+        // contrived one). id_first is lexically GREATER than id_second - if the
+        // old (removed) `ORDER BY ... id DESC` tie-break were still in effect,
+        // the FIRST-inserted row would incorrectly sort ahead of the
+        // second-inserted one. Deterministic by construction (fixed IDs, one
+        // literal created_at, INSERT order fixed by statement order in a single
+        // transaction) - no sleep, no dependence on machine speed.
+        let shared_created_at = "2026-08-27T09:00:00Z";
+        let id_first = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+        let id_second = "00000000-0000-4000-8000-000000000000";
+        db.write(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "INSERT INTO insurance_claim_status_history
+                   (id, matter_id, insurance_claim_id, from_status, to_status, changed_at, note, actor_kind, created_at)
+                 VALUES (?1, ?2, ?3, NULL, 'negotiating', ?4, NULL, 'human', ?4)",
+                params![id_first, matter, claim_id, shared_created_at],
+            )?;
+            tx.execute(
+                "INSERT INTO insurance_claim_status_history
+                   (id, matter_id, insurance_claim_id, from_status, to_status, changed_at, note, actor_kind, created_at)
+                 VALUES (?1, ?2, ?3, 'negotiating', 'settled', ?4, NULL, 'human', ?4)",
+                params![id_second, matter, claim_id, shared_created_at],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let history = list_status_history(&db, &matter, &claim_id).unwrap();
+        let pos_first = history.iter().position(|h| h["id"] == id_first).unwrap();
+        let pos_second = history.iter().position(|h| h["id"] == id_second).unwrap();
+        assert_eq!(history[pos_first]["createdAt"], shared_created_at);
+        assert_eq!(history[pos_second]["createdAt"], shared_created_at);
+        assert!(
+            pos_second < pos_first,
+            "the row inserted SECOND (id_second, lexically the SMALLER uuid) must be returned before the row inserted FIRST (id_first, lexically the LARGER uuid) - proves the tie-break is real insertion order (rowid), not UUID lexical order"
+        );
     }
 
     #[test]
@@ -1751,7 +1777,7 @@ mod tests {
         let matter = add_matter(&db, "Matter A");
         let insurer = add_party(&db, &matter, "insurer", "Insurer Ltd");
         let claim_id = create_claim(&db, &matter, &insurer);
-        change_claim_status(
+        negotiation_ops::change_claim_status(
             &db,
             &json!({
                 "matterId": matter,
