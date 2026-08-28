@@ -20,6 +20,7 @@ mod ledger;
 mod legal_docs;
 mod legal_rules;
 mod matter_profile;
+mod medical;
 mod models;
 mod negotiation;
 mod negotiation_ops;
@@ -184,7 +185,10 @@ pub fn run() {
             negotiation::correct_negotiation_position,
             negotiation_ops::get_negotiation_snapshot,
             commands::get_matter_timeline,
-            commands::get_matter_brief
+            commands::get_matter_brief,
+            commands::get_medical_timeline,
+            commands::get_prior_vs_post_incident,
+            commands::get_medical_brief
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");

@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
+    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, matter_profile, medical, models, requirements, scanner, search, security,
     understanding, workstreams,
     error::{AppError,AppResult}, AppState
 };
@@ -1144,6 +1144,31 @@ pub fn get_matter_timeline(state: State<'_, AppState>, payload: Value) -> AppRes
 pub fn get_matter_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     understanding::build_matter_brief(&state.db,matter_id)
+}
+
+/// Phase C, milestone C3: read-only Medical Timeline - see `medical.rs`.
+#[tauri::command]
+pub fn get_medical_timeline(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(medical::build_medical_timeline(&state.db,matter_id)?)?)
+}
+
+/// Phase C, milestone C3: neutral Prior-vs-Post-Incident comparison - see
+/// `medical.rs`. `filter` is an optional free-text substring match, never a
+/// causation determination.
+#[tauri::command]
+pub fn get_prior_vs_post_incident(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let filter=payload.get("filter").and_then(Value::as_str);
+    medical::build_prior_vs_post_incident(&state.db,matter_id,filter)
+}
+
+/// Phase C, milestone C3: generated Medical Brief over approved/verified state -
+/// see `medical.rs`.
+#[tauri::command]
+pub fn get_medical_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    medical::build_medical_brief(&state.db,matter_id)
 }
 
 #[tauri::command]

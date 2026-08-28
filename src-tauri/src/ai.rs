@@ -53,6 +53,37 @@ const ISSUE_TYPES: &[&str] = &[
     "medical_continuity_unclear","missing_documentation","other",
 ];
 
+/// Phase C, milestone C3: a single `extract_medical_evidence` run returns up to 15
+/// arrays across every medical item type below. Same safety-valve reasoning as
+/// `MAX_UNDERSTANDING_ITEMS_PER_RUN` - a medical history can be long, so this is
+/// intentionally larger than C2's bundle cap.
+const MAX_MEDICAL_ITEMS_PER_RUN: usize = 120;
+
+const ENCOUNTER_TYPES: &[&str] = &[
+    "clinic_visit","emergency_department","hospitalization","surgery","physiotherapy",
+    "specialist_consultation","occupational_medicine","imaging_visit","expert_examination","other",
+];
+/// Preserves the source's own stated uncertainty about a diagnosis - TAHRIR must
+/// never silently upgrade "suspected" to "confirmed" or vice versa.
+const DIAGNOSIS_CERTAINTY: &[&str] = &["suspected","provisional","differential","confirmed","ruled_out","other"];
+/// "ordered" != "performed" != "resulted" - each medical test proposal states which
+/// stage the cited source actually documents; TAHRIR never infers a later stage
+/// from an earlier one (an order is not proof the test was ever performed).
+const TEST_STAGES: &[&str] = &["ordered","performed","resulted","interpreted"];
+const MEDICATION_STATUSES: &[&str] = &["active","discontinued","completed","unknown"];
+const WORK_CAPACITY_STATUSES: &[&str] = &["fit","unfit","partially_fit","restricted","unknown"];
+/// Disability is stored only when an authorized source (BTL committee, court-
+/// appointed expert, authorized medical expert) explicitly determined it - TAHRIR
+/// itself never calculates a percentage, so there is no "proposed" percentage type
+/// here, only a record of what an authorized body already decided.
+const DISABILITY_DURATION_TYPES: &[&str] = &["temporary","permanent"];
+const MEDICAL_OPINION_TYPES: &[&str] = &["causation","prognosis","work_capacity","disability","other"];
+const GAP_SIGNAL_REASONS: &[&str] = &["no_encounter_in_window","referral_without_followup","other"];
+const MISSING_EVIDENCE_TYPES: &[&str] = &[
+    "imaging_result_missing","specialist_report_missing","discharge_summary_missing",
+    "treatment_records_missing","btl_protocol_missing","provider_records_missing","other",
+];
+
 struct Profile {
     id:String, provider_kind:String, base_url:String, model:String,
     enabled:bool, client_data_authorized:bool,
@@ -76,6 +107,24 @@ enum ProposalKind {
     UnderstandingIssue,
     UnderstandingContradiction,
     UnderstandingQuestion,
+    /// Phase C, milestone C3: another bundle capability, same pattern as
+    /// `MatterUnderstanding` - never itself a stored `proposal_kind`.
+    MedicalEvidence,
+    MedicalEncounter,
+    MedicalComplaint,
+    MedicalFinding,
+    MedicalDiagnosis,
+    MedicalTest,
+    MedicalTreatment,
+    MedicalMedication,
+    MedicalReferral,
+    MedicalFunctionalStatus,
+    MedicalDisabilityDetermination,
+    MedicalPriorHistory,
+    MedicalOpinion,
+    MedicalGapSignal,
+    MedicalMissingEvidenceSignal,
+    MedicalContradiction,
 }
 
 impl ProposalKind {
@@ -94,6 +143,22 @@ impl ProposalKind {
             "understanding_issue"=>Ok(Self::UnderstandingIssue),
             "understanding_contradiction"=>Ok(Self::UnderstandingContradiction),
             "understanding_question"=>Ok(Self::UnderstandingQuestion),
+            "extract_medical_evidence"=>Ok(Self::MedicalEvidence),
+            "medical_encounter"=>Ok(Self::MedicalEncounter),
+            "medical_complaint"=>Ok(Self::MedicalComplaint),
+            "medical_finding"=>Ok(Self::MedicalFinding),
+            "medical_diagnosis"=>Ok(Self::MedicalDiagnosis),
+            "medical_test"=>Ok(Self::MedicalTest),
+            "medical_treatment"=>Ok(Self::MedicalTreatment),
+            "medical_medication"=>Ok(Self::MedicalMedication),
+            "medical_referral"=>Ok(Self::MedicalReferral),
+            "medical_functional_status"=>Ok(Self::MedicalFunctionalStatus),
+            "medical_disability_determination"=>Ok(Self::MedicalDisabilityDetermination),
+            "medical_prior_history"=>Ok(Self::MedicalPriorHistory),
+            "medical_opinion"=>Ok(Self::MedicalOpinion),
+            "medical_gap_signal"=>Ok(Self::MedicalGapSignal),
+            "medical_missing_evidence_signal"=>Ok(Self::MedicalMissingEvidenceSignal),
+            "medical_contradiction"=>Ok(Self::MedicalContradiction),
             _=>Err(AppError::Validation(format!("unknown AI proposal kind \"{v}\""))),
         }
     }
@@ -116,6 +181,22 @@ impl ProposalKind {
             Self::UnderstandingIssue=>"understanding_issue",
             Self::UnderstandingContradiction=>"understanding_contradiction",
             Self::UnderstandingQuestion=>"understanding_question",
+            Self::MedicalEvidence=>"extract_medical_evidence",
+            Self::MedicalEncounter=>"medical_encounter",
+            Self::MedicalComplaint=>"medical_complaint",
+            Self::MedicalFinding=>"medical_finding",
+            Self::MedicalDiagnosis=>"medical_diagnosis",
+            Self::MedicalTest=>"medical_test",
+            Self::MedicalTreatment=>"medical_treatment",
+            Self::MedicalMedication=>"medical_medication",
+            Self::MedicalReferral=>"medical_referral",
+            Self::MedicalFunctionalStatus=>"medical_functional_status",
+            Self::MedicalDisabilityDetermination=>"medical_disability_determination",
+            Self::MedicalPriorHistory=>"medical_prior_history",
+            Self::MedicalOpinion=>"medical_opinion",
+            Self::MedicalGapSignal=>"medical_gap_signal",
+            Self::MedicalMissingEvidenceSignal=>"medical_missing_evidence_signal",
+            Self::MedicalContradiction=>"medical_contradiction",
         }
     }
 
@@ -137,6 +218,12 @@ impl ProposalKind {
             Self::UnderstandingEntity|Self::UnderstandingEvent|Self::UnderstandingClaim|Self::UnderstandingAmount|
             Self::UnderstandingDate|Self::UnderstandingIssue|Self::UnderstandingContradiction|Self::UnderstandingQuestion=>
                 "internal per-item schema - see extract_matter_understanding",
+            Self::MedicalEvidence=>"{\"encounters\":[{\"sourceIds\":[\"...\"],\"encounterType\":\"clinic_visit|emergency_department|hospitalization|surgery|physiotherapy|specialist_consultation|occupational_medicine|imaging_visit|expert_examination|other\",\"provider\":\"string or null\",\"institution\":\"string or null\",\"specialty\":\"string or null\",\"eventDate\":\"YYYY-MM-DD or null\",\"datePrecision\":\"exact|month|year|approximate|unknown or null\",\"documentDate\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"complaints\":[{\"sourceIds\":[\"...\"],\"complaint\":\"what the patient reports, never rewritten as an objective finding\",\"bodyRegion\":\"string or null\",\"laterality\":\"string or null\",\"severity\":\"string or null\",\"duration\":\"string or null\",\"assertedBy\":\"string or null\",\"confidence\":0.0}],\"findings\":[{\"sourceIds\":[\"...\"],\"finding\":\"a finding the provider documented directly\",\"bodyRegion\":\"string or null\",\"laterality\":\"string or null\",\"measurement\":\"string or null\",\"confidence\":0.0}],\"diagnoses\":[{\"sourceIds\":[\"...\"],\"diagnosisText\":\"...\",\"code\":\"string or null\",\"certainty\":\"suspected|provisional|differential|confirmed|ruled_out|other\",\"provider\":\"string or null\",\"confidence\":0.0}],\"tests\":[{\"sourceIds\":[\"...\"],\"testType\":\"x-ray|CT|MRI|EMG|blood_test|ultrasound|...\",\"stage\":\"ordered|performed|resulted|interpreted - state only what this source actually documents, never assume a later stage happened\",\"orderedDate\":\"YYYY-MM-DD or null\",\"performedDate\":\"YYYY-MM-DD or null\",\"resultDate\":\"YYYY-MM-DD or null\",\"interpretation\":\"string or null\",\"confidence\":0.0}],\"treatments\":[{\"sourceIds\":[\"...\"],\"treatmentType\":\"...\",\"date\":\"YYYY-MM-DD or null\",\"provider\":\"string or null\",\"frequency\":\"string or null, only if explicitly documented\",\"outcome\":\"string or null, only if explicitly documented - never infer recovery\",\"confidence\":0.0}],\"medications\":[{\"sourceIds\":[\"...\"],\"medication\":\"...\",\"dosage\":\"string or null\",\"route\":\"string or null\",\"frequency\":\"string or null\",\"startDate\":\"YYYY-MM-DD or null\",\"endDate\":\"YYYY-MM-DD or null\",\"status\":\"active|discontinued|completed|unknown\",\"confidence\":0.0}],\"referrals\":[{\"sourceIds\":[\"...\"],\"planType\":\"...\",\"target\":\"string or null\",\"date\":\"YYYY-MM-DD or null\",\"urgency\":\"string or null\",\"confidence\":0.0}],\"functionalStatuses\":[{\"sourceIds\":[\"...\"],\"limitation\":\"...\",\"startDate\":\"YYYY-MM-DD or null\",\"endDate\":\"YYYY-MM-DD or null\",\"workCapacityStatus\":\"fit|unfit|partially_fit|restricted|unknown\",\"provider\":\"string or null\",\"confidence\":0.0}],\"disabilityDeterminations\":[{\"sourceIds\":[\"...\"],\"determiningBody\":\"only an authorized source: BTL committee, authorized medical expert, court-appointed expert\",\"disabilityType\":\"string or null\",\"percentage\":0.0,\"durationType\":\"temporary|permanent\",\"startDate\":\"YYYY-MM-DD or null\",\"endDate\":\"YYYY-MM-DD or null\",\"regulation\":\"string or null\",\"confidence\":0.0}],\"priorHistory\":[{\"sourceIds\":[\"...\"],\"description\":\"...\",\"bodyRegion\":\"string or null\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"opinions\":[{\"sourceIds\":[\"...\"],\"opinionType\":\"causation|prognosis|work_capacity|disability|other\",\"opinionText\":\"the opinion, attributed to its author - never TAHRIR's own conclusion\",\"author\":\"string or null\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"gapSignals\":[{\"sourceIds\":[\"...\"],\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD\",\"bodyRegionOrStream\":\"string or null\",\"priorEncounterRef\":\"string or null\",\"nextEncounterRef\":\"string or null\",\"signalReason\":\"no_encounter_in_window|referral_without_followup|other\"}],\"missingEvidenceSignals\":[{\"sourceIds\":[\"...\"],\"missingType\":\"imaging_result_missing|specialist_report_missing|discharge_summary_missing|treatment_records_missing|btl_protocol_missing|provider_records_missing|other\",\"description\":\"phrase as not found in currently ingested sources, never as proof the thing never happened\"}],\"contradictions\":[{\"sourceIds\":[\"sourceAId\",\"sourceBId\"],\"itemA\":\"...\",\"sourceAId\":\"...\",\"itemB\":\"...\",\"sourceBId\":\"...\",\"reason\":\"why these may conflict\"}]}. Every array may be empty. Never diagnose, never determine causation, never calculate or infer a disability percentage, never infer recovery from a treatment gap, never treat missing documentation as proof something did not happen. A complaint is never rewritten as an objective finding. A diagnosis's stated certainty (suspected/provisional/confirmed/ruled out) must never be upgraded or downgraded. confidence reflects only model certainty, never legal or medical certainty, and is optional.",
+            Self::MedicalEncounter|Self::MedicalComplaint|Self::MedicalFinding|Self::MedicalDiagnosis|
+            Self::MedicalTest|Self::MedicalTreatment|Self::MedicalMedication|Self::MedicalReferral|
+            Self::MedicalFunctionalStatus|Self::MedicalDisabilityDetermination|Self::MedicalPriorHistory|
+            Self::MedicalOpinion|Self::MedicalGapSignal|Self::MedicalMissingEvidenceSignal|Self::MedicalContradiction=>
+                "internal per-item schema - see extract_medical_evidence",
         }
     }
 }
@@ -161,6 +248,60 @@ enum ProposalPayload {
     UnderstandingIssue { source_ids:Vec<String>, issue_type:String, description:String, confidence:Option<f64> },
     UnderstandingContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
     UnderstandingQuestion { source_ids:Vec<String>, question:String },
+    MedicalEncounter {
+        source_ids:Vec<String>, encounter_type:String, provider:Option<String>, institution:Option<String>,
+        specialty:Option<String>, event_date:Option<String>, date_precision:Option<String>,
+        document_date:Option<String>, confidence:Option<f64>,
+    },
+    MedicalComplaint {
+        source_ids:Vec<String>, complaint:String, body_region:Option<String>, laterality:Option<String>,
+        severity:Option<String>, duration:Option<String>, asserted_by:Option<String>, confidence:Option<f64>,
+    },
+    MedicalFinding {
+        source_ids:Vec<String>, finding:String, body_region:Option<String>, laterality:Option<String>,
+        measurement:Option<String>, confidence:Option<f64>,
+    },
+    MedicalDiagnosis {
+        source_ids:Vec<String>, diagnosis_text:String, code:Option<String>, certainty:String,
+        provider:Option<String>, confidence:Option<f64>,
+    },
+    MedicalTest {
+        source_ids:Vec<String>, test_type:String, stage:String, ordered_date:Option<String>,
+        performed_date:Option<String>, result_date:Option<String>, interpretation:Option<String>, confidence:Option<f64>,
+    },
+    MedicalTreatment {
+        source_ids:Vec<String>, treatment_type:String, date:Option<String>, provider:Option<String>,
+        frequency:Option<String>, outcome:Option<String>, confidence:Option<f64>,
+    },
+    MedicalMedication {
+        source_ids:Vec<String>, medication:String, dosage:Option<String>, route:Option<String>,
+        frequency:Option<String>, start_date:Option<String>, end_date:Option<String>, status:String, confidence:Option<f64>,
+    },
+    MedicalReferral {
+        source_ids:Vec<String>, plan_type:String, target:Option<String>, date:Option<String>,
+        urgency:Option<String>, confidence:Option<f64>,
+    },
+    MedicalFunctionalStatus {
+        source_ids:Vec<String>, limitation:String, start_date:Option<String>, end_date:Option<String>,
+        work_capacity_status:String, provider:Option<String>, confidence:Option<f64>,
+    },
+    MedicalDisabilityDetermination {
+        source_ids:Vec<String>, determining_body:String, disability_type:Option<String>, percentage:Option<f64>,
+        duration_type:String, start_date:Option<String>, end_date:Option<String>, regulation:Option<String>, confidence:Option<f64>,
+    },
+    MedicalPriorHistory {
+        source_ids:Vec<String>, description:String, body_region:Option<String>, date:Option<String>, confidence:Option<f64>,
+    },
+    MedicalOpinion {
+        source_ids:Vec<String>, opinion_type:String, opinion_text:String, author:Option<String>,
+        date:Option<String>, confidence:Option<f64>,
+    },
+    MedicalGapSignal {
+        source_ids:Vec<String>, start_date:String, end_date:String, body_region_or_stream:Option<String>,
+        prior_encounter_ref:Option<String>, next_encounter_ref:Option<String>, signal_reason:String,
+    },
+    MedicalMissingEvidenceSignal { source_ids:Vec<String>, missing_type:String, description:String },
+    MedicalContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
 }
 
 impl ProposalPayload {
@@ -177,7 +318,22 @@ impl ProposalPayload {
             Self::UnderstandingDate{source_ids,..}|
             Self::UnderstandingIssue{source_ids,..}|
             Self::UnderstandingContradiction{source_ids,..}|
-            Self::UnderstandingQuestion{source_ids,..}=>source_ids,
+            Self::UnderstandingQuestion{source_ids,..}|
+            Self::MedicalEncounter{source_ids,..}|
+            Self::MedicalComplaint{source_ids,..}|
+            Self::MedicalFinding{source_ids,..}|
+            Self::MedicalDiagnosis{source_ids,..}|
+            Self::MedicalTest{source_ids,..}|
+            Self::MedicalTreatment{source_ids,..}|
+            Self::MedicalMedication{source_ids,..}|
+            Self::MedicalReferral{source_ids,..}|
+            Self::MedicalFunctionalStatus{source_ids,..}|
+            Self::MedicalDisabilityDetermination{source_ids,..}|
+            Self::MedicalPriorHistory{source_ids,..}|
+            Self::MedicalOpinion{source_ids,..}|
+            Self::MedicalGapSignal{source_ids,..}|
+            Self::MedicalMissingEvidenceSignal{source_ids,..}|
+            Self::MedicalContradiction{source_ids,..}=>source_ids,
         }
     }
 
@@ -266,6 +422,138 @@ impl ProposalPayload {
             Self::UnderstandingQuestion{source_ids,question}=>json!({
                 "sourceIds":source_ids,
                 "question":question,
+            }),
+            Self::MedicalEncounter{source_ids,encounter_type,provider,institution,specialty,event_date,date_precision,document_date,confidence}=>json!({
+                "sourceIds":source_ids,
+                "encounterType":encounter_type,
+                "provider":provider,
+                "institution":institution,
+                "specialty":specialty,
+                "eventDate":event_date,
+                "datePrecision":date_precision,
+                "documentDate":document_date,
+                "confidence":confidence,
+            }),
+            Self::MedicalComplaint{source_ids,complaint,body_region,laterality,severity,duration,asserted_by,confidence}=>json!({
+                "sourceIds":source_ids,
+                "complaint":complaint,
+                "bodyRegion":body_region,
+                "laterality":laterality,
+                "severity":severity,
+                "duration":duration,
+                "assertedBy":asserted_by,
+                "confidence":confidence,
+            }),
+            Self::MedicalFinding{source_ids,finding,body_region,laterality,measurement,confidence}=>json!({
+                "sourceIds":source_ids,
+                "finding":finding,
+                "bodyRegion":body_region,
+                "laterality":laterality,
+                "measurement":measurement,
+                "confidence":confidence,
+            }),
+            Self::MedicalDiagnosis{source_ids,diagnosis_text,code,certainty,provider,confidence}=>json!({
+                "sourceIds":source_ids,
+                "diagnosisText":diagnosis_text,
+                "code":code,
+                "certainty":certainty,
+                "provider":provider,
+                "confidence":confidence,
+            }),
+            Self::MedicalTest{source_ids,test_type,stage,ordered_date,performed_date,result_date,interpretation,confidence}=>json!({
+                "sourceIds":source_ids,
+                "testType":test_type,
+                "stage":stage,
+                "orderedDate":ordered_date,
+                "performedDate":performed_date,
+                "resultDate":result_date,
+                "interpretation":interpretation,
+                "confidence":confidence,
+            }),
+            Self::MedicalTreatment{source_ids,treatment_type,date,provider,frequency,outcome,confidence}=>json!({
+                "sourceIds":source_ids,
+                "treatmentType":treatment_type,
+                "date":date,
+                "provider":provider,
+                "frequency":frequency,
+                "outcome":outcome,
+                "confidence":confidence,
+            }),
+            Self::MedicalMedication{source_ids,medication,dosage,route,frequency,start_date,end_date,status,confidence}=>json!({
+                "sourceIds":source_ids,
+                "medication":medication,
+                "dosage":dosage,
+                "route":route,
+                "frequency":frequency,
+                "startDate":start_date,
+                "endDate":end_date,
+                "status":status,
+                "confidence":confidence,
+            }),
+            Self::MedicalReferral{source_ids,plan_type,target,date,urgency,confidence}=>json!({
+                "sourceIds":source_ids,
+                "planType":plan_type,
+                "target":target,
+                "date":date,
+                "urgency":urgency,
+                "confidence":confidence,
+            }),
+            Self::MedicalFunctionalStatus{source_ids,limitation,start_date,end_date,work_capacity_status,provider,confidence}=>json!({
+                "sourceIds":source_ids,
+                "limitation":limitation,
+                "startDate":start_date,
+                "endDate":end_date,
+                "workCapacityStatus":work_capacity_status,
+                "provider":provider,
+                "confidence":confidence,
+            }),
+            Self::MedicalDisabilityDetermination{source_ids,determining_body,disability_type,percentage,duration_type,start_date,end_date,regulation,confidence}=>json!({
+                "sourceIds":source_ids,
+                "determiningBody":determining_body,
+                "disabilityType":disability_type,
+                "percentage":percentage,
+                "durationType":duration_type,
+                "startDate":start_date,
+                "endDate":end_date,
+                "regulation":regulation,
+                "confidence":confidence,
+            }),
+            Self::MedicalPriorHistory{source_ids,description,body_region,date,confidence}=>json!({
+                "sourceIds":source_ids,
+                "description":description,
+                "bodyRegion":body_region,
+                "date":date,
+                "confidence":confidence,
+            }),
+            Self::MedicalOpinion{source_ids,opinion_type,opinion_text,author,date,confidence}=>json!({
+                "sourceIds":source_ids,
+                "opinionType":opinion_type,
+                "opinionText":opinion_text,
+                "author":author,
+                "date":date,
+                "confidence":confidence,
+            }),
+            Self::MedicalGapSignal{source_ids,start_date,end_date,body_region_or_stream,prior_encounter_ref,next_encounter_ref,signal_reason}=>json!({
+                "sourceIds":source_ids,
+                "startDate":start_date,
+                "endDate":end_date,
+                "bodyRegionOrStream":body_region_or_stream,
+                "priorEncounterRef":prior_encounter_ref,
+                "nextEncounterRef":next_encounter_ref,
+                "signalReason":signal_reason,
+            }),
+            Self::MedicalMissingEvidenceSignal{source_ids,missing_type,description}=>json!({
+                "sourceIds":source_ids,
+                "missingType":missing_type,
+                "description":description,
+            }),
+            Self::MedicalContradiction{source_ids,item_a,source_a_id,item_b,source_b_id,reason}=>json!({
+                "sourceIds":source_ids,
+                "itemA":item_a,
+                "sourceAId":source_a_id,
+                "itemB":item_b,
+                "sourceBId":source_b_id,
+                "reason":reason,
             }),
         }
     }
@@ -567,6 +855,227 @@ fn parse_structured_proposal(kind:ProposalKind,proposal:&Value)->AppResult<Propo
             source_ids,
             question:required_string_field(proposal,"question")?,
         }),
+        ProposalKind::MedicalEvidence=>Err(AppError::Validation(
+            "extract_medical_evidence is a bundle capability and never a stored proposal kind".into()
+        )),
+        ProposalKind::MedicalEncounter=>{
+            let encounter_type=required_string_field(proposal,"encounterType")?;
+            validate_in(&encounter_type,ENCOUNTER_TYPES,"encounterType")?;
+            let date_precision=optional_string_field(proposal,"datePrecision")?;
+            if let Some(p)=&date_precision{ validate_in(p,DATE_PRECISIONS,"datePrecision")?; }
+            Ok(ProposalPayload::MedicalEncounter{
+                source_ids, encounter_type,
+                provider:optional_string_field(proposal,"provider")?,
+                institution:optional_string_field(proposal,"institution")?,
+                specialty:optional_string_field(proposal,"specialty")?,
+                // The encounter's own date, never the ingestion/audit timestamp -
+                // same absolute rule as C2's understanding_event.
+                event_date:optional_date_field(proposal,"eventDate")?,
+                date_precision,
+                document_date:optional_date_field(proposal,"documentDate")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalComplaint=>Ok(ProposalPayload::MedicalComplaint{
+            source_ids,
+            // A complaint is what the patient reports - never rewritten as an
+            // objective finding, so this payload has no "confirmed" concept at all.
+            complaint:required_string_field(proposal,"complaint")?,
+            body_region:optional_string_field(proposal,"bodyRegion")?,
+            laterality:optional_string_field(proposal,"laterality")?,
+            severity:optional_string_field(proposal,"severity")?,
+            duration:optional_string_field(proposal,"duration")?,
+            asserted_by:optional_string_field(proposal,"assertedBy")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::MedicalFinding=>Ok(ProposalPayload::MedicalFinding{
+            source_ids,
+            finding:required_string_field(proposal,"finding")?,
+            body_region:optional_string_field(proposal,"bodyRegion")?,
+            laterality:optional_string_field(proposal,"laterality")?,
+            measurement:optional_string_field(proposal,"measurement")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::MedicalDiagnosis=>{
+            let certainty=required_string_field(proposal,"certainty")?;
+            validate_in(&certainty,DIAGNOSIS_CERTAINTY,"certainty")?;
+            Ok(ProposalPayload::MedicalDiagnosis{
+                source_ids,
+                diagnosis_text:required_string_field(proposal,"diagnosisText")?,
+                code:optional_string_field(proposal,"code")?,
+                // The source's own stated certainty is preserved verbatim - never
+                // upgraded ("suspected" -> "confirmed") or downgraded by TAHRIR.
+                certainty,
+                provider:optional_string_field(proposal,"provider")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalTest=>{
+            let stage=required_string_field(proposal,"stage")?;
+            validate_in(&stage,TEST_STAGES,"stage")?;
+            Ok(ProposalPayload::MedicalTest{
+                source_ids,
+                test_type:required_string_field(proposal,"testType")?,
+                // "ordered" is never treated as proof the test was "performed" -
+                // the model states only the stage this specific source documents.
+                stage,
+                ordered_date:optional_date_field(proposal,"orderedDate")?,
+                performed_date:optional_date_field(proposal,"performedDate")?,
+                result_date:optional_date_field(proposal,"resultDate")?,
+                interpretation:optional_string_field(proposal,"interpretation")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalTreatment=>Ok(ProposalPayload::MedicalTreatment{
+            source_ids,
+            treatment_type:required_string_field(proposal,"treatmentType")?,
+            date:optional_date_field(proposal,"date")?,
+            provider:optional_string_field(proposal,"provider")?,
+            frequency:optional_string_field(proposal,"frequency")?,
+            // Outcome is stored only if explicitly documented by the source - never
+            // inferred (e.g. treatment stopping is never itself an "outcome").
+            outcome:optional_string_field(proposal,"outcome")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::MedicalMedication=>{
+            let status=optional_string_field(proposal,"status")?.unwrap_or_else(||"unknown".to_string());
+            validate_in(&status,MEDICATION_STATUSES,"status")?;
+            Ok(ProposalPayload::MedicalMedication{
+                source_ids,
+                medication:required_string_field(proposal,"medication")?,
+                dosage:optional_string_field(proposal,"dosage")?,
+                route:optional_string_field(proposal,"route")?,
+                frequency:optional_string_field(proposal,"frequency")?,
+                start_date:optional_date_field(proposal,"startDate")?,
+                end_date:optional_date_field(proposal,"endDate")?,
+                // Adherence is never inferred - "status" only ever reflects what the
+                // source states about the prescription itself, not whether it was taken.
+                status,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalReferral=>Ok(ProposalPayload::MedicalReferral{
+            source_ids,
+            plan_type:required_string_field(proposal,"planType")?,
+            target:optional_string_field(proposal,"target")?,
+            date:optional_date_field(proposal,"date")?,
+            urgency:optional_string_field(proposal,"urgency")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::MedicalFunctionalStatus=>{
+            let work_capacity_status=optional_string_field(proposal,"workCapacityStatus")?.unwrap_or_else(||"unknown".to_string());
+            validate_in(&work_capacity_status,WORK_CAPACITY_STATUSES,"workCapacityStatus")?;
+            Ok(ProposalPayload::MedicalFunctionalStatus{
+                source_ids,
+                limitation:required_string_field(proposal,"limitation")?,
+                start_date:optional_date_field(proposal,"startDate")?,
+                end_date:optional_date_field(proposal,"endDate")?,
+                // Never used to infer economic loss - a functional limitation is a
+                // medical/documentary fact only, wage-loss calculation is out of scope.
+                work_capacity_status,
+                provider:optional_string_field(proposal,"provider")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalDisabilityDetermination=>{
+            let duration_type=required_string_field(proposal,"durationType")?;
+            validate_in(&duration_type,DISABILITY_DURATION_TYPES,"durationType")?;
+            let percentage=match proposal.get("percentage"){
+                None|Some(Value::Null)=>None,
+                Some(Value::Number(n))=>{
+                    let v=n.as_f64().ok_or_else(||AppError::Validation("proposal field percentage must be a number".into()))?;
+                    if !(0.0..=100.0).contains(&v){
+                        return Err(AppError::Validation("proposal field percentage must be between 0 and 100".into()));
+                    }
+                    Some(v)
+                },
+                _=>return Err(AppError::Validation("proposal field percentage must be a number or null".into())),
+            };
+            Ok(ProposalPayload::MedicalDisabilityDetermination{
+                source_ids,
+                // TAHRIR never calculates this - it only records what an authorized
+                // source (BTL committee, authorized/court-appointed expert) already
+                // determined. determiningBody is required so a percentage can never
+                // be stored without attributing it to a real authorized decision.
+                determining_body:required_string_field(proposal,"determiningBody")?,
+                disability_type:optional_string_field(proposal,"disabilityType")?,
+                percentage,
+                duration_type,
+                start_date:optional_date_field(proposal,"startDate")?,
+                end_date:optional_date_field(proposal,"endDate")?,
+                regulation:optional_string_field(proposal,"regulation")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalPriorHistory=>Ok(ProposalPayload::MedicalPriorHistory{
+            source_ids,
+            // Stored as a neutral historical fact only - never labeled "relevant
+            // prior condition" or "pre-existing cause" by TAHRIR itself.
+            description:required_string_field(proposal,"description")?,
+            body_region:optional_string_field(proposal,"bodyRegion")?,
+            date:optional_date_field(proposal,"date")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::MedicalOpinion=>{
+            let opinion_type=required_string_field(proposal,"opinionType")?;
+            validate_in(&opinion_type,MEDICAL_OPINION_TYPES,"opinionType")?;
+            Ok(ProposalPayload::MedicalOpinion{
+                source_ids,
+                opinion_type,
+                // Preserved as "opinion by source", never TAHRIR's own conclusion -
+                // author is required so it can never be presented unattributed.
+                opinion_text:required_string_field(proposal,"opinionText")?,
+                author:optional_string_field(proposal,"author")?,
+                date:optional_date_field(proposal,"date")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::MedicalGapSignal=>{
+            let signal_reason=required_string_field(proposal,"signalReason")?;
+            validate_in(&signal_reason,GAP_SIGNAL_REASONS,"signalReason")?;
+            let start_date=optional_date_field(proposal,"startDate")?
+                .ok_or_else(||AppError::Validation("proposal missing startDate".into()))?;
+            let end_date=optional_date_field(proposal,"endDate")?
+                .ok_or_else(||AppError::Validation("proposal missing endDate".into()))?;
+            Ok(ProposalPayload::MedicalGapSignal{
+                source_ids, start_date, end_date,
+                body_region_or_stream:optional_string_field(proposal,"bodyRegionOrStream")?,
+                prior_encounter_ref:optional_string_field(proposal,"priorEncounterRef")?,
+                next_encounter_ref:optional_string_field(proposal,"nextEncounterRef")?,
+                // A gap is a technical/documentary signal only - never a conclusion
+                // about recovery, abandonment, or lack of injury/causation.
+                signal_reason,
+            })
+        },
+        ProposalKind::MedicalMissingEvidenceSignal=>{
+            let missing_type=required_string_field(proposal,"missingType")?;
+            validate_in(&missing_type,MISSING_EVIDENCE_TYPES,"missingType")?;
+            Ok(ProposalPayload::MedicalMissingEvidenceSignal{
+                source_ids, missing_type,
+                // Must be phrased as "not found in currently ingested sources" - the
+                // frontend/prompt enforce the wording; this field never asserts the
+                // missing thing did not occur.
+                description:required_string_field(proposal,"description")?,
+            })
+        },
+        ProposalKind::MedicalContradiction=>{
+            let source_a_id=required_string_field(proposal,"sourceAId")?;
+            let source_b_id=required_string_field(proposal,"sourceBId")?;
+            if source_a_id==source_b_id{
+                return Err(AppError::Validation("a contradiction must cite two distinct sources".into()));
+            }
+            if !source_ids.contains(&source_a_id) || !source_ids.contains(&source_b_id){
+                return Err(AppError::InvalidSourceReference);
+            }
+            Ok(ProposalPayload::MedicalContradiction{
+                source_ids,
+                item_a:required_string_field(proposal,"itemA")?,
+                source_a_id,
+                item_b:required_string_field(proposal,"itemB")?,
+                source_b_id,
+                reason:required_string_field(proposal,"reason")?,
+            })
+        },
     }
 }
 
@@ -593,6 +1102,9 @@ fn canonicalize_provider_output(
 )->AppResult<Vec<(String,Value)>>{
     if kind==ProposalKind::MatterUnderstanding{
         return canonicalize_understanding_bundle(provider_output,allowed);
+    }
+    if kind==ProposalKind::MedicalEvidence{
+        return canonicalize_medical_evidence_bundle(provider_output,allowed);
     }
     if !kind.is_ledger(){
         let payload=parse_structured_proposal(kind,provider_output)?;
@@ -662,6 +1174,56 @@ fn canonicalize_understanding_bundle(
     if canonical.len()>MAX_UNDERSTANDING_ITEMS_PER_RUN{
         return Err(AppError::Validation(format!(
             "matter understanding output exceeds maximum item count ({MAX_UNDERSTANDING_ITEMS_PER_RUN})"
+        )));
+    }
+    Ok(canonical)
+}
+
+/// Phase C, milestone C3: `extract_medical_evidence`'s provider output is one JSON
+/// object with up to 15 named arrays - same shape/tolerance rules as
+/// `canonicalize_understanding_bundle`, just for the medical item taxonomy.
+fn canonicalize_medical_evidence_bundle(
+    provider_output:&Value,allowed:&HashSet<String>,
+)->AppResult<Vec<(String,Value)>>{
+    let obj=provider_output.as_object().ok_or_else(||AppError::Validation(
+        "medical evidence output must be a JSON object".into()
+    ))?;
+    let sections:[(&str,ProposalKind);15]=[
+        ("encounters",ProposalKind::MedicalEncounter),
+        ("complaints",ProposalKind::MedicalComplaint),
+        ("findings",ProposalKind::MedicalFinding),
+        ("diagnoses",ProposalKind::MedicalDiagnosis),
+        ("tests",ProposalKind::MedicalTest),
+        ("treatments",ProposalKind::MedicalTreatment),
+        ("medications",ProposalKind::MedicalMedication),
+        ("referrals",ProposalKind::MedicalReferral),
+        ("functionalStatuses",ProposalKind::MedicalFunctionalStatus),
+        ("disabilityDeterminations",ProposalKind::MedicalDisabilityDetermination),
+        ("priorHistory",ProposalKind::MedicalPriorHistory),
+        ("opinions",ProposalKind::MedicalOpinion),
+        ("gapSignals",ProposalKind::MedicalGapSignal),
+        ("missingEvidenceSignals",ProposalKind::MedicalMissingEvidenceSignal),
+        ("contradictions",ProposalKind::MedicalContradiction),
+    ];
+    let mut canonical=Vec::new();
+    for (key,item_kind) in sections{
+        let Some(items)=obj.get(key) else { continue; };
+        if items.is_null(){ continue; }
+        let items=items.as_array().ok_or_else(||AppError::Validation(
+            format!("medical evidence field {key} must be an array")
+        ))?;
+        for item in items{
+            if !item.is_object(){
+                return Err(AppError::Validation(format!("every {key} item must be a JSON object")));
+            }
+            let payload=parse_structured_proposal(item_kind,item)?;
+            validate_source_ids(payload.source_ids(),allowed)?;
+            canonical.push((item_kind.capability_str().to_string(),payload.canonical_json()));
+        }
+    }
+    if canonical.len()>MAX_MEDICAL_ITEMS_PER_RUN{
+        return Err(AppError::Validation(format!(
+            "medical evidence output exceeds maximum item count ({MAX_MEDICAL_ITEMS_PER_RUN})"
         )));
     }
     Ok(canonical)
@@ -768,6 +1330,11 @@ pub fn run_capability(
     let output_instruction=if kind==ProposalKind::MatterUnderstanding{
         format!(
             "Return one JSON object only (not an array) with up to {MAX_UNDERSTANDING_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
+            kind.schema_instruction()
+        )
+    }else if kind==ProposalKind::MedicalEvidence{
+        format!(
+            "Return one JSON object only (not an array) with up to {MAX_MEDICAL_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
             kind.schema_instruction()
         )
     }else if kind.is_ledger(){
@@ -1010,6 +1577,20 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             ProposalPayload::UnderstandingDate{..}|ProposalPayload::UnderstandingIssue{..}|
             ProposalPayload::UnderstandingContradiction{..}|
             ProposalPayload::UnderstandingQuestion{..}=>proposal_id.to_string(),
+            // Phase C, milestone C3: same rule as C2's understanding items -
+            // approving a medical evidence item writes no domain row and never
+            // touches the pre-existing Medical Ledger (`medical_events`). A lawyer
+            // wanting a Medical Ledger entry takes a separate, explicit action
+            // (the existing `extract_medical_event`/ledger flow); this generic
+            // approval path only ever marks the item itself reviewed and accepted.
+            ProposalPayload::MedicalEncounter{..}|ProposalPayload::MedicalComplaint{..}|
+            ProposalPayload::MedicalFinding{..}|ProposalPayload::MedicalDiagnosis{..}|
+            ProposalPayload::MedicalTest{..}|ProposalPayload::MedicalTreatment{..}|
+            ProposalPayload::MedicalMedication{..}|ProposalPayload::MedicalReferral{..}|
+            ProposalPayload::MedicalFunctionalStatus{..}|ProposalPayload::MedicalDisabilityDetermination{..}|
+            ProposalPayload::MedicalPriorHistory{..}|ProposalPayload::MedicalOpinion{..}|
+            ProposalPayload::MedicalGapSignal{..}|ProposalPayload::MedicalMissingEvidenceSignal{..}|
+            ProposalPayload::MedicalContradiction{..}=>proposal_id.to_string(),
         };
 
         let changed=tx.execute(
@@ -2040,5 +2621,499 @@ mod tests {
             "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
         ).map_err(AppError::Db)).unwrap();
         assert_eq!(status,"approved","an approved Matter Understanding item must survive a full close/reopen");
+    }
+
+    // ---- Phase C, milestone C3: Medical Evidence Intelligence -------------------
+
+    fn medical_context(db:&DbState,matter_id:&str)->ContextManifest{
+        retrieval::build_context_manifest(db,matter_id,"extract_medical_evidence",None).unwrap()
+    }
+
+    #[test]
+    fn encounter_proposal_schema_is_pending_and_dated_independently(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["ביקור במרפאה אורתופדית"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_encounter",&context,json!({
+            "sourceIds":[source_id],"encounterType":"specialist_consultation","provider":"ד״ר כהן","institution":"בית חולים",
+            "specialty":"אורתופדיה","eventDate":"2024-03-01","datePrecision":"exact","documentDate":"2024-03-05","confidence":0.8
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+        let unknown_type=json!({"sourceIds":["s1"],"encounterType":"made_up","provider":null,"institution":null,"specialty":null,"eventDate":null,"datePrecision":null,"documentDate":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalEncounter,&unknown_type).is_err());
+    }
+
+    #[test]
+    fn complaint_and_finding_are_distinct_kinds_neither_auto_verified(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["המטופל מתלונן על כאבי גב"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let complaint_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_complaint",&context,json!({
+            "sourceIds":[source_id],"complaint":"כאבי גב","bodyRegion":"גב תחתון","laterality":null,"severity":null,"duration":null,"assertedBy":"מטופל","confidence":0.5
+        })).unwrap();
+        let finding_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_finding",&context,json!({
+            "sourceIds":[source_id],"finding":"טווח תנועה מוגבל","bodyRegion":"גב תחתון","laterality":null,"measurement":null,"confidence":0.6
+        })).unwrap();
+        approve_proposal(&t.db,&complaint_id,None).unwrap();
+        approve_proposal(&t.db,&finding_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0,"a subjective complaint must never be auto-verified");
+        assert_eq!(count_table(&t.db,"medical_events",&matter_id),0,"an objective finding must never be auto-written to the Medical Ledger");
+        assert_ne!(complaint_id,finding_id);
+    }
+
+    #[test]
+    fn diagnosis_certainty_is_preserved_verbatim_never_upgraded(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let ruled_out=json!({"sourceIds":["s1"],"diagnosisText":"שבר","code":null,"certainty":"ruled_out","provider":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::MedicalDiagnosis,&ruled_out).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["certainty"],"ruled_out","'rule out fracture' must never silently become 'confirmed'");
+
+        let suspected=json!({"sourceIds":["s1"],"diagnosisText":"שבר חשוד","code":null,"certainty":"suspected","provider":null,"confidence":null});
+        let payload2=parse_structured_proposal(ProposalKind::MedicalDiagnosis,&suspected).unwrap();
+        assert_eq!(payload2.canonical_json()["certainty"],"suspected");
+
+        let unknown_certainty=json!({"sourceIds":["s1"],"diagnosisText":"x","code":null,"certainty":"definitely","provider":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalDiagnosis,&unknown_certainty).is_err());
+    }
+
+    #[test]
+    fn imaging_ordered_is_never_treated_as_performed(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let ordered=json!({"sourceIds":["s1"],"testType":"MRI","stage":"ordered","orderedDate":"2024-01-01","performedDate":null,"resultDate":null,"interpretation":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::MedicalTest,&ordered).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["stage"],"ordered");
+        assert!(canonical["performedDate"].is_null(),"an order must never itself populate a performedDate - that requires its own separately-sourced proposal");
+
+        let unknown_stage=json!({"sourceIds":["s1"],"testType":"MRI","stage":"scheduled","orderedDate":null,"performedDate":null,"resultDate":null,"interpretation":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalTest,&unknown_stage).is_err());
+    }
+
+    #[test]
+    fn imaging_performed_and_result_dates_remain_independently_stored(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let resulted=json!({"sourceIds":["s1"],"testType":"MRI","stage":"resulted","orderedDate":"2024-01-01","performedDate":"2024-01-10","resultDate":"2024-01-20","interpretation":"תקין","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::MedicalTest,&resulted).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["performedDate"],"2024-01-10");
+        assert_eq!(canonical["resultDate"],"2024-01-20");
+        assert_ne!(canonical["performedDate"],canonical["resultDate"],"performed and result dates must remain independent, never collapsed into one");
+    }
+
+    #[test]
+    fn treatment_medication_and_referral_schemas_are_valid(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let treatment=json!({"sourceIds":["s1"],"treatmentType":"פיזיותרפיה","date":"2024-02-01","provider":null,"frequency":"פעמיים בשבוע","outcome":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalTreatment,&treatment).is_ok());
+
+        let medication=json!({"sourceIds":["s1"],"medication":"איבופרופן","dosage":"400 מ״ג","route":"פומי","frequency":"פעם ביום","startDate":"2024-02-01","endDate":null,"status":"active","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::MedicalMedication,&medication).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+
+        let bad_status=json!({"sourceIds":["s1"],"medication":"x","dosage":null,"route":null,"frequency":null,"startDate":null,"endDate":null,"status":"maybe","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalMedication,&bad_status).is_err());
+
+        let referral=json!({"sourceIds":["s1"],"planType":"הפניה לנוירולוג","target":"נוירולוג","date":"2024-02-05","urgency":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalReferral,&referral).is_ok());
+    }
+
+    #[test]
+    fn work_capacity_item_requires_a_known_status(){
+        let functional=json!({"sourceIds":["s1"],"limitation":"אי יכולת הרמת משאות","startDate":"2024-02-01","endDate":null,"workCapacityStatus":"unfit","provider":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalFunctionalStatus,&functional).is_ok());
+        let bad=json!({"sourceIds":["s1"],"limitation":"x","startDate":null,"endDate":null,"workCapacityStatus":"probably_fine","provider":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalFunctionalStatus,&bad).is_err());
+    }
+
+    #[test]
+    fn explicit_disability_determination_is_preserved_and_requires_an_authorized_source(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let determination=json!({
+            "sourceIds":["s1"],"determiningBody":"ועדה רפואית לביטוח לאומי","disabilityType":"אורתופדית","percentage":20.0,
+            "durationType":"permanent","startDate":"2024-06-01","endDate":null,"regulation":"תקנה 15","confidence":null
+        });
+        let payload=parse_structured_proposal(ProposalKind::MedicalDisabilityDetermination,&determination).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["percentage"],20.0);
+        assert_eq!(canonical["determiningBody"],"ועדה רפואית לביטוח לאומי");
+
+        // determiningBody is required - TAHRIR structurally cannot store a
+        // percentage without attributing it to a real authorized source.
+        let missing_body=json!({"sourceIds":["s1"],"determiningBody":"","disabilityType":null,"percentage":20.0,"durationType":"permanent","startDate":null,"endDate":null,"regulation":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalDisabilityDetermination,&missing_body).is_err());
+
+        // out-of-range percentage fails closed
+        let bad_percentage=json!({"sourceIds":["s1"],"determiningBody":"ועדה","disabilityType":null,"percentage":150.0,"durationType":"permanent","startDate":null,"endDate":null,"regulation":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::MedicalDisabilityDetermination,&bad_percentage).is_err());
+    }
+
+    #[test]
+    fn no_disability_is_ever_inferred_from_an_unrelated_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["טיפול פיזיותרפיה שבועי"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_treatment",&context,json!({
+            "sourceIds":[source_id],"treatmentType":"פיזיותרפיה","date":null,"provider":null,"frequency":"שבועי","outcome":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let disability_proposals:i64=t.db.read(|conn|conn.query_row(
+            "SELECT count(*) FROM ai_proposals WHERE matter_id=?1 AND proposal_kind='medical_disability_determination'",
+            [&matter_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(disability_proposals,0,"approving a treatment must never generate or imply a disability determination");
+    }
+
+    #[test]
+    fn prior_history_stays_prior_history_never_a_causation_label(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["רישום על כאבי גב משנת 2018"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_prior_history",&context,json!({
+            "sourceIds":[source_id],"description":"כאבי גב משנת 2018","bodyRegion":"גב","date":"2018-01-01","confidence":0.4
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0);
+        let stored:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(!stored.contains("pre-existing cause") && !stored.contains("relevant prior condition"),
+            "TAHRIR itself must never label prior history as a legal/causal conclusion");
+    }
+
+    #[test]
+    fn medical_opinion_remains_an_attributed_opinion_not_a_tahrir_conclusion(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"expert_opinion",&["חוות דעת מומחה בנוגע לקשר סיבתי"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_opinion",&context,json!({
+            "sourceIds":[source_id],"opinionType":"causation","opinionText":"לדעת המומחה קיים קשר סיבתי","author":"ד״ר לוי","date":"2024-08-01","confidence":0.6
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0,"an opinion, even a causation opinion, must never become a Verified Fact automatically");
+        let stored:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(stored.contains("ד״ר לוי"),"the opinion must remain attributed to its real author");
+    }
+
+    #[test]
+    fn date_precision_round_trips_exact_and_approximate_without_upgrading(){
+        let approximate=json!({
+            "sourceIds":["s1"],"encounterType":"clinic_visit","provider":null,"institution":null,"specialty":null,
+            "eventDate":"2023-06-01","datePrecision":"approximate","documentDate":null,"confidence":null
+        });
+        let payload=parse_structured_proposal(ProposalKind::MedicalEncounter,&approximate).unwrap();
+        assert_eq!(payload.canonical_json()["datePrecision"],"approximate","an approximate date must never be silently upgraded to exact");
+
+        let exact=json!({
+            "sourceIds":["s1"],"encounterType":"clinic_visit","provider":null,"institution":null,"specialty":null,
+            "eventDate":"2023-06-01","datePrecision":"exact","documentDate":null,"confidence":null
+        });
+        let payload2=parse_structured_proposal(ProposalKind::MedicalEncounter,&exact).unwrap();
+        assert_eq!(payload2.canonical_json()["datePrecision"],"exact");
+    }
+
+    #[test]
+    fn unknown_event_date_stays_unknown_and_document_date_stays_independent(){
+        let unknown=json!({
+            "sourceIds":["s1"],"encounterType":"clinic_visit","provider":null,"institution":null,"specialty":null,
+            "eventDate":null,"datePrecision":"unknown","documentDate":"2024-01-01","confidence":null
+        });
+        let payload=parse_structured_proposal(ProposalKind::MedicalEncounter,&unknown).unwrap();
+        let canonical=payload.canonical_json();
+        assert!(canonical["eventDate"].is_null(),"an unknown event date must remain null, never fabricated");
+        assert_eq!(canonical["documentDate"],"2024-01-01","documentDate must remain independent of eventDate, present even when eventDate is unknown");
+    }
+
+    #[test]
+    fn medical_event_date_is_never_replaced_by_the_run_or_ingestion_timestamp(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["סיכום אשפוז מיום 2017-09-12"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let historical_date="2017-09-12";
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_encounter",&context,json!({
+            "sourceIds":[source_id],"encounterType":"hospitalization","provider":null,"institution":"בית חולים","specialty":null,
+            "eventDate":historical_date,"datePrecision":"exact","documentDate":null,"confidence":0.8
+        })).unwrap();
+        let stored_event_date:Option<String>=t.db.read(|conn|{
+            let json_text:String=conn.query_row("SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0))?;
+            let v:Value=serde_json::from_str(&json_text).unwrap();
+            Ok(v["eventDate"].as_str().map(str::to_string))
+        }).unwrap();
+        assert_eq!(stored_event_date.as_deref(),Some(historical_date));
+        let run_started_at:String=t.db.read(|conn|conn.query_row(
+            "SELECT r.started_at FROM ai_runs r JOIN ai_proposals p ON p.ai_run_id=r.id WHERE p.id=?1",
+            [&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(!run_started_at.starts_with("2017"),"sanity check: the run's own audit timestamp is the real current time, not the historical event date");
+    }
+
+    #[test]
+    fn medical_item_without_a_real_source_is_rejected(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let no_sources=json!({"complaints":[{"complaint":"כאב","sourceIds":[]}]});
+        assert!(canonicalize_medical_evidence_bundle(&no_sources,&allowed).is_err());
+        let unknown_source=json!({"findings":[{"sourceIds":["not-real"],"finding":"x"}]});
+        assert!(canonicalize_medical_evidence_bundle(&unknown_source,&allowed).is_err());
+    }
+
+    #[test]
+    fn stale_source_cannot_approve_a_medical_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        let (version_id,_)=new_document_with_pages(&t.db,&matter_id,"medical",&["ממצא בבדיקה גופנית"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_finding",&context,json!({
+            "sourceIds":[source_id],"finding":"ממצא בבדיקה","bodyRegion":null,"laterality":null,"measurement":null,"confidence":null
+        })).unwrap();
+        t.db.write(|conn|{conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1",[version_id])?;Ok(())}).unwrap();
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+    }
+
+    #[test]
+    fn cross_matter_source_cannot_approve_a_medical_item(){
+        let t=new_test_db();
+        let matter_a=new_matter(&t.db);
+        let matter_b=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_b,"medical",&["רשומה רפואית בתיק אחר"]);
+        let context_b=medical_context(&t.db,&matter_b);
+        let source_b=first_source_id(&context_b);
+        let proposal_id=insert_raw_pending_proposal(&t.db,&matter_a,"medical_finding",json!({
+            "sourceIds":[source_b],"finding":"רשומה בתיק אחר","bodyRegion":null,"laterality":null,"measurement":null,"confidence":null
+        }),serde_json::to_string(&context_b).unwrap(),context_b.manifest_sha256.clone());
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+    }
+
+    #[test]
+    fn malformed_medical_evidence_output_fails_closed(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        assert!(canonicalize_medical_evidence_bundle(&json!(["not","an","object"]),&allowed).is_err());
+        assert!(canonicalize_medical_evidence_bundle(&json!({"encounters":"not-an-array"}),&allowed).is_err());
+        assert!(canonicalize_medical_evidence_bundle(&json!({"encounters":["not-an-object"]}),&allowed).is_err());
+        assert_eq!(canonicalize_medical_evidence_bundle(&json!({}),&allowed).unwrap().len(),0,"a well-formed but empty bundle is valid - no findings is a legitimate outcome");
+    }
+
+    #[test]
+    fn provider_extra_fields_are_stripped_from_medical_items(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let bundle=json!({
+            "diagnoses":[{
+                "sourceIds":["s1"],"diagnosisText":"שבר","code":null,"certainty":"confirmed","provider":null,"confidence":0.5,
+                "chainOfThought":"must not persist","arbitrary":"must not persist"
+            }]
+        });
+        let canonical=canonicalize_medical_evidence_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(canonical.len(),1);
+        assert_eq!(canonical[0].0,"medical_diagnosis");
+        assert!(canonical[0].1.get("chainOfThought").is_none());
+        assert!(canonical[0].1.get("arbitrary").is_none());
+    }
+
+    #[test]
+    fn medical_canonical_persistence_is_deterministic(){
+        let allowed:HashSet<String>=["s1".to_string(),"s2".to_string()].into_iter().collect();
+        let bundle=json!({
+            "treatments":[{"sourceIds":["s1"],"treatmentType":"פיזיותרפיה","date":"2024-01-01","provider":null,"frequency":null,"outcome":null,"confidence":null}],
+            "contradictions":[{"sourceIds":["s1","s2"],"itemA":"a","sourceAId":"s1","itemB":"b","sourceBId":"s2","reason":"r"}],
+        });
+        let once=canonicalize_medical_evidence_bundle(&bundle,&allowed).unwrap();
+        let twice=canonicalize_medical_evidence_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(serde_json::to_string(&once).unwrap(),serde_json::to_string(&twice).unwrap());
+    }
+
+    #[test]
+    fn item_level_approval_is_independent_for_medical_items_within_one_run(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["ביקור רפואי","אבחנה קלינית","טיפול פיזיותרפיה"]);
+        let context=medical_context(&t.db,&matter_id);
+        let allowed:HashSet<String>=context.sources.iter().map(|s|s.source_id.clone()).collect();
+        let (enc_src,diag_src,treat_src)=(
+            context.sources[0].source_id.clone(),context.sources[1].source_id.clone(),context.sources[2].source_id.clone(),
+        );
+        let bundle=json!({
+            "encounters":[{"sourceIds":[enc_src],"encounterType":"clinic_visit","provider":null,"institution":null,"specialty":null,"eventDate":null,"datePrecision":null,"documentDate":null,"confidence":null}],
+            "diagnoses":[{"sourceIds":[diag_src],"diagnosisText":"אבחנה קלינית","code":null,"certainty":"confirmed","provider":null,"confidence":null}],
+            "treatments":[{"sourceIds":[treat_src],"treatmentType":"פיזיותרפיה","date":null,"provider":null,"frequency":null,"outcome":null,"confidence":null}],
+        });
+        let canonical=canonicalize_medical_evidence_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(canonical.len(),3);
+        let run_id=insert_running_run(&t.db,&matter_id,"extract_medical_evidence",&context);
+        let context_value=serde_json::to_value(&context).unwrap();
+        persist_completed_run(&t.db,&run_id,&matter_id,&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
+
+        let ids:Vec<(String,String)>=t.db.read(|conn|{
+            let mut stmt=conn.prepare("SELECT id,proposal_kind FROM ai_proposals WHERE ai_run_id=?1 ORDER BY proposal_kind")?;
+            let rows=stmt.query_map([&run_id],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(rows)
+        }).unwrap();
+        assert_eq!(ids.len(),3);
+        let encounter_id=&ids.iter().find(|(_,k)|k=="medical_encounter").unwrap().0;
+        let diagnosis_id=&ids.iter().find(|(_,k)|k=="medical_diagnosis").unwrap().0;
+        let treatment_id=&ids.iter().find(|(_,k)|k=="medical_treatment").unwrap().0;
+
+        approve_proposal(&t.db,encounter_id,None).unwrap();
+        assert_eq!(proposal_status(&t.db,encounter_id),"approved");
+        assert_eq!(proposal_status(&t.db,diagnosis_id),"pending","approving one medical item must not approve unrelated siblings from the same bundle run");
+        assert_eq!(proposal_status(&t.db,treatment_id),"pending");
+
+        reject_proposal(&t.db,diagnosis_id,"rejected",Some("insufficiently grounded")).unwrap();
+        assert_eq!(proposal_status(&t.db,diagnosis_id),"rejected");
+        assert_eq!(proposal_status(&t.db,encounter_id),"approved","rejecting one sibling must not affect an already-approved item");
+        assert_eq!(proposal_status(&t.db,treatment_id),"pending","rejecting one sibling must not affect an unrelated pending item");
+
+        let (status,note,structured_json):(String,Option<String>,String)=t.db.read(|conn|conn.query_row(
+            "SELECT status,review_note,structured_json FROM ai_proposals WHERE id=?1",[diagnosis_id],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"rejected");
+        assert_eq!(note.as_deref(),Some("insufficiently grounded"));
+        assert!(structured_json.contains("אבחנה קלינית"),"a rejected medical item must remain fully queryable in audit history, never deleted");
+    }
+
+    #[test]
+    fn treatment_gap_signal_is_a_review_signal_never_a_recovery_conclusion(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["טיפול אחרון ב-2024-01-01, טיפול הבא ב-2024-06-01"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_gap_signal",&context,json!({
+            "sourceIds":[source_id],"startDate":"2024-01-01","endDate":"2024-06-01","bodyRegionOrStream":"פיזיותרפיה",
+            "priorEncounterRef":"ביקור מיום 2024-01-01","nextEncounterRef":"ביקור מיום 2024-06-01","signalReason":"no_encounter_in_window"
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let stored:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(!stored.to_lowercase().contains("recover") && !stored.contains("החלים"),
+            "a treatment gap must never itself declare recovery, abandonment, or lack of injury");
+        assert_eq!(count_table(&t.db,"medical_events",&matter_id),0);
+
+        let missing_start=json!({"sourceIds":["s1"],"startDate":null,"endDate":"2024-06-01","bodyRegionOrStream":null,"priorEncounterRef":null,"nextEncounterRef":null,"signalReason":"no_encounter_in_window"});
+        assert!(parse_structured_proposal(ProposalKind::MedicalGapSignal,&missing_start).is_err());
+    }
+
+    #[test]
+    fn missing_evidence_signal_is_a_typed_not_found_signal(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let valid=json!({"sourceIds":["s1"],"missingType":"imaging_result_missing","description":"MRI הוזמן אך תוצאה לא נמצאה בחומר שנקלט"});
+        let payload=parse_structured_proposal(ProposalKind::MedicalMissingEvidenceSignal,&valid).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        // The type system structurally has no "confirmed absent" field - only a
+        // typed signal plus a free-text description, never a certainty claim.
+        let unknown_type=json!({"sourceIds":["s1"],"missingType":"made_up","description":"x"});
+        assert!(parse_structured_proposal(ProposalKind::MedicalMissingEvidenceSignal,&unknown_type).is_err());
+    }
+
+    #[test]
+    fn medical_contradiction_requires_two_real_distinct_sources(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&[
+            "בסיכום האשפוז נכתב צד ימין","בדוח ההדמיה נכתב צד שמאל",
+        ]);
+        let context=medical_context(&t.db,&matter_id);
+        let a=context.sources[0].source_id.clone();
+        let b=context.sources[1].source_id.clone();
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_contradiction",&context,json!({
+            "sourceIds":[a.clone(),b.clone()],"itemA":"פגיעה בצד ימין","sourceAId":a,"itemB":"פגיעה בצד שמאל","sourceBId":b,
+            "reason":"תיאורי צד סותרים לאותה פגיעה"
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+
+        let allowed:HashSet<String>=[a.clone()].into_iter().collect();
+        let self_conflict=json!({"sourceIds":[a.clone(),a.clone()],"itemA":"x","sourceAId":a.clone(),"itemB":"y","sourceBId":a,"reason":"z"});
+        let payload=parse_structured_proposal(ProposalKind::MedicalContradiction,&self_conflict);
+        assert!(payload.is_err() || validate_source_ids(payload.unwrap().source_ids(),&allowed).is_err());
+    }
+
+    #[test]
+    fn historical_medical_backfill_retains_the_original_date_not_todays_approval_date(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["סיכום טיפול מיום 2012-03-15"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_treatment",&context,json!({
+            "sourceIds":[source_id],"treatmentType":"טיפול","date":"2012-03-15","provider":null,"frequency":null,"outcome":null,"confidence":0.7
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let timeline=crate::medical::build_medical_timeline(&t.db,&matter_id).unwrap();
+        assert_eq!(timeline.len(),1);
+        assert_eq!(timeline[0].business_date.as_deref(),Some("2012-03-15"),
+            "a historically-backfilled medical item must keep its real 2012 date on the timeline, never today's ingestion/approval date");
+    }
+
+    #[test]
+    fn a_new_incremental_document_never_overwrites_a_previously_approved_medical_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["אבחנה ראשונית מ-2023"]);
+        let context1=medical_context(&t.db,&matter_id);
+        let source1=first_source_id(&context1);
+        let first_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_diagnosis",&context1,json!({
+            "sourceIds":[source1],"diagnosisText":"אבחנה ראשונית","code":null,"certainty":"confirmed","provider":null,"confidence":0.7
+        })).unwrap();
+        approve_proposal(&t.db,&first_id,None).unwrap();
+
+        // A second, later "incremental" document arrives and is processed in its
+        // own separate run.
+        new_document_with_pages(&t.db,&matter_id,"medical",&["מסמך חדש שנוסף מאוחר יותר"]);
+        let context2=medical_context(&t.db,&matter_id);
+        let source2=context2.sources.iter().find(|s|s.source_id!=source1).map(|s|s.source_id.clone()).unwrap_or(source1.clone());
+        let second_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_finding",&context2,json!({
+            "sourceIds":[source2],"finding":"ממצא חדש","bodyRegion":null,"laterality":null,"measurement":null,"confidence":0.5
+        })).unwrap();
+        approve_proposal(&t.db,&second_id,None).unwrap();
+
+        assert_eq!(proposal_status(&t.db,&first_id),"approved","an older approved item must remain untouched when a later document is processed");
+        let first_text:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&first_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(first_text.contains("אבחנה ראשונית"),"the first item's content must remain exactly as originally approved");
+    }
+
+    // Reopening a real on-disk encrypted DB depends on the OS keyring - only
+    // Windows has that backend compiled in (see the C2 reopen test's comment for
+    // the full explanation). Gated the same way so it runs for real on the Windows
+    // Release Gate.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reopening_the_database_preserves_approved_medical_evidence_state(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["ממצא קליני"]);
+        let context=medical_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"medical_finding",&context,json!({
+            "sourceIds":[source_id],"finding":"ממצא קליני","bodyRegion":null,"laterality":null,"measurement":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let reopened=DbState::open(t.root.join("app.db")).unwrap();
+        let status:String=reopened.read(|conn|conn.query_row(
+            "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"approved","an approved medical evidence item must survive a full close/reopen");
     }
 }
