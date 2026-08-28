@@ -72,6 +72,7 @@ struct WaitingSignal {
     item_label: String,
     follow_up_at: Option<String>,
     days_until: Option<i64>,
+    is_negotiation: bool,
 }
 
 fn storage_date(value: &str) -> Option<NaiveDate> {
@@ -236,9 +237,16 @@ fn compute_for_date(
 
         let open_waiting = {
             let mut stmt = conn.prepare(
-                "SELECT id,party_label,item_label,follow_up_at FROM waiting_for
-                 WHERE matter_id=?1 AND status='open'
-                 ORDER BY CASE WHEN follow_up_at IS NULL THEN 1 ELSE 0 END,follow_up_at,id",
+                "SELECT w.id,
+                        w.party_label,
+                        w.item_label,
+                        w.follow_up_at,
+                        CASE WHEN l.waiting_for_id IS NULL THEN 0 ELSE 1 END AS is_negotiation
+                 FROM waiting_for w
+                 LEFT JOIN negotiation_waiting_links l
+                   ON l.waiting_for_id=w.id AND l.matter_id=w.matter_id
+                 WHERE w.matter_id=?1 AND w.status='open'
+                 ORDER BY CASE WHEN w.follow_up_at IS NULL THEN 1 ELSE 0 END,w.follow_up_at,w.id",
             )?;
             let rows = stmt.query_map([matter_id], |r| {
                 let follow_up_at: Option<String> = r.get(3)?;
@@ -248,14 +256,25 @@ fn compute_for_date(
                     item_label: r.get(2)?,
                     days_until: follow_up_at.as_deref().and_then(|v| days_until(v, today)),
                     follow_up_at,
+                    is_negotiation: r.get::<_, i64>(4)? == 1,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
             rows
         };
-        let overdue_waiting: Vec<WaitingSignal> = open_waiting
+        let overdue_waiting_all: Vec<WaitingSignal> = open_waiting
             .iter()
             .filter(|w| w.days_until.is_some_and(|d| d < 0))
+            .cloned()
+            .collect();
+        let overdue_negotiation_waiting: Vec<WaitingSignal> = overdue_waiting_all
+            .iter()
+            .filter(|w| w.is_negotiation)
+            .cloned()
+            .collect();
+        let overdue_waiting: Vec<WaitingSignal> = overdue_waiting_all
+            .iter()
+            .filter(|w| !w.is_negotiation)
             .cloned()
             .collect();
 
@@ -312,6 +331,7 @@ fn compute_for_date(
         total_penalty += push_factor(&mut factors, "blocked_workstreams", "high", blocked_workstreams.len() as i64, 12, 24);
         total_penalty += push_factor(&mut factors, "required_evidence_stale", "high", required_stale.len() as i64, 10, 20);
         total_penalty += push_factor(&mut factors, "required_evidence_missing", "high", required_missing.len() as i64, 8, 24);
+        total_penalty += push_factor(&mut factors, "negotiation_followups_overdue", "attention", overdue_negotiation_waiting.len() as i64, 6, 18);
         total_penalty += push_factor(&mut factors, "waiting_followups_overdue", "attention", overdue_waiting.len() as i64, 6, 18);
         total_penalty += push_factor(&mut factors, "stale_verified_ledgers", "attention", stale_verified_ledgers, 8, 16);
         total_penalty += push_factor(&mut factors, "stale_verified_facts", "attention", stale_verified_facts, 6, 12);
@@ -366,6 +386,12 @@ fn compute_for_date(
                 code: "collect_required_evidence".into(), priority: "high".into(),
                 target_id: None, due_at: None, label: None, secondary_label: None,
                 requirement_key: Some(key.clone()), workstream_kind: None,
+            }
+        } else if let Some(item) = overdue_negotiation_waiting.first() {
+            NextBestAction {
+                code: "follow_up_negotiation".into(), priority: "high".into(),
+                target_id: Some(item.id.clone()), due_at: item.follow_up_at.clone(), label: Some(item.party_label.clone()),
+                secondary_label: Some(item.item_label.clone()), requirement_key: None, workstream_kind: None,
             }
         } else if let Some(item) = overdue_waiting.first() {
             NextBestAction {
@@ -496,6 +522,33 @@ mod tests {
         })
         .unwrap();
         conflict_id
+    }
+
+    fn insert_negotiation_waiting(db: &DbState, matter_id: &str, follow_up_at: &str, status: &str) -> String {
+        let event_id = Uuid::new_v4().to_string();
+        let waiting_id = Uuid::new_v4().to_string();
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO negotiation_events
+                   (id,matter_id,event_kind,happened_at,summary,follow_up_at,created_at)
+                 VALUES(?1,?2,'follow_up','2026-01-01T09:00:00Z','Negotiation follow-up',?3,'2026-01-01T09:00:00Z')",
+                params![event_id, matter_id, follow_up_at],
+            )?;
+            conn.execute(
+                "INSERT INTO waiting_for
+                   (id,matter_id,party_label,item_label,since_at,follow_up_at,status,source_ref)
+                 VALUES(?1,?2,'Insurer','Negotiation follow-up','2026-01-01T09:00:00Z',?3,?4,?5)",
+                params![waiting_id, matter_id, follow_up_at, status, format!("negotiation_event:{event_id}")],
+            )?;
+            conn.execute(
+                "INSERT INTO negotiation_waiting_links(event_id,matter_id,waiting_for_id,created_at)
+                 VALUES(?1,?2,?3,'2026-01-01T09:00:00Z')",
+                params![event_id, matter_id, waiting_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        waiting_id
     }
 
     #[test]
@@ -646,6 +699,73 @@ mod tests {
         let snapshot = compute(&db, &matter_id).unwrap();
         assert_eq!(snapshot.next_best_action.code, "resolve_overdue_deadline");
         assert!(snapshot.factors.iter().any(|f| f.code == "unresolved_fact_conflicts"));
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn negotiation_followup_is_operational_nba_and_is_matter_isolated() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_a = seeded_matter(&db, "generic_civil");
+        let matter_b = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_a);
+        collect_default_office_requirements(&db, &matter_b);
+        let today = NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
+        let other_waiting = insert_negotiation_waiting(&db, &matter_b, "2026-01-01T09:00:00Z", "open");
+
+        let isolated = compute_for_date(&db, &matter_a, today, "test").unwrap();
+        assert!(!isolated.factors.iter().any(|f| f.code == "negotiation_followups_overdue"));
+        assert_ne!(isolated.next_best_action.target_id.as_deref(), Some(other_waiting.as_str()));
+
+        let waiting_id = insert_negotiation_waiting(&db, &matter_a, "2026-01-02T09:00:00Z", "open");
+        let snapshot = compute_for_date(&db, &matter_a, today, "test").unwrap();
+        assert_eq!(snapshot.next_best_action.code, "follow_up_negotiation");
+        assert_eq!(snapshot.next_best_action.priority, "high");
+        assert_eq!(snapshot.next_best_action.target_id.as_deref(), Some(waiting_id.as_str()));
+        assert!(snapshot.factors.iter().any(|f| f.code == "negotiation_followups_overdue" && f.count == 1));
+        assert!(!snapshot.factors.iter().any(|f| f.code == "waiting_followups_overdue"));
+
+        db.write(|conn| {
+            conn.execute(
+                "UPDATE waiting_for SET status='closed' WHERE id=?1 AND matter_id=?2",
+                params![waiting_id, matter_a],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let closed = compute_for_date(&db, &matter_a, today, "test").unwrap();
+        assert!(!closed.factors.iter().any(|f| f.code == "negotiation_followups_overdue"));
+        assert_eq!(closed.next_best_action.code, "start_workstream");
+        drop(db);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn committed_deadline_outranks_negotiation_followup() {
+        let root = std::env::temp_dir().join(format!("tahrir-b6-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = DbState::open(root.join("app.db")).unwrap();
+        let matter_id = seeded_matter(&db, "generic_civil");
+        collect_default_office_requirements(&db, &matter_id);
+        let today = NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
+        insert_negotiation_waiting(&db, &matter_id, "2026-01-01T09:00:00Z", "open");
+        db.write(|conn| {
+            conn.execute(
+                "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,created_at)
+                 VALUES(?1,?2,'File limitation objection','2026-01-01','committed','test','2026-01-01T00:00:00Z')",
+                params![Uuid::new_v4().to_string(), matter_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let snapshot = compute_for_date(&db, &matter_id, today, "test").unwrap();
+        assert_eq!(snapshot.next_best_action.code, "resolve_overdue_deadline");
+        assert_eq!(snapshot.next_best_action.priority, "critical");
+        assert!(snapshot.factors.iter().any(|f| f.code == "overdue_committed_deadlines"));
+        assert!(snapshot.factors.iter().any(|f| f.code == "negotiation_followups_overdue"));
         drop(db);
         let _ = fs::remove_dir_all(root);
     }

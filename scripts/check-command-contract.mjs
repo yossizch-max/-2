@@ -13,7 +13,8 @@ function walk(dir){
 const ts=walk(path.join(root,"src")).filter(x=>/\.(ts|tsx)$/.test(x)).map(x=>fs.readFileSync(x,"utf8")).join("\n");
 const rust=walk(path.join(root,"src-tauri","src")).filter(x=>x.endsWith(".rs")).map(x=>fs.readFileSync(x,"utf8")).join("\n");
 
-const invokes=new Set([...ts.matchAll(/call(?:<[^>]+>)?\(\s*"([^"]+)"/g)].map(m=>m[1]));
+const frontendCommandCall=/\b(?:call|callRaw)(?:<[^>]+>)?\(\s*(["'])([^"']+)\1/g;
+const invokes=new Set([...ts.matchAll(frontendCommandCall)].map(m=>m[2]));
 const commands=new Set([...rust.matchAll(/#\[tauri::command\]\s*pub fn\s+([A-Za-z0-9_]+)/g)].map(m=>m[1]));
 const missing=[...invokes].filter(x=>!commands.has(x)).sort();
 const extra=[...commands].filter(x=>!invokes.has(x)).sort();

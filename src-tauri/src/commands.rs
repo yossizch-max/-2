@@ -844,7 +844,6 @@ pub fn save_waiting_for(state: State<'_, AppState>, payload: Value) -> AppResult
     Ok(json!({"id":id}))
 }
 
-#[tauri::command]
 pub fn close_waiting_for(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let id=required_string(&payload,"waitingForId")?;
     state.db.write(|conn|{let changed=conn.execute(

@@ -69,7 +69,7 @@ export function TasksCalendarTab({matterId}:{matterId:string}) {
   };
   const closeWaiting=async(id:string)=>{
     setWaitingBusy(id);setActionError(null);
-    try{ await commands.close_waiting_for({waitingForId:id}); reloadWaiting(); }
+    try{ await commands.close_waiting_for({matterId,waitingForId:id}); reloadWaiting(); }
     catch(e){setActionError(String(e));}
     finally{ setWaitingBusy(null); }
   };

@@ -4,6 +4,10 @@ export async function call<T=unknown>(command:string,payload:Record<string,unkno
   return invoke<T>(command,{payload});
 }
 
+export async function callRaw<T=unknown>(command:string,args:Record<string,unknown>={}):Promise<T>{
+  return invoke<T>(command,args);
+}
+
 export const commands = {
   get_app_health: (payload:Record<string,unknown>={}) => call("get_app_health",payload),
   get_case_health: (payload:Record<string,unknown>={}) => call("get_case_health",payload),
@@ -115,4 +119,15 @@ export const commands = {
   supersede_legal_ruleset: (payload:Record<string,unknown>={}) => call("supersede_legal_ruleset",payload),
   preview_legal_engine_run: (payload:Record<string,unknown>={}) => call("preview_legal_engine_run",payload),
   commit_legal_engine_run: (payload:Record<string,unknown>={}) => call("commit_legal_engine_run",payload),
+  list_insurance_claims: (matterId:string) => callRaw("list_insurance_claims",{matterId}),
+  save_insurance_claim: (payload:Record<string,unknown>={}) => callRaw("save_insurance_claim",{payload}),
+  change_insurance_claim_status: (payload:Record<string,unknown>={}) => callRaw("change_insurance_claim_status",{payload}),
+  list_insurance_claim_status_history: (matterId:string,claimId:string) => callRaw("list_insurance_claim_status_history",{matterId,claimId}),
+  list_negotiation_events: (matterId:string) => callRaw("list_negotiation_events",{matterId}),
+  add_negotiation_event: (payload:Record<string,unknown>={}) => callRaw("add_negotiation_event",{payload}),
+  correct_negotiation_event: (payload:Record<string,unknown>={}) => callRaw("correct_negotiation_event",{payload}),
+  list_negotiation_positions: (matterId:string) => callRaw("list_negotiation_positions",{matterId}),
+  add_negotiation_position: (payload:Record<string,unknown>={}) => callRaw("add_negotiation_position",{payload}),
+  correct_negotiation_position: (payload:Record<string,unknown>={}) => callRaw("correct_negotiation_position",{payload}),
+  get_negotiation_snapshot: (matterId:string,insuranceClaimId:string) => callRaw("get_negotiation_snapshot",{matterId,insuranceClaimId}),
 };

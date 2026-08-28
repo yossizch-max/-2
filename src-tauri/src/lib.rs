@@ -17,6 +17,8 @@ mod legal_docs;
 mod legal_rules;
 mod matter_profile;
 mod models;
+mod negotiation;
+mod negotiation_ops;
 mod requirements;
 mod retrieval;
 mod scanner;
@@ -110,7 +112,7 @@ pub fn run() {
             commands::update_calendar_item,
             commands::list_waiting_for,
             commands::save_waiting_for,
-            commands::close_waiting_for,
+            negotiation_ops::close_waiting_for,
             commands::list_deadlines,
             commands::save_manual_deadline,
             commands::commit_deadline,
@@ -162,7 +164,18 @@ pub fn run() {
             commands::approve_legal_ruleset,
             commands::supersede_legal_ruleset,
             commands::preview_legal_engine_run,
-            commands::commit_legal_engine_run
+            commands::commit_legal_engine_run,
+            negotiation::list_insurance_claims,
+            negotiation::save_insurance_claim,
+            negotiation_ops::change_insurance_claim_status,
+            negotiation::list_insurance_claim_status_history,
+            negotiation::list_negotiation_events,
+            negotiation::add_negotiation_event,
+            negotiation::correct_negotiation_event,
+            negotiation::list_negotiation_positions,
+            negotiation::add_negotiation_position,
+            negotiation::correct_negotiation_position,
+            negotiation_ops::get_negotiation_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");
