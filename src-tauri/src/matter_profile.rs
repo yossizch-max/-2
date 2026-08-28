@@ -30,7 +30,7 @@ pub const ALLOWED_CASE_TYPES: &[&str] = &[
 
 pub const ALLOWED_PARTY_ROLES: &[&str] = &[
     "client", "party", "witness", "employer", "insurer",
-    "medical_provider", "expert", "opposing_counsel", "court",
+    "medical_provider", "expert", "opposing_counsel", "court", "government_body",
 ];
 
 pub const ALLOWED_ENTITY_KINDS: &[&str] = &["person", "organization", "unknown"];

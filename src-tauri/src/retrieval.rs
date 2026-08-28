@@ -58,6 +58,12 @@ fn capability_profile(capability: &str) -> CapabilityProfile {
             default_query: Some("תאונה אחריות רשלנות משטרה עדות תמונות מומחה הודאה מנגנון סיבה accident liability"),
             boosted_categories: &["court", "expert_opinion", "correspondence"],
         },
+        // Phase C, milestone C2: spans every document category by design (entities,
+        // events, claims, amounts, dates, contradictions, questions can each come
+        // from any category), so - like `extract_facts` - it has no single natural
+        // keyword focus and no category boost. A lawyer-typed `query` still narrows
+        // the run the same way it does for every other capability.
+        "extract_matter_understanding" => CapabilityProfile { default_query: None, boosted_categories: &[] },
         _ => CapabilityProfile { default_query: None, boosted_categories: &[] },
     }
 }

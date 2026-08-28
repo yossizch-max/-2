@@ -117,6 +117,56 @@ export type AiStructuredProposal = {
   liablePartyName?: string | null;
   description?: string;
   explanation?: string | null;
+  // Phase C, milestone C2: Matter Understanding item fields
+  entityType?: string;
+  displayName?: string;
+  eventType?: string;
+  title?: string;
+  datePrecision?: string | null;
+  documentDate?: string | null;
+  involvedEntities?: string[];
+  assertedBy?: string;
+  statement?: string;
+  target?: string | null;
+  amountType?: string;
+  amountCents?: number;
+  currency?: string;
+  context?: string | null;
+  date?: string;
+  dateType?: string;
+  issueType?: string;
+  itemA?: string;
+  sourceAId?: string;
+  itemB?: string;
+  sourceBId?: string;
+  reason?: string;
+  question?: string;
+  confidence?: number | null;
+};
+
+// Phase C, milestone C2: Matter Understanding Core
+export type TimelineItem = {
+  id: string; kind: string; businessDate: string; title: string;
+  description?: string | null; verified: boolean; insertedAt: string;
+  datePrecision?: string | null;
+};
+
+export type MatterBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+export type MatterBrief = {
+  matterId: string;
+  profile: MatterProfile;
+  parties: MatterParty[];
+  entities: MatterBriefItem[];
+  chronology: TimelineItem[];
+  claims: MatterBriefItem[];
+  amounts: MatterBriefItem[];
+  issues: MatterBriefItem[];
+  contradictions: MatterBriefItem[];
+  missingInformation: MatterBriefItem[];
+  verifiedFactCount: number;
+  openConflictCount: number;
+  pendingReviewCount: number;
 };
 
 export type AiProposal = {

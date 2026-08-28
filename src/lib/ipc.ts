@@ -81,6 +81,8 @@ export const commands = {
   get_ai_run: (payload:Record<string,unknown>={}) => call("get_ai_run",payload),
   list_ai_proposals: (payload:Record<string,unknown>={}) => call("list_ai_proposals",payload),
   review_ai_proposal: (payload:Record<string,unknown>={}) => call("review_ai_proposal",payload),
+  get_matter_timeline: (payload:Record<string,unknown>={}) => call("get_matter_timeline",payload),
+  get_matter_brief: (payload:Record<string,unknown>={}) => call("get_matter_brief",payload),
   list_verified_facts: (payload:Record<string,unknown>={}) => call("list_verified_facts",payload),
   verify_fact: (payload:Record<string,unknown>={}) => call("verify_fact",payload),
   invalidate_fact: (payload:Record<string,unknown>={}) => call("invalidate_fact",payload),
