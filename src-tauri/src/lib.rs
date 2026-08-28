@@ -2,6 +2,7 @@ mod ai;
 mod ai_review;
 mod authorities;
 mod case_health;
+mod classification;
 mod commands;
 mod damage;
 mod db;
@@ -10,8 +11,11 @@ mod extraction;
 mod fact_conflicts;
 #[cfg(test)]
 mod gate_f_partial;
+mod intake;
 #[cfg(test)]
 mod integrity_tests;
+#[cfg(test)]
+mod intake_tests;
 mod ledger;
 mod legal_docs;
 mod legal_rules;
@@ -103,6 +107,8 @@ pub fn run() {
             commands::extract_document_text,
             commands::get_document_pages,
             commands::classify_document_manual,
+            commands::process_matter_documents,
+            commands::list_extraction_runs,
             commands::list_tasks,
             commands::create_task,
             commands::update_task,

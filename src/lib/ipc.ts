@@ -57,6 +57,8 @@ export const commands = {
   extract_document_text: (payload:Record<string,unknown>={}) => call("extract_document_text",payload),
   get_document_pages: (payload:Record<string,unknown>={}) => call("get_document_pages",payload),
   classify_document_manual: (payload:Record<string,unknown>={}) => call("classify_document_manual",payload),
+  process_matter_documents: (payload:Record<string,unknown>={}) => call("process_matter_documents",payload),
+  list_extraction_runs: (payload:Record<string,unknown>={}) => call("list_extraction_runs",payload),
   list_tasks: (payload:Record<string,unknown>={}) => call("list_tasks",payload),
   create_task: (payload:Record<string,unknown>={}) => call("create_task",payload),
   update_task: (payload:Record<string,unknown>={}) => call("update_task",payload),

@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, ledger, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
+    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, matter_profile, models, requirements, scanner, search, security,
     workstreams,
     error::{AppError,AppResult}, AppState
 };
@@ -558,7 +558,12 @@ pub fn list_documents(state: State<'_, AppState>, payload: Value) -> AppResult<V
         let mut stmt=conn.prepare(
             "SELECT d.id,d.matter_id,coalesce(o.file_name,d.logical_title,''),d.category,
              coalesce(o.availability_state,'unknown'),coalesce(v.extraction_state,'not_started'),
-             v.id,v.content_sha256,coalesce(o.observed_mtime,''),o.id
+             v.id,v.content_sha256,coalesce(o.observed_mtime,''),o.id,
+             d.category_source,d.category_confidence,
+             (SELECT count(*) FROM document_pages p WHERE p.document_version_id=v.id) AS page_count,
+             (SELECT group_concat(DISTINCT p.extraction_method) FROM document_pages p WHERE p.document_version_id=v.id) AS extraction_method,
+             (SELECT er.error_code FROM extraction_runs er WHERE er.document_version_id=v.id
+                AND er.status='failed' ORDER BY er.started_at DESC,er.id DESC LIMIT 1) AS last_error_code
              FROM documents d LEFT JOIN document_versions v ON v.document_id=d.id AND v.matter_id=d.matter_id
              LEFT JOIN file_occurrences o ON o.document_version_id=v.id
              WHERE d.matter_id=?1 GROUP BY d.id ORDER BY d.updated_at DESC"
@@ -568,7 +573,10 @@ pub fn list_documents(state: State<'_, AppState>, payload: Value) -> AppResult<V
             "category":r.get::<_,String>(3)?,"sourceState":r.get::<_,String>(4)?,
             "extractionState":r.get::<_,String>(5)?,"currentVersionId":r.get::<_,Option<String>>(6)?,
             "currentSha256":r.get::<_,Option<String>>(7)?,"modifiedAt":r.get::<_,String>(8)?,
-            "occurrenceId":r.get::<_,Option<String>>(9)?
+            "occurrenceId":r.get::<_,Option<String>>(9)?,
+            "categorySource":r.get::<_,Option<String>>(10)?,"categoryConfidence":r.get::<_,Option<f64>>(11)?,
+            "pageCount":r.get::<_,i64>(12)?,"extractionMethod":r.get::<_,Option<String>>(13)?,
+            "lastErrorCode":r.get::<_,Option<String>>(14)?
         })))?.collect::<Result<Vec<_>,_>>()?;
         Ok(Value::Array(rows))
     })
@@ -693,6 +701,37 @@ pub fn classify_document_manual(state: State<'_, AppState>, payload: Value) -> A
         params![document_id,matter_id,category,Utc::now().to_rfc3339()]
     )?;if changed!=1{return Err(AppError::NotFound("document".into()));}Ok(())})?;
     Ok(json!({"ok":true}))
+}
+
+/// Phase C, milestone C1 (Smart Intake): the one matter-scoped command a lawyer
+/// triggers to scan/hash, extract/OCR, and classify every not-yet-processed document
+/// in one action. See `intake.rs` - this is a thin wrapper, all real logic lives
+/// there so it stays directly unit-testable without a live Tauri State.
+#[tauri::command]
+pub fn process_matter_documents(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    intake::process_matter_documents(&state.db,matter_id,&state.resource_root)
+}
+
+/// Extraction audit trail (C1): every extraction attempt for a document's current
+/// version, most recent first - lets the UI show a failed attempt's real error and
+/// confirm a retry actually created a new row rather than rewriting the old one.
+#[tauri::command]
+pub fn list_extraction_runs(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let document_version_id=required_string(&payload,"documentVersionId")?;
+    state.db.read(|conn|{
+        let mut stmt=conn.prepare(
+            "SELECT id,matter_id,document_version_id,source_sha256,status,error_code,started_at,finished_at
+             FROM extraction_runs WHERE document_version_id=?1 ORDER BY started_at DESC,id DESC"
+        )?;
+        let rows=stmt.query_map([document_version_id],|r|Ok(json!({
+            "id":r.get::<_,String>(0)?,"matterId":r.get::<_,String>(1)?,
+            "documentVersionId":r.get::<_,String>(2)?,"sourceSha256":r.get::<_,String>(3)?,
+            "status":r.get::<_,String>(4)?,"errorCode":r.get::<_,Option<String>>(5)?,
+            "startedAt":r.get::<_,String>(6)?,"finishedAt":r.get::<_,Option<String>>(7)?
+        })))?.collect::<Result<Vec<_>,_>>()?;
+        Ok(Value::Array(rows))
+    })
 }
 
 #[tauri::command]

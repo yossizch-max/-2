@@ -35,7 +35,7 @@ jobs:
 
       - working-directory: src-tauri
         run: cargo test --locked -- --test-threads=1
-        timeout-minutes: 20
+        timeout-minutes: 40
 
       - name: Vendor OCR runtime (Tesseract/Poppler/tessdata)
         run: pwsh -File scripts/vendor-ocr-runtime.ps1
@@ -56,6 +56,45 @@ jobs:
             if (!(Test-Path $p)) { throw "missing OCR runtime file: $p" }
           }
           Write-Host "All OCR runtime files present."
+
+      - name: OCR runtime smoke test (real Tesseract execution against a synthetic image)
+        timeout-minutes: 5
+        run: |
+          # Phase C, milestone C1: this only proves the vendored tesseract.exe binary
+          # actually runs and can recognize text on this runner - it is not an
+          # accuracy benchmark. The fixture contains real Hebrew text (to genuinely
+          # exercise the heb+ara+eng language pack this app loads, not just an
+          # English-only smoke test) plus a fixed, deterministic ASCII token
+          # (TAHRIR1234) that is the only thing actually asserted on - asserting
+          # Hebrew glyph accuracy here would make CI flaky for no real benefit at
+          # this stage. Contains no client data: the image is generated fresh on the
+          # runner from a literal string, nothing checked into the repo or sourced
+          # from a real matter.
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 900,220
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::White)
+          $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+          $font = New-Object System.Drawing.Font("Arial", 30)
+          $g.DrawString("TAHRIR1234", $font, [System.Drawing.Brushes]::Black, 20, 30)
+          $g.DrawString("בדיקת זיהוי טקסט בעברית", $font, [System.Drawing.Brushes]::Black, 20, 110)
+          $imgPath = "$env:RUNNER_TEMP\ocr-smoke.png"
+          $bmp.Save($imgPath, [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+
+          $tesseract = "src-tauri\resources\ocr\vendor\tesseract\tesseract.exe"
+          $tessdata = "src-tauri\resources\ocr\tessdata"
+          $output = & $tesseract $imgPath stdout -l heb+ara+eng --tessdata-dir $tessdata 2>&1
+          $exitCode = $LASTEXITCODE
+          Write-Host "tesseract.exe exit code: $exitCode"
+          Write-Host "tesseract.exe output:"
+          Write-Host $output
+
+          if ($exitCode -ne 0) { throw "tesseract.exe exited with a non-zero code ($exitCode) against a synthetic fixture image" }
+          $joined = ($output | Out-String)
+          if ([string]::IsNullOrWhiteSpace($joined)) { throw "tesseract.exe produced empty output against a fixture image containing real text" }
+          if ($joined -notmatch "TAHRIR1234") { throw "the deterministic ASCII token TAHRIR1234 was not recovered - the vendored OCR runtime did not actually run text recognition correctly" }
+          Write-Host "OCR runtime smoke test passed: tesseract.exe ran for real and recovered TAHRIR1234."
 
       - run: npm run desktop:build
         timeout-minutes: 25
