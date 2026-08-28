@@ -33,7 +33,7 @@ function ProviderCard({kind,label,defaultBaseUrl,profile,reload}:{
     setBusy(true);setStatus(null);
     try{
       const res=await commands.test_ai_provider({profileId:profile.id}) as {ok:boolean};
-      setStatus(res.ok?"תקין":"נכשל");
+      setStatus(res.ok?"תצורה תקינה (לא נבדקה זמינות רשת בפועל)":"תצורה שגויה");
     }catch(e){setStatus(String(e));}
     finally{setBusy(false);}
   };

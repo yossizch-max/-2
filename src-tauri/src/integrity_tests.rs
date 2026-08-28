@@ -109,7 +109,7 @@
 
 #![cfg(test)]
 
-use crate::{ai, authorities, damage, db::DbState, error::AppError, ledger, legal_docs, legal_rules, matter_profile, models::DamageInput, requirements, retrieval, scanner, workstreams};
+use crate::{ai, authorities, damage, db::DbState, error::AppError, ledger, legal_docs, legal_rules, matter_profile, models::DamageInput, negotiation, negotiation_ops, requirements, retrieval, scanner, workstreams};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
@@ -2099,4 +2099,139 @@ fn ai_plan_context_wrapper_matches_the_underlying_manifest() {
         wrapped["manifestSha256"].as_str().unwrap(), manifest.manifest_sha256,
         "ai::plan_context must be a pure passthrough of retrieval::build_context_manifest - preview and run must never diverge"
     );
+}
+
+// --- RC0 Working Alpha gate: a real close-and-reopen persistence check ---
+
+/// Every other test in this file opens a `DbState` exactly once and keeps using that
+/// same connection - none of them prove data actually survives closing the app and
+/// starting it again, which is the literal Definition-of-Done for RC0. This test
+/// writes real data across every core module (matter/profile/parties, a verified
+/// medical ledger entry with its source, a task, a calendar item, a B7 insurance
+/// claim carried through a real status transition, and a legal document draft),
+/// drops the `DbState` entirely (closing its connection, exactly like quitting the
+/// app), then opens a brand-new `DbState` against the *same* on-disk file (exactly
+/// like relaunching it) and re-reads everything through the same real code paths a
+/// live IPC call would use - never re-deriving data by re-inspecting the first
+/// session's state. `DbState::open`'s SQLCipher key comes from the OS keyring
+/// (`security::load_or_create_db_key`), not from anything path-derived, so this also
+/// exercises the real "does the second open even decrypt the same file" question, not
+/// just "does re-running migrations no-op correctly" (already covered elsewhere).
+///
+/// Windows-only: `security.rs`'s `keyring` dependency is compiled with only the
+/// `windows-native` feature (`Cargo.toml` - this is a Windows-only desktop app, same
+/// reason the OCR runtime is only vendored for Windows). On any other OS there is no
+/// functional keyring backend at all, so `set_password` silently no-ops while a
+/// `get_password` right after fails - that's a missing-backend artifact of running
+/// tests on a non-Windows machine, not a statement about real Windows Credential
+/// Manager behavior, which does persist across process restarts for the same OS
+/// user. Gating this test lets it run for real on the actual target platform (the
+/// Windows Release Gate's `cargo test --locked`) instead of asserting it works
+/// without ever having run it anywhere.
+#[cfg(target_os = "windows")]
+#[test]
+fn core_entities_survive_a_full_app_close_and_reopen() {
+    let dirs = TestDirs::new();
+    let matter_id;
+    let claim_id;
+    let task_id;
+    let calendar_id;
+    let legal_doc_id;
+
+    {
+        let db = DbState::open(dirs.db_path.clone()).unwrap();
+        matter_id = new_matter(&db, "תיק דמה - restart test");
+        matter_profile::save_profile(
+            &db, &matter_id, Some("2026-01-15"), Some("בית משפט שלום תל אביב"),
+            Some("BTL-9999"), Some("סיכום מקרה לצורך בדיקת התמדה"),
+        ).unwrap();
+        let party_id = matter_profile::add_party(
+            &db, &matter_id, "insurer", "מגדל ביטוח", None, None, None, None, None, None,
+        ).unwrap();
+
+        let (_version_id, page_id) = new_document_with_page(&db, &matter_id, "אובחן עם שבר בפרק כף היד ביום 15.1.2026");
+        let medical_entry_id = ledger::create_medical_event(
+            &db, &matter_id, Some("2026-01-15"), Some("ד\"ר כהן"), "שבר בפרק כף היד", None,
+        ).unwrap();
+        ledger::add_source(&db, ledger::LedgerKind::Medical, &matter_id, &medical_entry_id, &page_id, "אובחן עם שבר בפרק כף היד").unwrap();
+        ledger::verify_entry(&db, ledger::LedgerKind::Medical, &matter_id, &medical_entry_id).unwrap();
+
+        let now = Utc::now().to_rfc3339();
+        task_id = Uuid::new_v4().to_string();
+        db.write(|conn| conn.execute(
+            "INSERT INTO tasks(id,matter_id,title,status,risk_class,created_at,updated_at) VALUES(?1,?2,'הכנת כתב תביעה','open','medium',?3,?3)",
+            params![task_id, matter_id, now],
+        ).map_err(AppError::Db)).unwrap();
+
+        calendar_id = Uuid::new_v4().to_string();
+        db.write(|conn| conn.execute(
+            "INSERT INTO calendar_events(id,matter_id,title,starts_at,event_kind,status,created_at) VALUES(?1,?2,'דיון קדם משפט','2026-03-01T10:00:00Z','hearing','active',?3)",
+            params![calendar_id, matter_id, now],
+        ).map_err(AppError::Db)).unwrap();
+
+        let claim = negotiation::save_claim(&db, &json!({
+            "matterId": matter_id, "insurerPartyId": party_id, "claimNumber": "CLM-RESTART-1",
+        })).unwrap();
+        claim_id = claim.get("id").and_then(|v| v.as_str()).unwrap().to_string();
+        negotiation_ops::change_claim_status(&db, &json!({
+            "matterId": matter_id, "claimId": claim_id, "toStatus": "negotiating", "changedAt": now,
+        })).unwrap();
+
+        legal_doc_id = legal_docs::create_draft(&db, &matter_id, "כתב תביעה - תיק דמה", "claim").unwrap();
+
+        // Sanity-check within the still-open first session before "closing the app".
+        assert_eq!(ledger::list_medical_events(&db, &matter_id).unwrap().len(), 1);
+        // `db` (and its underlying SQLCipher connection) is dropped at the end of this
+        // block - this is the "close the app" moment.
+    }
+
+    // "Reopen the app": a brand-new DbState against the exact same file path.
+    let db2 = DbState::open(dirs.db_path.clone()).unwrap();
+
+    let title: String = db2.read(|conn| conn.query_row(
+        "SELECT title FROM matters WHERE id=?1", [&matter_id], |r| r.get(0),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(title, "תיק דמה - restart test");
+
+    let profile = matter_profile::get_profile(&db2, &matter_id).unwrap();
+    assert_eq!(profile.primary_court_name.as_deref(), Some("בית משפט שלום תל אביב"));
+    assert_eq!(profile.btl_claim_number.as_deref(), Some("BTL-9999"));
+
+    let parties = matter_profile::list_parties(&db2, &matter_id).unwrap();
+    assert_eq!(parties.len(), 1);
+    assert_eq!(parties[0].display_name, "מגדל ביטוח");
+
+    let medical = ledger::list_medical_events(&db2, &matter_id).unwrap();
+    assert_eq!(medical.len(), 1);
+    assert_eq!(medical[0].status, "verified", "a verified ledger entry must still read verified after a real close/reopen, not just draft");
+    assert_eq!(medical[0].treatment_summary, "שבר בפרק כף היד");
+
+    let task_status: String = db2.read(|conn| conn.query_row(
+        "SELECT status FROM tasks WHERE id=?1", [&task_id], |r| r.get(0),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(task_status, "open");
+
+    let calendar_title: String = db2.read(|conn| conn.query_row(
+        "SELECT title FROM calendar_events WHERE id=?1", [&calendar_id], |r| r.get(0),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(calendar_title, "דיון קדם משפט");
+
+    let claims = negotiation::list_claims(&db2, &matter_id).unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0]["status"], "negotiating");
+    let history = negotiation::list_status_history(&db2, &matter_id, &claim_id).unwrap();
+    assert_eq!(history.len(), 2, "both the original open row and the negotiating transition must survive");
+    assert_eq!(history[0]["toStatus"], "negotiating", "audit ordering (created_at DESC, rowid DESC) must still hold after a real reopen");
+
+    let legal_doc_status: String = db2.read(|conn| conn.query_row(
+        "SELECT status FROM legal_documents WHERE id=?1", [&legal_doc_id], |r| r.get(0),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(legal_doc_status, "draft");
+
+    // Cross-cutting integrity must hold after a real reopen too, not just within one
+    // continuous connection.
+    let fk_violations: i64 = db2.read(|conn| conn.query_row(
+        "SELECT count(*) FROM pragma_foreign_key_check()", [], |r| r.get(0),
+    ).map_err(AppError::Db)).unwrap();
+    assert_eq!(fk_violations, 0, "no dangling foreign keys after a real close/reopen cycle");
 }

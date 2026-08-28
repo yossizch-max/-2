@@ -106,14 +106,16 @@ export function OverviewTab({matter}:{matter:Matter}) {
   return <div className="matter-tab">
     <CaseHealthPanel matterId={matter.id}/>
     <div className="kpi-grid">
-      <button><span>מסמכים</span><strong>{matter.documentCount}</strong><small>מקור פתיח בלחיצה</small></button>
-      <button><span>עובדות</span><strong>{matter.verifiedFactCount}</strong><small>{matter.pendingReviewCount} לבדיקה</small></button>
-      <button><span>מועד קרוב</span><strong>{nextDeadline?.dueAt ?? "—"}</strong><small>מחייב רק לאחר commit</small></button>
-      <button><span>שלב</span><strong>{matter.workflowStage}</strong><small>המעבר מאושר בידי המשתמש</small></button>
+      <div className="kpi-tile"><span>מסמכים</span><strong>{matter.documentCount}</strong><small>ראו בלשונית מסמכים</small></div>
+      <div className="kpi-tile"><span>עובדות</span><strong>{matter.verifiedFactCount}</strong><small>{matter.pendingReviewCount} לבדיקה</small></div>
+      <div className="kpi-tile"><span>מועד קרוב</span><strong>{nextDeadline?.dueAt ?? "—"}</strong><small>מחייב רק לאחר commit</small></div>
+      <div className="kpi-tile"><span>שלב</span><strong>{matter.workflowStage}</strong><small>המעבר מאושר בידי המשתמש</small></div>
     </div>
     <section className="workspace-card"><h2>מסמכים אחרונים</h2>
       {documents?.length
-        ? documents.slice(0,3).map(d=><button className="mini-row" key={d.id}><span>{d.fileName}</span><small>{d.category} · {d.extractionState}</small></button>)
+        ? documents.slice(0,3).map(d=><button className="mini-row" key={d.id} disabled={!d.occurrenceId}
+            onClick={()=>d.occurrenceId&&commands.open_occurrence({occurrenceId:d.occurrenceId})}>
+            <span>{d.fileName}</span><small>{d.category} · {d.extractionState}</small></button>)
         : <p className="quiet">אין עדיין מסמכים. סרקו את תיקיית התיק בלשונית מסמכים.</p>}
     </section>
     <div className="grid-2">
