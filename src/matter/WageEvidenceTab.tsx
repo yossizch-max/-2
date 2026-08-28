@@ -4,10 +4,11 @@ import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
 import type { AiProfile, AiProposal } from "../types";
 
-const CAPABILITY = "extract_wage_evidence";
+const CAPABILITY = "extract_wage_economic_evidence";
 
 const SECTION_ORDER = [
   "wage_employment", "wage_income", "wage_payslip", "wage_annual_income",
+  "wage_employer_confirmation", "wage_self_employed_income", "wage_pension_contribution",
   "wage_absence", "wage_sick_leave", "wage_work_limitation",
   "wage_employment_change", "wage_benefit_payment", "wage_gap_signal",
 ] as const;
@@ -16,7 +17,10 @@ const SECTION_LABELS: Record<string, string> = {
   wage_employment: "העסקה",
   wage_income: "הכנסה",
   wage_payslip: "תלושי שכר",
-  wage_annual_income: "הכנסה שנתית (טופס 106 וכו׳)",
+  wage_annual_income: "הכנסה שנתית של שכיר (טופס 106 וכו׳)",
+  wage_employer_confirmation: "אישורי מעסיק",
+  wage_self_employed_income: "הכנסה כעצמאי",
+  wage_pension_contribution: "הפרשות פנסיוניות/סוציאליות",
   wage_absence: "היעדרויות מהעבודה",
   wage_sick_leave: "תעודות מחלה",
   wage_work_limitation: "מגבלות עבודה",
@@ -62,6 +66,29 @@ function ItemPreview({proposal}:{proposal:AiProposal}) {
         <div><dt>מקור המסמך</dt><dd>{fieldValue(s.sourceType)}</dd></div>
         <div><dt>שנה</dt><dd>{fieldValue(s.year)}</dd></div>
         <div><dt>סכום</dt><dd>{centsToILS(s.amountCents)}</dd></div>
+        {typeof s.monthsWorked === "number" && <div><dt>חודשי עבודה</dt><dd>{s.monthsWorked}</dd></div>}
+      </dl>;
+    case "wage_employer_confirmation":
+      return <dl className="profile-fields">
+        <div><dt>מעסיק</dt><dd>{fieldValue(s.employer)}</dd></div>
+        <div><dt>תקופה</dt><dd>{fieldValue(s.periodStart)} - {fieldValue(s.periodEnd)}</dd></div>
+        <div><dt>שכר כפי שנרשם ע״י המעסיק</dt><dd>{fieldValue(s.statedSalaryText)}</dd></div>
+        {s.terminationReasonStated && <div><dt>סיבת סיום כפי שנרשמה</dt><dd>{s.terminationReasonStated}</dd></div>}
+      </dl>;
+    case "wage_self_employed_income":
+      return <dl className="profile-fields">
+        <div><dt>סוג מסמך</dt><dd>{fieldValue(s.documentType)}</dd></div>
+        <div><dt>שנת מס</dt><dd>{fieldValue(s.taxYear)}</dd></div>
+        <div><dt>הכנסות</dt><dd>{centsToILS(s.revenueCents)}</dd></div>
+        <div><dt>הוצאות</dt><dd>{centsToILS(s.expensesCents)}</dd></div>
+        <div><dt>רווח/הכנסה חייבת</dt><dd>{centsToILS(s.profitCents)}</dd></div>
+      </dl>;
+    case "wage_pension_contribution":
+      return <dl className="profile-fields">
+        <div><dt>הפרשת מעסיק</dt><dd>{centsToILS(s.employerContributionCents)}</dd></div>
+        <div><dt>הפרשת עובד</dt><dd>{centsToILS(s.employeeContributionCents)}</dd></div>
+        {s.pensionComponent && <div><dt>רכיב</dt><dd>{s.pensionComponent}</dd></div>}
+        {s.trainingFund && <div><dt>קרן השתלמות</dt><dd>{s.trainingFund}</dd></div>}
       </dl>;
     case "wage_absence":
       return <dl className="profile-fields">
@@ -156,10 +183,12 @@ export function WageEvidenceTab({matterId}:{matterId:string}) {
       <span className="eyebrow">AI · WAGE / ECONOMIC EVIDENCE INTELLIGENCE</span>
       <h2>ראיות שכר וכלכליות</h2>
       <p className="quiet">
-        AI מזהה במסמכים בלבד: העסקה, הכנסה (ברוטו/נטו כפי שנרשם, ללא המרה), תלושי שכר, הכנסה שנתית
-        (טופס 106 וכו׳), היעדרויות, תעודות מחלה, מגבלות עבודה, שינויים תעסוקתיים, ותשלומים/גמלאות (בנפרד מהשכר).
+        AI מזהה במסמכים בלבד: העסקה, הכנסה (ברוטו/נטו כפי שנרשם, ללא המרה, כולל מקור התיעוד), תלושי שכר,
+        הכנסה שנתית של שכיר (טופס 106 וכו׳), אישורי מעסיק, הכנסה כעצמאי (הכנסות/הוצאות/רווח - מושגים נפרדים),
+        הפרשות פנסיוניות, היעדרויות, תעודות מחלה, מגבלות עבודה, שינויים תעסוקתיים, ותשלומים/גמלאות (בנפרד מהשכר).
         המערכת אינה מחשבת אובדן שכר בפועל, אובדן כושר השתכרות, היוון, או אובדן פנסיה, ואינה קובעת קשר סיבתי
-        בין שינוי תעסוקתי או היעדרות לבין האירוע. כל פריט דורש אישור נפרד.
+        בין שינוי תעסוקתי או היעדרות לבין האירוע. סכומים סותרים ממקורות שונים מוצגים שניהם - המערכת אינה בוחרת
+        ביניהם. כל פריט דורש אישור נפרד.
       </p>
       {enabledProfiles.length===0 && <p className="quiet">אין ספק AI פעיל. יש להגדיר ולהפעיל ספק בעמוד ה-AI תחילה.</p>}
       {enabledProfiles.length>0 && <>

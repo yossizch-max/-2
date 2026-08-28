@@ -2,7 +2,23 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
-import type { AiProfile, AiProposal } from "../types";
+import type { AiProfile, AiProposal, LiabilityBrief, LiabilityRegime } from "../types";
+
+const REGIME_BANNERS: Record<LiabilityRegime, {label:string; text:string}> = {
+  ftl_road_accident: {
+    label: "מסלול: תאונת דרכים (חוק פלת״ד)",
+    text: "תיק זה כפוף לחוק פיצויים לנפגעי תאונות דרכים - מסלול המבוסס ברובו על אחריות ללא תלות ברשלנות. " +
+      "הדגש הוא על עובדות האירוע, כלי הרכב המעורבים, ביטוח חובה, גרסאות מתחרות, וסוגיות סטטוטוריות/כיסוי הדורשות בדיקה - לא על קביעת אשם.",
+  },
+  ordinary_negligence: {
+    label: "מסלול: רשלנות כללית",
+    text: "תיק זה מאורגן סביב עובדות הנוגעות להתנהגות, הפרת חובה, קשר סיבתי ורשלנות תורמת - אך TAHRIR עצמה אינה קובעת רשלנות, הפרה, קשר סיבתי משפטי או אחריות סופית.",
+  },
+  unknown_requires_review: {
+    label: "יש להגדיר/לאשר את מסלול האחריות המשפטי",
+    text: "לא ניתן לקבוע כרגע את מסלול האחריות המשפטי החל על תיק זה מתוך סוג התיק. עדכנו את פרטי התיק כדי לקבל תצוגה מותאמת.",
+  },
+};
 
 const CAPABILITY = "extract_liability_evidence";
 
@@ -10,20 +26,21 @@ const SECTION_ORDER = [
   "liability_version_statement", "liability_witness_statement", "liability_scene_evidence",
   "liability_police_evidence", "liability_vehicle_damage", "liability_photo_video_evidence",
   "liability_expert_opinion", "liability_admission", "liability_insurer_position",
-  "liability_court_finding", "liability_contradiction",
+  "liability_court_finding", "liability_issue", "liability_contradiction",
 ] as const;
 
 const SECTION_LABELS: Record<string, string> = {
   liability_version_statement: "גרסאות הצדדים",
   liability_witness_statement: "עדויות",
-  liability_scene_evidence: "ראיות זירה אובייקטיביות",
+  liability_scene_evidence: "ראיות אובייקטיביות/פיזיות",
   liability_police_evidence: "חומר משטרתי",
   liability_vehicle_damage: "נזק לרכב",
   liability_photo_video_evidence: "תמונות/סרטונים",
   liability_expert_opinion: "חוות דעת מומחה",
-  liability_admission: "הודאות",
+  liability_admission: "הודאות מועמדות (טרם אושרו)",
   liability_insurer_position: "עמדת המבטח",
-  liability_court_finding: "קביעות בית משפט",
+  liability_court_finding: "קביעות בית משפט/הליך",
+  liability_issue: "סוגיות אחריות פתוחות",
   liability_contradiction: "סתירות אפשריות",
 };
 
@@ -90,6 +107,11 @@ function ItemPreview({proposal}:{proposal:AiProposal}) {
         <div><dt>סוג הקביעה</dt><dd>{fieldValue(s.findingType)}</dd></div>
         <div><dt>תיאור</dt><dd>{fieldValue(s.description)}</dd></div>
       </dl>;
+    case "liability_issue":
+      return <dl className="profile-fields">
+        <div><dt>סוג הסוגיה</dt><dd>{fieldValue(s.issueType)}</dd></div>
+        <div><dt>תיאור ניטרלי</dt><dd>{fieldValue(s.description)}</dd></div>
+      </dl>;
     case "liability_contradiction":
       return <dl className="profile-fields">
         <div><dt>צד א׳</dt><dd>{fieldValue(s.itemA)}</dd></div>
@@ -111,6 +133,9 @@ export function LiabilityEvidenceTab({matterId}:{matterId:string}) {
   const {data:profiles} = useCommand(() => commands.get_ai_settings() as Promise<AiProfile[]>, []);
   const {data:proposals,loading,error,reload} = useCommand(
     () => commands.list_ai_proposals({matterId}) as Promise<AiProposal[]>, [matterId]
+  );
+  const {data:regime} = useCommand(
+    () => (commands.get_liability_brief({matterId}) as Promise<LiabilityBrief>).then(b=>b.regime as LiabilityRegime), [matterId]
   );
   const enabledProfiles = profiles?.filter(p => p.enabled) ?? [];
 
@@ -157,11 +182,16 @@ export function LiabilityEvidenceTab({matterId}:{matterId:string}) {
     <section className="workspace-card">
       <span className="eyebrow">AI · LIABILITY EVIDENCE INTELLIGENCE</span>
       <h2>ראיות אחריות</h2>
+      {regime && <div className="workspace-card" style={{marginBottom:12}}>
+        <strong>{REGIME_BANNERS[regime].label}</strong>
+        <p className="quiet">{REGIME_BANNERS[regime].text}</p>
+      </div>}
       <p className="quiet">
-        AI מזהה במסמכים בלבד: גרסאות צדדים ועדויות (נשארות טענות, לא עובדות), ראיות זירה אובייקטיביות,
-        חומר משטרתי, נזק לרכב, תמונות/סרטונים, חוות דעת מומחה, הודאות (רק כשהלשון תומכת בכך במפורש),
-        עמדת מבטח, וקביעות בית משפט (תוך שמירה על ההבחנה בין הערת ביניים לקביעה עובדתית לפסק דין סופי).
-        המערכת אינה קובעת אשם, רשלנות, אחוז רשלנות תורמת, או אמינות עדים. כל פריט דורש אישור נפרד.
+        AI מזהה במסמכים בלבד: גרסאות צדדים ועדויות (נשארות טענות, לא עובדות), ראיות אובייקטיביות/פיזיות,
+        חומר משטרתי, נזק לרכב, תמונות/סרטונים, חוות דעת מומחה, הודאות מועמדות (רק כשהלשון תומכת בכך במפורש),
+        עמדת מבטח, קביעות בית משפט/הליך (תוך שמירה על ההבחנה בין טענת כתב טענות, החלטה דיונית, הערת ביניים,
+        קביעה ראייתית, קביעה עובדתית ופסק דין סופי), וסוגיות אחריות פתוחות.
+        המערכת אינה קובעת אשם, רשלנות, אחוז רשלנות תורמת, קשר סיבתי משפטי, או אמינות עדים. כל פריט דורש אישור נפרד.
       </p>
       {enabledProfiles.length===0 && <p className="quiet">אין ספק AI פעיל. יש להגדיר ולהפעיל ספק בעמוד ה-AI תחילה.</p>}
       {enabledProfiles.length>0 && <>

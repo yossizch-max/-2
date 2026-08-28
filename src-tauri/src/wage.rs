@@ -30,6 +30,7 @@ pub struct WageTimelineItem {
 /// `medical.rs`'s `TIMELINE_KINDS`).
 const TIMELINE_KINDS: &[&str] = &[
     "wage_employment", "wage_income", "wage_payslip", "wage_annual_income",
+    "wage_employer_confirmation", "wage_self_employed_income", "wage_pension_contribution",
     "wage_absence", "wage_sick_leave", "wage_work_limitation",
     "wage_employment_change", "wage_benefit_payment",
 ];
@@ -59,6 +60,19 @@ fn wage_item_display(kind: &str, v: &Value) -> (Option<String>, String, Option<S
             str_field(v, "year").map(|y| format!("{y}-01-01")),
             str_field(v, "sourceType").unwrap_or_else(|| "הכנסה שנתית".to_string()),
             str_field(v, "employerOrSource"),
+        ),
+        "wage_employer_confirmation" => (
+            str_field(v, "periodStart"),
+            str_field(v, "employer").unwrap_or_else(|| "אישור מעסיק".to_string()),
+            str_field(v, "statedSalaryText"),
+        ),
+        "wage_self_employed_income" => (
+            str_field(v, "taxYear").map(|y| format!("{y}-01-01")),
+            str_field(v, "documentType").unwrap_or_else(|| "הכנסה כעצמאי".to_string()),
+            None,
+        ),
+        "wage_pension_contribution" => (
+            str_field(v, "periodStart"), "הפרשות פנסיוניות".to_string(), str_field(v, "pensionComponent"),
         ),
         "wage_absence" => (
             str_field(v, "startDate"), "היעדרות מהעבודה".to_string(), str_field(v, "statedReason"),
@@ -219,6 +233,9 @@ pub fn build_wage_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
         let income = fetch_items("wage_income")?;
         let payslips = fetch_items("wage_payslip")?;
         let annual_income = fetch_items("wage_annual_income")?;
+        let employer_confirmations = fetch_items("wage_employer_confirmation")?;
+        let self_employed_income = fetch_items("wage_self_employed_income")?;
+        let pension_contributions = fetch_items("wage_pension_contribution")?;
         let absences = fetch_items("wage_absence")?;
         let sick_leave = fetch_items("wage_sick_leave")?;
         let work_limitations = fetch_items("wage_work_limitation")?;
@@ -227,7 +244,8 @@ pub fn build_wage_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
         let gap_signals = fetch_items("wage_gap_signal")?;
 
         let pending_review_count = [
-            &employment, &income, &payslips, &annual_income, &absences, &sick_leave,
+            &employment, &income, &payslips, &annual_income, &employer_confirmations,
+            &self_employed_income, &pension_contributions, &absences, &sick_leave,
             &work_limitations, &employment_changes, &benefit_payments, &gap_signals,
         ].iter().flat_map(|v| v.iter()).filter(|item| item["pending"] == Value::Bool(true)).count() as i64;
 
@@ -237,6 +255,9 @@ pub fn build_wage_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
             "income": income,
             "payslips": payslips,
             "annualIncome": annual_income,
+            "employerConfirmations": employer_confirmations,
+            "selfEmployedIncome": self_employed_income,
+            "pensionContributions": pension_contributions,
             "absences": absences,
             "sickLeave": sick_leave,
             "workLimitations": work_limitations,
@@ -284,7 +305,7 @@ mod tests {
         db.write(|conn| {
             conn.execute(
                 "INSERT INTO ai_runs(id,matter_id,capability,status,context_manifest_sha256,client_egress_approved,started_at,finished_at)
-                 VALUES(?1,?2,'extract_wage_evidence','completed','sha',0,?3,?3)",
+                 VALUES(?1,?2,'extract_wage_economic_evidence','completed','sha',0,?3,?3)",
                 params![run_id, matter_id, now],
             )?;
             conn.execute(
@@ -364,7 +385,7 @@ mod tests {
         db.write(|conn| {
             conn.execute(
                 "INSERT INTO ai_runs(id,matter_id,capability,status,context_manifest_sha256,client_egress_approved,started_at,finished_at)
-                 VALUES(?1,?2,'extract_wage_evidence','completed','sha',0,?3,?3)",
+                 VALUES(?1,?2,'extract_wage_economic_evidence','completed','sha',0,?3,?3)",
                 params![run_id, matter_id, now],
             )?;
             conn.execute(
@@ -399,6 +420,21 @@ mod tests {
         assert_eq!(first.len(), 1);
         assert_eq!(second.len(), 1, "the timeline is a read model over the existing Wage Ledger row - repeated reads must never duplicate it");
         assert_eq!(first[0].id, second[0].id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn historical_self_employed_tax_year_is_retained_not_replaced_with_todays_date() {
+        let (db, root) = new_test_db();
+        let matter_id = new_matter(&db);
+        insert_approved_wage_proposal(&db, &matter_id, "wage_self_employed_income", json!({
+            "sourceIds":["s1"],"documentType":"annual_tax_return","taxYear":"2016","revenueCents":8000000,
+            "expensesCents":3000000,"profitCents":5000000,"confidence":null
+        }));
+        let timeline = build_wage_timeline(&db, &matter_id).unwrap();
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].business_date.as_deref(), Some("2016-01-01"),
+            "a historical self-employed tax-year document must keep its real 2016 tax year, never today's ingestion date");
         let _ = fs::remove_dir_all(root);
     }
 }

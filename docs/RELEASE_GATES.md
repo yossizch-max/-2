@@ -1686,6 +1686,125 @@ Timeline/Comparison and Liability Brief/Matrix neutrality and matter-isolation
 tests in `wage.rs`/`liability.rs`; and two Windows-gated close/reopen persistence
 tests (wage, liability) matching the established pattern.
 
+### C4 v2 addendum — Regime-Aware Liability + Expanded Wage Taxonomy (2026-08-28)
+
+Before this addendum's code was written, the C4 branch had not yet been pushed
+and had no Windows CI run against it - the addendum below fully supersedes the
+v1 design described above rather than modifying already-shipped, CI-confirmed
+behavior (contrast with C2's addendum, which extended an already-merged milestone).
+
+**Research**: confirmed via targeted web research that Israeli road-accident
+bodily-injury claims are governed by the Compensation for Road Accident Victims
+Law (חוק פיצויים לנפגעי תאונות דרכים) - a statutory regime that is largely
+liability-independent of negligence allocation, structurally distinct from an
+ordinary tort/negligence claim where duty, breach, and contributory negligence
+(רשלנות תורמת / אשם תורם) are live factual/legal questions. This directly shaped
+the regime-detection design below: TAHRIR must organize different evidence, and
+apply different UI framing, depending on which regime a matter falls under -
+never a single generic "who is at fault" model.
+
+**Regime-aware liability, reusing the existing matter-type taxonomy**: new
+`liability::liability_regime_for_matter(db, matter_id) -> AppResult<&'static str>`
+is a pure, read-only classification with no persisted state of its own -
+re-evaluated fresh on every call from `matters.matter_type` (the same taxonomy
+`src/types.ts`'s `CASE_TYPES` already exposes; no duplicate classification model
+was introduced). `traffic_accident` maps to `ftl_road_accident`; `work_accident`/
+`general_negligence`/`medical_malpractice` map to `ordinary_negligence`; anything
+else (including an unset matter, `civil_commercial`, `generic_civil`, `other`)
+maps to `unknown_requires_review` - never guessed into either regime. Because the
+regime is computed fresh from the matter's current `matter_type` and never cached
+or written onto any evidence item, changing a matter's classification later can
+never mutate already-extracted, already-approved liability evidence - proven
+directly by a test that approves an expert-opinion item under one `matter_type`,
+changes the matter to `traffic_accident`, and asserts the proposal's
+`structured_json` and `status` are byte-identical before and after.
+
+**Both the Liability Brief and Liability Evidence Matrix now surface `regime`
+explicitly** in their returned JSON, and the frontend renders a regime-specific
+banner: for `ftl_road_accident` it deliberately never headlines "מי אשם?" and
+instead emphasizes accident facts, involved vehicles, insurance, competing
+descriptions, and statutory/coverage issues requiring review; for
+`unknown_requires_review` it shows "יש להגדיר/לאשר את מסלול האחריות המשפטי"
+rather than guessing. No liability schema anywhere gained a fault, negligence, or
+credibility field regardless of regime - verified directly by a schema-instruction
+scan test (extended to also check for "credibility"), and by two regime-specific
+tests confirming an FTL matter's own approved liability item and an
+ordinary-negligence matter's own approved liability-issue item both remain free
+of such language and never auto-write to `liability_facts`.
+
+**New liability item kind - `LiabilityIssue`** (`issueType`:
+`disputed_mechanism`/`disputed_traffic_light_state`/`disputed_driver_identity`/
+`disputed_vehicle_involvement`/`disputed_employment_relationship`/
+`disputed_coverage_issue`/`other`, plus a neutral `description`): a standalone,
+reviewable "open factual/coverage issue" item, distinct from a `LiabilityContradiction`
+(which requires two specific conflicting sourced items) - an issue can exist even
+before any conflicting statement has been extracted. Reported as its own Brief
+section (`liabilityIssues`) and its own review-tab section; the existing Matrix's
+`issue`-tag grouping over version/witness/scene-evidence items is unchanged.
+`policeEvidence.reportType` and `courtFindings.findingType` are now closed,
+Rust-validated enums instead of free text: `POLICE_MATERIAL_TYPES` (police report/
+investigator report/traffic examiner report/diagram/statement/photograph
+reference/other) and an expanded `COURT_FINDING_TYPES` (pleading allegation/
+procedural order/interim observation/evidentiary ruling/factual finding/final
+judgment) - preserving the real procedural weight of a document so a mere pleading
+allegation or an interim remark can never be silently upgraded into a factual
+finding or a final judgment.
+
+**Three new wage item kinds, splitting concepts the v1 design had blended**:
+- **`WageEmployerConfirmation`** (`employer`, `periodStart`/`periodEnd`,
+  `statedSalaryText`, `terminationReasonStated`, `jobDescription`, `hoursText`) -
+  an attributed employer statement, structurally distinct from both the ledger-
+  facing `WageEmployment` item and from any TAHRIR-computed salary figure.
+- **`WageSelfEmployedIncome`** (`documentType`: annual tax return/P&L statement/
+  tax assessment/VAT report/accountant confirmation/other, `taxYear`,
+  `revenueCents`, `expensesCents`, `profitCents`) - split out from `WageAnnualIncome`
+  (which now covers only Form 106/employer-certification annual totals for
+  employees) specifically so revenue, expenses, and profit remain three distinct,
+  never-equated fields, verified directly by a test asserting `revenueCents !=
+  profitCents` in the canonical output.
+- **`WagePensionContribution`** (`employerContributionCents`,
+  `employeeContributionCents`, `pensionComponent`, `trainingFund`, period) - has
+  no pension-loss field of any kind, verified directly by a test scanning both the
+  canonical JSON and the schema instruction text for the word "loss".
+
+**Existing wage items gained explicit provenance/precision fields** without
+changing their identity: `WageIncome` gained `sourceType` (a cross-cutting
+`WAGE_SOURCE_TYPES` enum - payslip/form_106/employer_confirmation/btl_record/
+tax_return/tax_assessment/bank_record/claimant_statement/accountant_document/
+court_finding/other - for income figures that don't map to one of the more
+specific structured kinds) and `periodPrecision` (`WAGE_PERIOD_PRECISIONS`:
+exact/month/quarter/tax_year/date_range/unknown, so a tax-year document is
+recorded as genuinely a tax year, never fabricated into a single event date).
+Two conflicting `WageIncome` items citing different `sourceType`s for the same
+period are never merged or auto-resolved - both persist as independent, fully
+visible approved proposals, verified directly by a test. `WagePayslip` gained
+optional `overtimeCents`/`bonusCents`/`pensionContributionCents` alongside the
+existing gross/net split. `WageAnnualIncome` gained `monthsWorked`, and has no
+monthly-amount field of any kind, so its total can never be fabricated into a
+monthly figure - verified directly by a test. `WageAbsence` gained `unitsText`;
+`WageSickLeave` gained `incapacityDegreeText`. `EMPLOYMENT_CHANGE_TYPES` gained
+`promotion`/`return_to_work`; `ECONOMIC_GAP_SIGNAL_TYPES` gained
+`btl_income_document_missing`.
+
+**Capability renamed** from `extract_wage_evidence` to
+`extract_wage_economic_evidence` (this rename happened before the branch was ever
+pushed or run on CI, so there was no compatibility concern).
+
+**No migration** - same reasoning as the rest of C2/C3/C4: every new field and
+item kind lives in the existing free-TEXT, Rust-validated `ai_proposals.
+proposal_kind`/`structured_json` columns.
+
+**Tests**: 10 new tests in this addendum (9 in `ai.rs`, 1 in `wage.rs`; 304/304
+local total, up from 294) - covering the annual-income-has-no-monthly-field
+schema guarantee, employer-confirmation attribution and no-Ledger-write, the
+self-employed revenue/expenses/profit distinctness, the pension-contribution
+no-loss-field guarantee, two-conflicting-wage-values-both-visible, the FTL
+regime's no-fault-field reinforcement, the ordinary-negligence regime's
+evidence-not-conclusion boundary, the unknown-regime fallback (including for an
+explicit non-personal-injury matter type), the regime-change-never-mutates-
+evidence guarantee, and a historical self-employed tax-year retention test in
+`wage.rs` matching the existing historical-backfill pattern.
+
 ## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
 The full 24-step checklist below needs a running packaged Windows app, real scanned

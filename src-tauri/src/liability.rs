@@ -7,6 +7,38 @@
 use crate::{db::DbState, error::AppResult};
 use serde_json::{json, Value};
 
+/// The three liability regimes TAHRIR distinguishes, reusing the existing
+/// `matters.matter_type` taxonomy (`src/types.ts`'s `CASE_TYPES`) rather than
+/// introducing a duplicate classification model. `ftl_road_accident` covers matters
+/// governed by Israel's Compensation for Road Accident Victims Law (חוק פיצויים
+/// לנפגעי תאונות דרכים) - a statutory, largely fault-independent regime where
+/// TAHRIR must never compute a negligence or contributory-negligence percentage.
+/// `ordinary_negligence` covers matters proceeding on general tort/negligence
+/// principles - TAHRIR may still organize conduct/breach/causation evidence there,
+/// but never determines negligence, breach, or legal causation itself either way.
+/// An unrecognized or unset `matter_type` is never guessed into either regime.
+const REGIME_FTL_ROAD_ACCIDENT: &str = "ftl_road_accident";
+const REGIME_ORDINARY_NEGLIGENCE: &str = "ordinary_negligence";
+const REGIME_UNKNOWN_REQUIRES_REVIEW: &str = "unknown_requires_review";
+
+/// Maps a matter's own `matter_type` to its liability regime - a pure, read-only
+/// classification with no persisted state of its own. Re-evaluated fresh on every
+/// call, so changing a matter's `matter_type` later never mutates any already-
+/// extracted liability evidence; it only changes how the Brief/Matrix labels it.
+pub fn liability_regime_for_matter(db: &DbState, matter_id: &str) -> AppResult<&'static str> {
+    db.read(|conn| {
+        let matter_type: Option<String> = conn.query_row(
+            "SELECT matter_type FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
+        ).ok();
+        Ok(match matter_type.as_deref() {
+            Some("traffic_accident") => REGIME_FTL_ROAD_ACCIDENT,
+            Some("work_accident") | Some("general_negligence") | Some("medical_malpractice") =>
+                REGIME_ORDINARY_NEGLIGENCE,
+            _ => REGIME_UNKNOWN_REQUIRES_REVIEW,
+        })
+    })
+}
+
 fn fetch_items(conn: &rusqlite::Connection, matter_id: &str, kind: &str) -> AppResult<Vec<Value>> {
     let mut stmt = conn.prepare(
         "SELECT id,structured_json,status FROM ai_proposals \
@@ -25,6 +57,7 @@ fn fetch_items(conn: &rusqlite::Connection, matter_id: &str, kind: &str) -> AppR
 /// item is labeled `pending: true`. Never determines fault, negligence, or which
 /// party's account is true - only organizes what was documented.
 pub fn build_liability_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
+    let regime = liability_regime_for_matter(db, matter_id)?;
     db.read(|conn| {
         let versions = fetch_items(conn, matter_id, "liability_version_statement")?;
         let witnesses = fetch_items(conn, matter_id, "liability_witness_statement")?;
@@ -36,16 +69,21 @@ pub fn build_liability_brief(db: &DbState, matter_id: &str) -> AppResult<Value> 
         let admissions = fetch_items(conn, matter_id, "liability_admission")?;
         let insurer_positions = fetch_items(conn, matter_id, "liability_insurer_position")?;
         let court_findings = fetch_items(conn, matter_id, "liability_court_finding")?;
+        let liability_issues = fetch_items(conn, matter_id, "liability_issue")?;
         let contradictions = fetch_items(conn, matter_id, "liability_contradiction")?;
 
         let pending_review_count = [
             &versions, &witnesses, &scene_evidence, &police_evidence, &vehicle_damage,
             &photo_video_evidence, &expert_opinions, &admissions, &insurer_positions,
-            &court_findings, &contradictions,
+            &court_findings, &liability_issues, &contradictions,
         ].iter().flat_map(|v| v.iter()).filter(|item| item["pending"] == Value::Bool(true)).count() as i64;
 
         Ok(json!({
             "matterId": matter_id,
+            // The applicable/selected liability regime, explicitly surfaced so the
+            // Brief never presents an AI liability conclusion without first stating
+            // which legal framework the evidence is being organized under.
+            "regime": regime,
             "partyVersions": versions,
             "witnesses": witnesses,
             "sceneEvidence": scene_evidence,
@@ -56,6 +94,7 @@ pub fn build_liability_brief(db: &DbState, matter_id: &str) -> AppResult<Value> 
             "admissions": admissions,
             "insurerPositions": insurer_positions,
             "courtFindings": court_findings,
+            "liabilityIssues": liability_issues,
             "contradictions": contradictions,
             "pendingLiabilityReviewCount": pending_review_count,
         }))
@@ -85,6 +124,7 @@ fn issue_key(item: &Value) -> String {
 /// that they differ. Items with no `issue` are grouped together under an empty
 /// issue key ("unassigned"), never dropped.
 pub fn build_liability_matrix(db: &DbState, matter_id: &str) -> AppResult<Value> {
+    let regime = liability_regime_for_matter(db, matter_id)?;
     db.read(|conn| {
         let versions = fetch_items(conn, matter_id, "liability_version_statement")?;
         let witnesses = fetch_items(conn, matter_id, "liability_witness_statement")?;
@@ -121,7 +161,7 @@ pub fn build_liability_matrix(db: &DbState, matter_id: &str) -> AppResult<Value>
             }));
         }
 
-        Ok(json!({ "matterId": matter_id, "rows": rows }))
+        Ok(json!({ "matterId": matter_id, "regime": regime, "rows": rows }))
     })
 }
 

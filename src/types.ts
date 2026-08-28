@@ -223,6 +223,27 @@ export type AiStructuredProposal = {
   insurer?: string | null;
   findingType?: string;
   court?: string | null;
+  // Phase C, milestone C4 v2: regime-aware expansion - additional item fields
+  periodPrecision?: string | null;
+  overtimeCents?: number | null;
+  bonusCents?: number | null;
+  pensionContributionCents?: number | null;
+  monthsWorked?: number | null;
+  jobDescription?: string | null;
+  hoursText?: string | null;
+  statedSalaryText?: string | null;
+  terminationReasonStated?: string | null;
+  documentType?: string;
+  taxYear?: string;
+  revenueCents?: number | null;
+  expensesCents?: number | null;
+  profitCents?: number | null;
+  employerContributionCents?: number | null;
+  employeeContributionCents?: number | null;
+  pensionComponent?: string | null;
+  trainingFund?: string | null;
+  unitsText?: string | null;
+  incapacityDegreeText?: string | null;
 };
 
 // Phase C, milestone C2: Matter Understanding Core
@@ -305,6 +326,9 @@ export type WageBrief = {
   income: WageBriefItem[];
   payslips: WageBriefItem[];
   annualIncome: WageBriefItem[];
+  employerConfirmations: WageBriefItem[];
+  selfEmployedIncome: WageBriefItem[];
+  pensionContributions: WageBriefItem[];
   absences: WageBriefItem[];
   sickLeave: WageBriefItem[];
   workLimitations: WageBriefItem[];
@@ -318,8 +342,17 @@ export type WageBrief = {
 // Phase C, milestone C4, Part B: Liability Evidence Intelligence
 export type LiabilityBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
 
+// The liability regime a matter's evidence is organized under - reused from
+// `matters.matter_type` via `liability::liability_regime_for_matter`, never a
+// separate classification model. `ftl_road_accident` = Israel's Compensation for
+// Road Accident Victims Law (largely fault-independent); `ordinary_negligence` =
+// general tort principles; `unknown_requires_review` = not yet determinable from
+// the matter's own type, never guessed.
+export type LiabilityRegime = "ftl_road_accident" | "ordinary_negligence" | "unknown_requires_review";
+
 export type LiabilityBrief = {
   matterId: string;
+  regime: LiabilityRegime;
   partyVersions: LiabilityBriefItem[];
   witnesses: LiabilityBriefItem[];
   sceneEvidence: LiabilityBriefItem[];
@@ -330,6 +363,7 @@ export type LiabilityBrief = {
   admissions: LiabilityBriefItem[];
   insurerPositions: LiabilityBriefItem[];
   courtFindings: LiabilityBriefItem[];
+  liabilityIssues: LiabilityBriefItem[];
   contradictions: LiabilityBriefItem[];
   pendingLiabilityReviewCount: number;
 };
@@ -342,7 +376,7 @@ export type LiabilityMatrixRow = {
   unresolvedConflict: boolean;
 };
 
-export type LiabilityMatrix = { matterId: string; rows: LiabilityMatrixRow[] };
+export type LiabilityMatrix = { matterId: string; regime: LiabilityRegime; rows: LiabilityMatrixRow[] };
 
 export type AiProposal = {
   id: string; proposalKind: string;

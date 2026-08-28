@@ -2,7 +2,13 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
-import type { LiabilityBrief, LiabilityBriefItem, LiabilityMatrix } from "../types";
+import type { LiabilityBrief, LiabilityBriefItem, LiabilityMatrix, LiabilityRegime } from "../types";
+
+const REGIME_LABELS: Record<LiabilityRegime, string> = {
+  ftl_road_accident: "תאונת דרכים (חוק פלת״ד - אחריות ברובה ללא תלות ברשלנות)",
+  ordinary_negligence: "רשלנות כללית",
+  unknown_requires_review: "יש להגדיר/לאשר את מסלול האחריות המשפטי",
+};
 
 function ItemRow({item, text}:{item:LiabilityBriefItem; text:string}) {
   return <div className="fact-row" key={item.id}>
@@ -57,9 +63,10 @@ export function LiabilityBriefTab({matterId}:{matterId:string}) {
         {showMatrix ? "חזרה לתדריך" : "מטריצת ראיות אחריות"}
       </button>
     </div>
+    {brief && <p className="quiet"><strong>מסלול אחריות: </strong>{REGIME_LABELS[brief.regime]}</p>}
     <p className="quiet">
       נבנה ממידע מאומת בפנקס האחריות ומהצעות AI שאושרו. פריטים המסומנים "ממתין לאישור" הם הצעת AI שטרם נבדקה -
-      אין להסתמך עליהם כעובדה. המערכת אינה קובעת אשם, רשלנות, אחוז רשלנות תורמת, או אמינות עדים.
+      אין להסתמך עליהם כעובדה. המערכת אינה קובעת אשם, רשלנות, אחוז רשלנות תורמת, קשר סיבתי משפטי, או אמינות עדים.
     </p>
 
     {showMatrix && <MatrixView matterId={matterId}/>}
@@ -117,6 +124,12 @@ export function LiabilityBriefTab({matterId}:{matterId:string}) {
           <p className="quiet">מוצגת רמת הקביעה בדיוק כפי שתועדה - הערת ביניים לעולם אינה מוצגת כפסק דין סופי.</p>
           {brief.courtFindings.length===0 && <p className="quiet">אין עדיין קביעות שזוהו.</p>}
           {brief.courtFindings.map(c=><ItemRow key={c.id} item={c} text={`${c.structured.findingType ?? "?"}: ${c.structured.description ?? ""}`}/>)}
+        </div>
+
+        <div style={{marginTop:16}}><h3>סוגיות אחריות פתוחות</h3>
+          <p className="quiet">סוגיה עובדתית/כיסוי ניטרלית בלבד - אינה מסמנת מי צודק.</p>
+          {brief.liabilityIssues.length===0 && <p className="quiet">לא זוהו סוגיות פתוחות.</p>}
+          {brief.liabilityIssues.map(i=><ItemRow key={i.id} item={i} text={`${i.structured.issueType ?? "?"}: ${i.structured.description ?? ""}`}/>)}
         </div>
 
         <div style={{marginTop:16}}><h3>סתירות הדורשות בדיקה</h3>

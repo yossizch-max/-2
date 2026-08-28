@@ -78,7 +78,7 @@ fn capability_profile(capability: &str) -> CapabilityProfile {
         // Phase C, milestone C4, Part A: same reasoning as extract_medical_evidence
         // - the 10-item wage/economic taxonomy is too broad for one fixed keyword
         // set, so it relies on category boosting plus a lawyer-typed query.
-        "extract_wage_evidence" => CapabilityProfile {
+        "extract_wage_economic_evidence" => CapabilityProfile {
             default_query: None,
             boosted_categories: &["wage"],
         },

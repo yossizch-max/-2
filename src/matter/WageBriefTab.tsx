@@ -44,9 +44,25 @@ export function WageBriefTab({matterId}:{matterId:string}) {
       {brief.payslips.map(p=><ItemRow key={p.id} item={p} text={`${p.structured.month ?? "?"}`}/>)}
     </div>
 
-    <div style={{marginTop:16}}><h3>הכנסה שנתית</h3>
+    <div style={{marginTop:16}}><h3>הכנסה שנתית של שכיר</h3>
       {brief.annualIncome.length===0 && <p className="quiet">אין עדיין הכנסה שנתית שזוהתה.</p>}
       {brief.annualIncome.map(a=><ItemRow key={a.id} item={a} text={`${a.structured.sourceType ?? "?"} · ${a.structured.year ?? "?"}`}/>)}
+    </div>
+
+    <div style={{marginTop:16}}><h3>אישורי מעסיק</h3>
+      {brief.employerConfirmations.length===0 && <p className="quiet">אין עדיין אישורי מעסיק שזוהו.</p>}
+      {brief.employerConfirmations.map(e=><ItemRow key={e.id} item={e} text={`${e.structured.employer ?? "?"}: ${e.structured.statedSalaryText ?? ""}`}/>)}
+    </div>
+
+    <div style={{marginTop:16}}><h3>הכנסה כעצמאי</h3>
+      <p className="quiet">הכנסות, הוצאות ורווח מוצגים כמושגים נפרדים - אינם מוזגים זה בזה.</p>
+      {brief.selfEmployedIncome.length===0 && <p className="quiet">אין עדיין הכנסת עצמאי שזוהתה.</p>}
+      {brief.selfEmployedIncome.map(s=><ItemRow key={s.id} item={s} text={`${s.structured.documentType ?? "?"} · ${s.structured.taxYear ?? "?"}`}/>)}
+    </div>
+
+    <div style={{marginTop:16}}><h3>הפרשות פנסיוניות/סוציאליות</h3>
+      {brief.pensionContributions.length===0 && <p className="quiet">אין עדיין הפרשות שזוהו.</p>}
+      {brief.pensionContributions.map(p=><ItemRow key={p.id} item={p} text={p.structured.pensionComponent ?? "הפרשה פנסיונית"}/>)}
     </div>
 
     <div style={{marginTop:16}}><h3>היעדרויות</h3>
