@@ -84,6 +84,38 @@ const MISSING_EVIDENCE_TYPES: &[&str] = &[
     "treatment_records_missing","btl_protocol_missing","provider_records_missing","other",
 ];
 
+/// Phase C, milestone C4: two more bundle capabilities (Part A - wage/economic
+/// evidence, Part B - liability evidence), same "safety valve, not a claim about
+/// typical matter size" reasoning as `MAX_MEDICAL_ITEMS_PER_RUN`.
+const MAX_WAGE_ITEMS_PER_RUN: usize = 100;
+const MAX_LIABILITY_ITEMS_PER_RUN: usize = 100;
+
+const EMPLOYMENT_STATUS_TYPES: &[&str] = &["employee","self_employed","unemployed","other"];
+/// Whether a stated amount is gross or net, exactly as the source represents it -
+/// TAHRIR never silently converts one to the other.
+const AMOUNT_BASIS_TYPES: &[&str] = &["gross","net"];
+const INCOME_TYPES: &[&str] = &["salary","self_employed","bonus","commission","other"];
+const ANNUAL_INCOME_SOURCE_TYPES: &[&str] = &["form_106","tax_assessment","self_employed_annual_report","other"];
+const EMPLOYMENT_CHANGE_TYPES: &[&str] = &[
+    "termination","resignation","reduced_hours","role_change","employer_change","other",
+];
+const BENEFIT_PAYMENT_TYPES: &[&str] = &["btl","employer_sick_pay","insurance_payment","pension","other"];
+/// A documentary gap (a period, employer, or form not found in ingested sources) -
+/// never a conclusion that income loss did or did not occur.
+const ECONOMIC_GAP_SIGNAL_TYPES: &[&str] = &[
+    "payslips_missing_for_period","employer_confirmation_missing","form_106_missing",
+    "tax_record_missing","other",
+];
+
+const SCENE_EVIDENCE_TYPES: &[&str] = &[
+    "road_markings","skid_marks","vehicle_position","traffic_light_state","physical_damage","photograph","other",
+];
+const LIABILITY_MEDIA_TYPES: &[&str] = &["photo","video","other"];
+const INSURER_POSITION_TYPES: &[&str] = &["accepts","disputes","partially_accepts","no_position_stated"];
+/// Preserves the real procedural weight of a court document - an interim
+/// observation is never upgraded into a final judgment.
+const COURT_FINDING_TYPES: &[&str] = &["interim_observation","factual_finding","final_judgment","procedural_decision"];
+
 struct Profile {
     id:String, provider_kind:String, base_url:String, model:String,
     enabled:bool, client_data_authorized:bool,
@@ -125,6 +157,32 @@ enum ProposalKind {
     MedicalGapSignal,
     MedicalMissingEvidenceSignal,
     MedicalContradiction,
+    /// Phase C, milestone C4, Part A: another bundle capability, same pattern as
+    /// `MedicalEvidence` - never itself a stored `proposal_kind`.
+    WageEvidence,
+    WageEmployment,
+    WageIncome,
+    WagePayslip,
+    WageAnnualIncome,
+    WageAbsence,
+    WageSickLeave,
+    WageWorkLimitation,
+    WageEmploymentChange,
+    WageBenefitPayment,
+    WageGapSignal,
+    /// Phase C, milestone C4, Part B: another bundle capability, same pattern.
+    LiabilityEvidence,
+    LiabilityVersionStatement,
+    LiabilityWitnessStatement,
+    LiabilitySceneEvidence,
+    LiabilityPoliceEvidence,
+    LiabilityVehicleDamage,
+    LiabilityPhotoVideoEvidence,
+    LiabilityExpertOpinion,
+    LiabilityAdmission,
+    LiabilityInsurerPosition,
+    LiabilityCourtFinding,
+    LiabilityContradiction,
 }
 
 impl ProposalKind {
@@ -159,6 +217,29 @@ impl ProposalKind {
             "medical_gap_signal"=>Ok(Self::MedicalGapSignal),
             "medical_missing_evidence_signal"=>Ok(Self::MedicalMissingEvidenceSignal),
             "medical_contradiction"=>Ok(Self::MedicalContradiction),
+            "extract_wage_evidence"=>Ok(Self::WageEvidence),
+            "wage_employment"=>Ok(Self::WageEmployment),
+            "wage_income"=>Ok(Self::WageIncome),
+            "wage_payslip"=>Ok(Self::WagePayslip),
+            "wage_annual_income"=>Ok(Self::WageAnnualIncome),
+            "wage_absence"=>Ok(Self::WageAbsence),
+            "wage_sick_leave"=>Ok(Self::WageSickLeave),
+            "wage_work_limitation"=>Ok(Self::WageWorkLimitation),
+            "wage_employment_change"=>Ok(Self::WageEmploymentChange),
+            "wage_benefit_payment"=>Ok(Self::WageBenefitPayment),
+            "wage_gap_signal"=>Ok(Self::WageGapSignal),
+            "extract_liability_evidence"=>Ok(Self::LiabilityEvidence),
+            "liability_version_statement"=>Ok(Self::LiabilityVersionStatement),
+            "liability_witness_statement"=>Ok(Self::LiabilityWitnessStatement),
+            "liability_scene_evidence"=>Ok(Self::LiabilitySceneEvidence),
+            "liability_police_evidence"=>Ok(Self::LiabilityPoliceEvidence),
+            "liability_vehicle_damage"=>Ok(Self::LiabilityVehicleDamage),
+            "liability_photo_video_evidence"=>Ok(Self::LiabilityPhotoVideoEvidence),
+            "liability_expert_opinion"=>Ok(Self::LiabilityExpertOpinion),
+            "liability_admission"=>Ok(Self::LiabilityAdmission),
+            "liability_insurer_position"=>Ok(Self::LiabilityInsurerPosition),
+            "liability_court_finding"=>Ok(Self::LiabilityCourtFinding),
+            "liability_contradiction"=>Ok(Self::LiabilityContradiction),
             _=>Err(AppError::Validation(format!("unknown AI proposal kind \"{v}\""))),
         }
     }
@@ -197,6 +278,29 @@ impl ProposalKind {
             Self::MedicalGapSignal=>"medical_gap_signal",
             Self::MedicalMissingEvidenceSignal=>"medical_missing_evidence_signal",
             Self::MedicalContradiction=>"medical_contradiction",
+            Self::WageEvidence=>"extract_wage_evidence",
+            Self::WageEmployment=>"wage_employment",
+            Self::WageIncome=>"wage_income",
+            Self::WagePayslip=>"wage_payslip",
+            Self::WageAnnualIncome=>"wage_annual_income",
+            Self::WageAbsence=>"wage_absence",
+            Self::WageSickLeave=>"wage_sick_leave",
+            Self::WageWorkLimitation=>"wage_work_limitation",
+            Self::WageEmploymentChange=>"wage_employment_change",
+            Self::WageBenefitPayment=>"wage_benefit_payment",
+            Self::WageGapSignal=>"wage_gap_signal",
+            Self::LiabilityEvidence=>"extract_liability_evidence",
+            Self::LiabilityVersionStatement=>"liability_version_statement",
+            Self::LiabilityWitnessStatement=>"liability_witness_statement",
+            Self::LiabilitySceneEvidence=>"liability_scene_evidence",
+            Self::LiabilityPoliceEvidence=>"liability_police_evidence",
+            Self::LiabilityVehicleDamage=>"liability_vehicle_damage",
+            Self::LiabilityPhotoVideoEvidence=>"liability_photo_video_evidence",
+            Self::LiabilityExpertOpinion=>"liability_expert_opinion",
+            Self::LiabilityAdmission=>"liability_admission",
+            Self::LiabilityInsurerPosition=>"liability_insurer_position",
+            Self::LiabilityCourtFinding=>"liability_court_finding",
+            Self::LiabilityContradiction=>"liability_contradiction",
         }
     }
 
@@ -224,6 +328,16 @@ impl ProposalKind {
             Self::MedicalFunctionalStatus|Self::MedicalDisabilityDetermination|Self::MedicalPriorHistory|
             Self::MedicalOpinion|Self::MedicalGapSignal|Self::MedicalMissingEvidenceSignal|Self::MedicalContradiction=>
                 "internal per-item schema - see extract_medical_evidence",
+            Self::WageEvidence=>"{\"employment\":[{\"sourceIds\":[\"...\"],\"employer\":\"...\",\"role\":\"string or null\",\"employmentStatus\":\"employee|self_employed|unemployed|other\",\"startDate\":\"YYYY-MM-DD or null\",\"endDate\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"income\":[{\"sourceIds\":[\"...\"],\"amountCents\":12345,\"amountBasis\":\"gross|net - exactly as the source states it, never convert one to the other\",\"incomeType\":\"salary|self_employed|bonus|commission|other\",\"employerOrSource\":\"string or null\",\"periodStart\":\"YYYY-MM-DD or null\",\"periodEnd\":\"YYYY-MM-DD or null\",\"currency\":\"ILS unless the source states otherwise\",\"confidence\":0.0}],\"payslips\":[{\"sourceIds\":[\"...\"],\"month\":\"YYYY-MM\",\"grossAmountCents\":12345,\"netAmountCents\":12345,\"components\":\"string or null, only if explicitly itemized\",\"confidence\":0.0}],\"annualIncome\":[{\"sourceIds\":[\"...\"],\"sourceType\":\"form_106|tax_assessment|self_employed_annual_report|other\",\"year\":\"YYYY\",\"amountCents\":12345,\"employerOrSource\":\"string or null\",\"confidence\":0.0}],\"absences\":[{\"sourceIds\":[\"...\"],\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD or null\",\"statedReason\":\"string or null - the reason as stated by the source, never TAHRIR's own causal conclusion\",\"documentedBy\":\"string or null\",\"confidence\":0.0}],\"sickLeaveCertificates\":[{\"sourceIds\":[\"...\"],\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD or null\",\"issuingSource\":\"the issuing physician/clinic/institution\",\"confidence\":0.0}],\"workLimitations\":[{\"sourceIds\":[\"...\"],\"limitation\":\"only when explicitly documented\",\"startDate\":\"YYYY-MM-DD or null\",\"endDate\":\"YYYY-MM-DD or null\",\"workCapacityStatus\":\"fit|unfit|partially_fit|restricted|unknown\",\"confidence\":0.0}],\"employmentChanges\":[{\"sourceIds\":[\"...\"],\"changeType\":\"termination|resignation|reduced_hours|role_change|employer_change|other\",\"date\":\"YYYY-MM-DD or null\",\"description\":\"grounded description - never attribute the change to the incident unless the source itself explicitly states that\",\"confidence\":0.0}],\"benefitPayments\":[{\"sourceIds\":[\"...\"],\"paymentType\":\"btl|employer_sick_pay|insurance_payment|pension|other\",\"amountCents\":12345,\"date\":\"YYYY-MM-DD or null\",\"payer\":\"string or null\",\"confidence\":0.0}],\"gapSignals\":[{\"sourceIds\":[\"...\"],\"gapType\":\"payslips_missing_for_period|employer_confirmation_missing|form_106_missing|tax_record_missing|other\",\"description\":\"phrase as not found in currently ingested sources, never as proof of no income or no employment\",\"periodStart\":\"YYYY-MM-DD or null\",\"periodEnd\":\"YYYY-MM-DD or null\"}]}. Every array may be empty; omit an item rather than inventing an amount, employer, or date the source does not support. Never calculate actual wage loss, future earning loss, earning-capacity percentage, capitalization, or pension loss - only record what a source documents. Never state or imply that an employment change, absence, or income decline was caused by the incident unless the cited source itself makes that statement. confidence reflects only model certainty, never a legal conclusion, and is optional.",
+            Self::WageEmployment|Self::WageIncome|Self::WagePayslip|Self::WageAnnualIncome|Self::WageAbsence|
+            Self::WageSickLeave|Self::WageWorkLimitation|Self::WageEmploymentChange|Self::WageBenefitPayment|
+            Self::WageGapSignal=>"internal per-item schema - see extract_wage_evidence",
+            Self::LiabilityEvidence=>"{\"versionStatements\":[{\"sourceIds\":[\"...\"],\"assertedBy\":\"who asserts this - a party's own account\",\"statement\":\"the assertion, never rewritten as an established fact\",\"issue\":\"string or null - a short label for the factual issue this bears on, e.g. \\\"traffic light color\\\", used only to group related items, never to assign truth\",\"eventDate\":\"YYYY-MM-DD or null\",\"datePrecision\":\"exact|month|year|approximate|unknown or null\",\"confidence\":0.0}],\"witnessStatements\":[{\"sourceIds\":[\"...\"],\"witness\":\"...\",\"statement\":\"the assertion, never rewritten as an established fact\",\"issue\":\"string or null, same grouping label as versionStatements\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"sceneEvidence\":[{\"sourceIds\":[\"...\"],\"evidenceType\":\"road_markings|skid_marks|vehicle_position|traffic_light_state|physical_damage|photograph|other\",\"description\":\"preserve what the source actually says, never an inference about fault\",\"issue\":\"string or null\",\"confidence\":0.0}],\"policeEvidence\":[{\"sourceIds\":[\"...\"],\"reportType\":\"...\",\"factualContent\":\"the factual content only - a police document is not automatically a legal determination\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"vehicleDamage\":[{\"sourceIds\":[\"...\"],\"vehicle\":\"string or null\",\"damageLocation\":\"string or null\",\"documentedCondition\":\"...\",\"confidence\":0.0}],\"photoVideoEvidence\":[{\"sourceIds\":[\"...\"],\"mediaType\":\"photo|video|other\",\"description\":\"only what was actually extracted/reviewed from the source - never invent a visual finding not present in the material\",\"confidence\":0.0}],\"expertOpinions\":[{\"sourceIds\":[\"...\"],\"expert\":\"...\",\"specialty\":\"string or null\",\"opinionText\":\"the opinion, attributed to its author - never TAHRIR's own conclusion\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"admissions\":[{\"sourceIds\":[\"...\"],\"assertedBy\":\"...\",\"statement\":\"only when the source's own language actually supports an admission - do not infer one from silence or ambiguity\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"insurerPositions\":[{\"sourceIds\":[\"...\"],\"position\":\"accepts|disputes|partially_accepts|no_position_stated\",\"detail\":\"string or null - what exactly is accepted/disputed\",\"insurer\":\"string or null\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"courtFindings\":[{\"sourceIds\":[\"...\"],\"findingType\":\"interim_observation|factual_finding|final_judgment|procedural_decision - state exactly what this source is, never upgrade one into another\",\"description\":\"...\",\"court\":\"string or null\",\"date\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"contradictions\":[{\"sourceIds\":[\"sourceAId\",\"sourceBId\"],\"itemA\":\"...\",\"sourceAId\":\"...\",\"itemB\":\"...\",\"sourceBId\":\"...\",\"reason\":\"why these may conflict\"}]}. Every array may be empty. Never determine fault, negligence, contributory-negligence percentage, or statutory liability. Never decide credibility or choose which witness is truthful. Never determine proximate/legal causation or whether a version is legally sufficient. A party's or witness's statement is always a claim/assertion, never rewritten as an established fact. An insurer's stated position is never equated with the truth. confidence reflects only model certainty, never a legal or credibility conclusion, and is optional.",
+            Self::LiabilityVersionStatement|Self::LiabilityWitnessStatement|Self::LiabilitySceneEvidence|
+            Self::LiabilityPoliceEvidence|Self::LiabilityVehicleDamage|Self::LiabilityPhotoVideoEvidence|
+            Self::LiabilityExpertOpinion|Self::LiabilityAdmission|Self::LiabilityInsurerPosition|
+            Self::LiabilityCourtFinding|Self::LiabilityContradiction=>
+                "internal per-item schema - see extract_liability_evidence",
         }
     }
 }
@@ -302,6 +416,82 @@ enum ProposalPayload {
     },
     MedicalMissingEvidenceSignal { source_ids:Vec<String>, missing_type:String, description:String },
     MedicalContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
+    WageEmployment {
+        source_ids:Vec<String>, employer:String, role:Option<String>, employment_status:String,
+        start_date:Option<String>, end_date:Option<String>, confidence:Option<f64>,
+    },
+    WageIncome {
+        source_ids:Vec<String>, amount_cents:i64, amount_basis:String, income_type:String,
+        employer_or_source:Option<String>, period_start:Option<String>, period_end:Option<String>,
+        currency:String, confidence:Option<f64>,
+    },
+    WagePayslip {
+        source_ids:Vec<String>, month:String, gross_amount_cents:Option<i64>, net_amount_cents:Option<i64>,
+        components:Option<String>, confidence:Option<f64>,
+    },
+    WageAnnualIncome {
+        source_ids:Vec<String>, source_type:String, year:String, amount_cents:Option<i64>,
+        employer_or_source:Option<String>, confidence:Option<f64>,
+    },
+    WageAbsence {
+        source_ids:Vec<String>, start_date:String, end_date:Option<String>, stated_reason:Option<String>,
+        documented_by:Option<String>, confidence:Option<f64>,
+    },
+    WageSickLeave {
+        source_ids:Vec<String>, start_date:String, end_date:Option<String>, issuing_source:String,
+        confidence:Option<f64>,
+    },
+    WageWorkLimitation {
+        source_ids:Vec<String>, limitation:String, start_date:Option<String>, end_date:Option<String>,
+        work_capacity_status:String, confidence:Option<f64>,
+    },
+    WageEmploymentChange {
+        source_ids:Vec<String>, change_type:String, date:Option<String>, description:String, confidence:Option<f64>,
+    },
+    WageBenefitPayment {
+        source_ids:Vec<String>, payment_type:String, amount_cents:Option<i64>, date:Option<String>,
+        payer:Option<String>, confidence:Option<f64>,
+    },
+    WageGapSignal {
+        source_ids:Vec<String>, gap_type:String, description:String, period_start:Option<String>, period_end:Option<String>,
+    },
+    LiabilityVersionStatement {
+        source_ids:Vec<String>, asserted_by:String, statement:String, issue:Option<String>,
+        event_date:Option<String>, date_precision:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityWitnessStatement {
+        source_ids:Vec<String>, witness:String, statement:String, issue:Option<String>,
+        date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilitySceneEvidence {
+        source_ids:Vec<String>, evidence_type:String, description:String, issue:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityPoliceEvidence {
+        source_ids:Vec<String>, report_type:String, factual_content:String, date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityVehicleDamage {
+        source_ids:Vec<String>, vehicle:Option<String>, damage_location:Option<String>,
+        documented_condition:String, confidence:Option<f64>,
+    },
+    LiabilityPhotoVideoEvidence {
+        source_ids:Vec<String>, media_type:Option<String>, description:String, confidence:Option<f64>,
+    },
+    LiabilityExpertOpinion {
+        source_ids:Vec<String>, expert:String, specialty:Option<String>, opinion_text:String,
+        date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityAdmission {
+        source_ids:Vec<String>, asserted_by:String, statement:String, date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityInsurerPosition {
+        source_ids:Vec<String>, position:String, detail:Option<String>, insurer:Option<String>,
+        date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityCourtFinding {
+        source_ids:Vec<String>, finding_type:String, description:String, court:Option<String>,
+        date:Option<String>, confidence:Option<f64>,
+    },
+    LiabilityContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
 }
 
 impl ProposalPayload {
@@ -333,7 +523,28 @@ impl ProposalPayload {
             Self::MedicalOpinion{source_ids,..}|
             Self::MedicalGapSignal{source_ids,..}|
             Self::MedicalMissingEvidenceSignal{source_ids,..}|
-            Self::MedicalContradiction{source_ids,..}=>source_ids,
+            Self::MedicalContradiction{source_ids,..}|
+            Self::WageEmployment{source_ids,..}|
+            Self::WageIncome{source_ids,..}|
+            Self::WagePayslip{source_ids,..}|
+            Self::WageAnnualIncome{source_ids,..}|
+            Self::WageAbsence{source_ids,..}|
+            Self::WageSickLeave{source_ids,..}|
+            Self::WageWorkLimitation{source_ids,..}|
+            Self::WageEmploymentChange{source_ids,..}|
+            Self::WageBenefitPayment{source_ids,..}|
+            Self::WageGapSignal{source_ids,..}|
+            Self::LiabilityVersionStatement{source_ids,..}|
+            Self::LiabilityWitnessStatement{source_ids,..}|
+            Self::LiabilitySceneEvidence{source_ids,..}|
+            Self::LiabilityPoliceEvidence{source_ids,..}|
+            Self::LiabilityVehicleDamage{source_ids,..}|
+            Self::LiabilityPhotoVideoEvidence{source_ids,..}|
+            Self::LiabilityExpertOpinion{source_ids,..}|
+            Self::LiabilityAdmission{source_ids,..}|
+            Self::LiabilityInsurerPosition{source_ids,..}|
+            Self::LiabilityCourtFinding{source_ids,..}|
+            Self::LiabilityContradiction{source_ids,..}=>source_ids,
         }
     }
 
@@ -555,6 +766,85 @@ impl ProposalPayload {
                 "sourceBId":source_b_id,
                 "reason":reason,
             }),
+            Self::WageEmployment{source_ids,employer,role,employment_status,start_date,end_date,confidence}=>json!({
+                "sourceIds":source_ids,"employer":employer,"role":role,"employmentStatus":employment_status,
+                "startDate":start_date,"endDate":end_date,"confidence":confidence,
+            }),
+            Self::WageIncome{source_ids,amount_cents,amount_basis,income_type,employer_or_source,period_start,period_end,currency,confidence}=>json!({
+                "sourceIds":source_ids,"amountCents":amount_cents,"amountBasis":amount_basis,"incomeType":income_type,
+                "employerOrSource":employer_or_source,"periodStart":period_start,"periodEnd":period_end,
+                "currency":currency,"confidence":confidence,
+            }),
+            Self::WagePayslip{source_ids,month,gross_amount_cents,net_amount_cents,components,confidence}=>json!({
+                "sourceIds":source_ids,"month":month,"grossAmountCents":gross_amount_cents,
+                "netAmountCents":net_amount_cents,"components":components,"confidence":confidence,
+            }),
+            Self::WageAnnualIncome{source_ids,source_type,year,amount_cents,employer_or_source,confidence}=>json!({
+                "sourceIds":source_ids,"sourceType":source_type,"year":year,"amountCents":amount_cents,
+                "employerOrSource":employer_or_source,"confidence":confidence,
+            }),
+            Self::WageAbsence{source_ids,start_date,end_date,stated_reason,documented_by,confidence}=>json!({
+                "sourceIds":source_ids,"startDate":start_date,"endDate":end_date,"statedReason":stated_reason,
+                "documentedBy":documented_by,"confidence":confidence,
+            }),
+            Self::WageSickLeave{source_ids,start_date,end_date,issuing_source,confidence}=>json!({
+                "sourceIds":source_ids,"startDate":start_date,"endDate":end_date,"issuingSource":issuing_source,
+                "confidence":confidence,
+            }),
+            Self::WageWorkLimitation{source_ids,limitation,start_date,end_date,work_capacity_status,confidence}=>json!({
+                "sourceIds":source_ids,"limitation":limitation,"startDate":start_date,"endDate":end_date,
+                "workCapacityStatus":work_capacity_status,"confidence":confidence,
+            }),
+            Self::WageEmploymentChange{source_ids,change_type,date,description,confidence}=>json!({
+                "sourceIds":source_ids,"changeType":change_type,"date":date,"description":description,"confidence":confidence,
+            }),
+            Self::WageBenefitPayment{source_ids,payment_type,amount_cents,date,payer,confidence}=>json!({
+                "sourceIds":source_ids,"paymentType":payment_type,"amountCents":amount_cents,"date":date,
+                "payer":payer,"confidence":confidence,
+            }),
+            Self::WageGapSignal{source_ids,gap_type,description,period_start,period_end}=>json!({
+                "sourceIds":source_ids,"gapType":gap_type,"description":description,
+                "periodStart":period_start,"periodEnd":period_end,
+            }),
+            Self::LiabilityVersionStatement{source_ids,asserted_by,statement,issue,event_date,date_precision,confidence}=>json!({
+                "sourceIds":source_ids,"assertedBy":asserted_by,"statement":statement,"issue":issue,
+                "eventDate":event_date,"datePrecision":date_precision,"confidence":confidence,
+            }),
+            Self::LiabilityWitnessStatement{source_ids,witness,statement,issue,date,confidence}=>json!({
+                "sourceIds":source_ids,"witness":witness,"statement":statement,"issue":issue,
+                "date":date,"confidence":confidence,
+            }),
+            Self::LiabilitySceneEvidence{source_ids,evidence_type,description,issue,confidence}=>json!({
+                "sourceIds":source_ids,"evidenceType":evidence_type,"description":description,"issue":issue,"confidence":confidence,
+            }),
+            Self::LiabilityPoliceEvidence{source_ids,report_type,factual_content,date,confidence}=>json!({
+                "sourceIds":source_ids,"reportType":report_type,"factualContent":factual_content,"date":date,"confidence":confidence,
+            }),
+            Self::LiabilityVehicleDamage{source_ids,vehicle,damage_location,documented_condition,confidence}=>json!({
+                "sourceIds":source_ids,"vehicle":vehicle,"damageLocation":damage_location,
+                "documentedCondition":documented_condition,"confidence":confidence,
+            }),
+            Self::LiabilityPhotoVideoEvidence{source_ids,media_type,description,confidence}=>json!({
+                "sourceIds":source_ids,"mediaType":media_type,"description":description,"confidence":confidence,
+            }),
+            Self::LiabilityExpertOpinion{source_ids,expert,specialty,opinion_text,date,confidence}=>json!({
+                "sourceIds":source_ids,"expert":expert,"specialty":specialty,"opinionText":opinion_text,
+                "date":date,"confidence":confidence,
+            }),
+            Self::LiabilityAdmission{source_ids,asserted_by,statement,date,confidence}=>json!({
+                "sourceIds":source_ids,"assertedBy":asserted_by,"statement":statement,"date":date,"confidence":confidence,
+            }),
+            Self::LiabilityInsurerPosition{source_ids,position,detail,insurer,date,confidence}=>json!({
+                "sourceIds":source_ids,"position":position,"detail":detail,"insurer":insurer,"date":date,"confidence":confidence,
+            }),
+            Self::LiabilityCourtFinding{source_ids,finding_type,description,court,date,confidence}=>json!({
+                "sourceIds":source_ids,"findingType":finding_type,"description":description,"court":court,
+                "date":date,"confidence":confidence,
+            }),
+            Self::LiabilityContradiction{source_ids,item_a,source_a_id,item_b,source_b_id,reason}=>json!({
+                "sourceIds":source_ids,"itemA":item_a,"sourceAId":source_a_id,"itemB":item_b,
+                "sourceBId":source_b_id,"reason":reason,
+            }),
         }
     }
 }
@@ -715,6 +1005,34 @@ fn required_non_negative_i64_field(proposal:&Value,key:&str)->AppResult<i64>{
         _=>return Err(AppError::Validation(format!("proposal missing {key}"))),
     };
     if value<0{return Err(AppError::Validation(format!("proposal field {key} cannot be negative")));}
+    Ok(value)
+}
+
+/// Phase C, milestone C4: like `required_non_negative_i64_field` but the field is
+/// optional - a payslip may state only one of gross/net, and TAHRIR never derives
+/// the missing side from the one that is present.
+fn optional_non_negative_i64_field(proposal:&Value,key:&str)->AppResult<Option<i64>>{
+    match proposal.get(key){
+        None|Some(Value::Null)=>Ok(None),
+        _=>Ok(Some(required_non_negative_i64_field(proposal,key)?)),
+    }
+}
+
+/// A payslip month - `YYYY-MM`, distinct from `optional_date_field`'s `YYYY-MM-DD`
+/// because a payslip document states a month, not a specific day.
+fn required_month_field(proposal:&Value,key:&str)->AppResult<String>{
+    let value=required_string_field(proposal,key)?;
+    NaiveDate::parse_from_str(&format!("{value}-01"),"%Y-%m-%d")
+        .map_err(|_|AppError::Validation(format!("proposal field {key} must be YYYY-MM")))?;
+    Ok(value)
+}
+
+/// An annual-income year - `YYYY`, four digits.
+fn required_year_field(proposal:&Value,key:&str)->AppResult<String>{
+    let value=required_string_field(proposal,key)?;
+    if value.len()!=4 || !value.chars().all(|c|c.is_ascii_digit()){
+        return Err(AppError::Validation(format!("proposal field {key} must be YYYY")));
+    }
     Ok(value)
 }
 
@@ -1076,6 +1394,255 @@ fn parse_structured_proposal(kind:ProposalKind,proposal:&Value)->AppResult<Propo
                 reason:required_string_field(proposal,"reason")?,
             })
         },
+        ProposalKind::WageEvidence=>Err(AppError::Validation(
+            "extract_wage_evidence is a bundle capability and never a stored proposal kind".into()
+        )),
+        ProposalKind::WageEmployment=>{
+            let employment_status=required_string_field(proposal,"employmentStatus")?;
+            validate_in(&employment_status,EMPLOYMENT_STATUS_TYPES,"employmentStatus")?;
+            Ok(ProposalPayload::WageEmployment{
+                source_ids,
+                employer:required_string_field(proposal,"employer")?,
+                role:optional_string_field(proposal,"role")?,
+                employment_status,
+                start_date:optional_date_field(proposal,"startDate")?,
+                end_date:optional_date_field(proposal,"endDate")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageIncome=>{
+            let amount_basis=required_string_field(proposal,"amountBasis")?;
+            validate_in(&amount_basis,AMOUNT_BASIS_TYPES,"amountBasis")?;
+            let income_type=required_string_field(proposal,"incomeType")?;
+            validate_in(&income_type,INCOME_TYPES,"incomeType")?;
+            Ok(ProposalPayload::WageIncome{
+                source_ids,
+                amount_cents:required_non_negative_i64_field(proposal,"amountCents")?,
+                // Never silently converted between gross and net - the source's own
+                // stated basis is preserved verbatim.
+                amount_basis,
+                income_type,
+                employer_or_source:optional_string_field(proposal,"employerOrSource")?,
+                period_start:optional_date_field(proposal,"periodStart")?,
+                period_end:optional_date_field(proposal,"periodEnd")?,
+                currency:required_string_field(proposal,"currency")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WagePayslip=>{
+            let month=required_month_field(proposal,"month")?;
+            Ok(ProposalPayload::WagePayslip{
+                source_ids, month,
+                gross_amount_cents:optional_non_negative_i64_field(proposal,"grossAmountCents")?,
+                net_amount_cents:optional_non_negative_i64_field(proposal,"netAmountCents")?,
+                components:optional_string_field(proposal,"components")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageAnnualIncome=>{
+            let source_type=required_string_field(proposal,"sourceType")?;
+            validate_in(&source_type,ANNUAL_INCOME_SOURCE_TYPES,"sourceType")?;
+            let year=required_year_field(proposal,"year")?;
+            Ok(ProposalPayload::WageAnnualIncome{
+                source_ids, source_type, year,
+                amount_cents:optional_non_negative_i64_field(proposal,"amountCents")?,
+                employer_or_source:optional_string_field(proposal,"employerOrSource")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageAbsence=>{
+            let start_date=optional_date_field(proposal,"startDate")?
+                .ok_or_else(||AppError::Validation("proposal missing startDate".into()))?;
+            Ok(ProposalPayload::WageAbsence{
+                source_ids, start_date,
+                end_date:optional_date_field(proposal,"endDate")?,
+                // The reason as the source states it - never TAHRIR's own causal
+                // conclusion that the absence is accident-related.
+                stated_reason:optional_string_field(proposal,"statedReason")?,
+                documented_by:optional_string_field(proposal,"documentedBy")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageSickLeave=>{
+            let start_date=optional_date_field(proposal,"startDate")?
+                .ok_or_else(||AppError::Validation("proposal missing startDate".into()))?;
+            Ok(ProposalPayload::WageSickLeave{
+                source_ids, start_date,
+                end_date:optional_date_field(proposal,"endDate")?,
+                issuing_source:required_string_field(proposal,"issuingSource")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageWorkLimitation=>{
+            let work_capacity_status=required_string_field(proposal,"workCapacityStatus")?;
+            validate_in(&work_capacity_status,WORK_CAPACITY_STATUSES,"workCapacityStatus")?;
+            Ok(ProposalPayload::WageWorkLimitation{
+                source_ids,
+                // Only recorded when the source explicitly documents it.
+                limitation:required_string_field(proposal,"limitation")?,
+                start_date:optional_date_field(proposal,"startDate")?,
+                end_date:optional_date_field(proposal,"endDate")?,
+                work_capacity_status,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageEmploymentChange=>{
+            let change_type=required_string_field(proposal,"changeType")?;
+            validate_in(&change_type,EMPLOYMENT_CHANGE_TYPES,"changeType")?;
+            Ok(ProposalPayload::WageEmploymentChange{
+                source_ids, change_type,
+                date:optional_date_field(proposal,"date")?,
+                // Never automatically attributed to the incident - the description
+                // is only what the source itself documents.
+                description:required_string_field(proposal,"description")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageBenefitPayment=>{
+            let payment_type=required_string_field(proposal,"paymentType")?;
+            validate_in(&payment_type,BENEFIT_PAYMENT_TYPES,"paymentType")?;
+            Ok(ProposalPayload::WageBenefitPayment{
+                source_ids, payment_type,
+                // A payment type distinct from salary - never blended into an
+                // income figure.
+                amount_cents:optional_non_negative_i64_field(proposal,"amountCents")?,
+                date:optional_date_field(proposal,"date")?,
+                payer:optional_string_field(proposal,"payer")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::WageGapSignal=>{
+            let gap_type=required_string_field(proposal,"gapType")?;
+            validate_in(&gap_type,ECONOMIC_GAP_SIGNAL_TYPES,"gapType")?;
+            Ok(ProposalPayload::WageGapSignal{
+                source_ids, gap_type,
+                // Must be phrased as "not found in currently ingested sources" -
+                // never as proof that no income/employment existed.
+                description:required_string_field(proposal,"description")?,
+                period_start:optional_date_field(proposal,"periodStart")?,
+                period_end:optional_date_field(proposal,"periodEnd")?,
+            })
+        },
+        ProposalKind::LiabilityEvidence=>Err(AppError::Validation(
+            "extract_liability_evidence is a bundle capability and never a stored proposal kind".into()
+        )),
+        ProposalKind::LiabilityVersionStatement=>Ok(ProposalPayload::LiabilityVersionStatement{
+            source_ids,
+            // A party's own account - remains a claim, never rewritten as an
+            // established fact.
+            asserted_by:required_string_field(proposal,"assertedBy")?,
+            statement:required_string_field(proposal,"statement")?,
+            issue:optional_string_field(proposal,"issue")?,
+            event_date:optional_date_field(proposal,"eventDate")?,
+            date_precision:optional_string_field(proposal,"datePrecision")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilityWitnessStatement=>Ok(ProposalPayload::LiabilityWitnessStatement{
+            source_ids,
+            witness:required_string_field(proposal,"witness")?,
+            statement:required_string_field(proposal,"statement")?,
+            issue:optional_string_field(proposal,"issue")?,
+            date:optional_date_field(proposal,"date")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilitySceneEvidence=>{
+            let evidence_type=required_string_field(proposal,"evidenceType")?;
+            validate_in(&evidence_type,SCENE_EVIDENCE_TYPES,"evidenceType")?;
+            Ok(ProposalPayload::LiabilitySceneEvidence{
+                source_ids, evidence_type,
+                description:required_string_field(proposal,"description")?,
+                issue:optional_string_field(proposal,"issue")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::LiabilityPoliceEvidence=>Ok(ProposalPayload::LiabilityPoliceEvidence{
+            source_ids,
+            report_type:required_string_field(proposal,"reportType")?,
+            // Factual content only - a police document is never automatically a
+            // legal determination.
+            factual_content:required_string_field(proposal,"factualContent")?,
+            date:optional_date_field(proposal,"date")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilityVehicleDamage=>Ok(ProposalPayload::LiabilityVehicleDamage{
+            source_ids,
+            vehicle:optional_string_field(proposal,"vehicle")?,
+            damage_location:optional_string_field(proposal,"damageLocation")?,
+            documented_condition:required_string_field(proposal,"documentedCondition")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilityPhotoVideoEvidence=>{
+            let media_type=optional_string_field(proposal,"mediaType")?;
+            if let Some(mt)=&media_type{ validate_in(mt,LIABILITY_MEDIA_TYPES,"mediaType")?; }
+            Ok(ProposalPayload::LiabilityPhotoVideoEvidence{
+                source_ids, media_type,
+                // Only what was actually extracted/reviewed - never an invented
+                // visual finding.
+                description:required_string_field(proposal,"description")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::LiabilityExpertOpinion=>Ok(ProposalPayload::LiabilityExpertOpinion{
+            source_ids,
+            expert:required_string_field(proposal,"expert")?,
+            specialty:optional_string_field(proposal,"specialty")?,
+            // Preserved as "opinion by source", never TAHRIR's own conclusion.
+            opinion_text:required_string_field(proposal,"opinionText")?,
+            date:optional_date_field(proposal,"date")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilityAdmission=>Ok(ProposalPayload::LiabilityAdmission{
+            source_ids,
+            asserted_by:required_string_field(proposal,"assertedBy")?,
+            // Only when the source's own language actually supports an admission -
+            // the prompt instructs the model not to infer one from silence.
+            statement:required_string_field(proposal,"statement")?,
+            date:optional_date_field(proposal,"date")?,
+            confidence:optional_confidence_field(proposal,"confidence")?,
+        }),
+        ProposalKind::LiabilityInsurerPosition=>{
+            let position=required_string_field(proposal,"position")?;
+            validate_in(&position,INSURER_POSITION_TYPES,"position")?;
+            Ok(ProposalPayload::LiabilityInsurerPosition{
+                source_ids, position,
+                // An insurer's stated position - never equated with the truth.
+                detail:optional_string_field(proposal,"detail")?,
+                insurer:optional_string_field(proposal,"insurer")?,
+                date:optional_date_field(proposal,"date")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::LiabilityCourtFinding=>{
+            let finding_type=required_string_field(proposal,"findingType")?;
+            validate_in(&finding_type,COURT_FINDING_TYPES,"findingType")?;
+            Ok(ProposalPayload::LiabilityCourtFinding{
+                source_ids, finding_type,
+                // The exact procedural weight the source documents - never
+                // upgraded (e.g. interim observation -> final judgment).
+                description:required_string_field(proposal,"description")?,
+                court:optional_string_field(proposal,"court")?,
+                date:optional_date_field(proposal,"date")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::LiabilityContradiction=>{
+            let source_a_id=required_string_field(proposal,"sourceAId")?;
+            let source_b_id=required_string_field(proposal,"sourceBId")?;
+            if source_a_id==source_b_id{
+                return Err(AppError::Validation("a contradiction must cite two distinct sources".into()));
+            }
+            if !source_ids.contains(&source_a_id) || !source_ids.contains(&source_b_id){
+                return Err(AppError::InvalidSourceReference);
+            }
+            Ok(ProposalPayload::LiabilityContradiction{
+                source_ids,
+                item_a:required_string_field(proposal,"itemA")?,
+                source_a_id,
+                item_b:required_string_field(proposal,"itemB")?,
+                source_b_id,
+                reason:required_string_field(proposal,"reason")?,
+            })
+        },
     }
 }
 
@@ -1105,6 +1672,12 @@ fn canonicalize_provider_output(
     }
     if kind==ProposalKind::MedicalEvidence{
         return canonicalize_medical_evidence_bundle(provider_output,allowed);
+    }
+    if kind==ProposalKind::WageEvidence{
+        return canonicalize_wage_evidence_bundle(provider_output,allowed);
+    }
+    if kind==ProposalKind::LiabilityEvidence{
+        return canonicalize_liability_evidence_bundle(provider_output,allowed);
     }
     if !kind.is_ledger(){
         let payload=parse_structured_proposal(kind,provider_output)?;
@@ -1229,6 +1802,96 @@ fn canonicalize_medical_evidence_bundle(
     Ok(canonical)
 }
 
+/// Phase C, milestone C4, Part A: `extract_wage_evidence`'s provider output is one
+/// JSON object with up to 10 named arrays - same shape/tolerance rules as
+/// `canonicalize_medical_evidence_bundle`, just for the wage/economic taxonomy.
+fn canonicalize_wage_evidence_bundle(
+    provider_output:&Value,allowed:&HashSet<String>,
+)->AppResult<Vec<(String,Value)>>{
+    let obj=provider_output.as_object().ok_or_else(||AppError::Validation(
+        "wage evidence output must be a JSON object".into()
+    ))?;
+    let sections:[(&str,ProposalKind);10]=[
+        ("employment",ProposalKind::WageEmployment),
+        ("income",ProposalKind::WageIncome),
+        ("payslips",ProposalKind::WagePayslip),
+        ("annualIncome",ProposalKind::WageAnnualIncome),
+        ("absences",ProposalKind::WageAbsence),
+        ("sickLeaveCertificates",ProposalKind::WageSickLeave),
+        ("workLimitations",ProposalKind::WageWorkLimitation),
+        ("employmentChanges",ProposalKind::WageEmploymentChange),
+        ("benefitPayments",ProposalKind::WageBenefitPayment),
+        ("gapSignals",ProposalKind::WageGapSignal),
+    ];
+    let mut canonical=Vec::new();
+    for (key,item_kind) in sections{
+        let Some(items)=obj.get(key) else { continue; };
+        if items.is_null(){ continue; }
+        let items=items.as_array().ok_or_else(||AppError::Validation(
+            format!("wage evidence field {key} must be an array")
+        ))?;
+        for item in items{
+            if !item.is_object(){
+                return Err(AppError::Validation(format!("every {key} item must be a JSON object")));
+            }
+            let payload=parse_structured_proposal(item_kind,item)?;
+            validate_source_ids(payload.source_ids(),allowed)?;
+            canonical.push((item_kind.capability_str().to_string(),payload.canonical_json()));
+        }
+    }
+    if canonical.len()>MAX_WAGE_ITEMS_PER_RUN{
+        return Err(AppError::Validation(format!(
+            "wage evidence output exceeds maximum item count ({MAX_WAGE_ITEMS_PER_RUN})"
+        )));
+    }
+    Ok(canonical)
+}
+
+/// Phase C, milestone C4, Part B: `extract_liability_evidence`'s provider output is
+/// one JSON object with up to 11 named arrays - same pattern again.
+fn canonicalize_liability_evidence_bundle(
+    provider_output:&Value,allowed:&HashSet<String>,
+)->AppResult<Vec<(String,Value)>>{
+    let obj=provider_output.as_object().ok_or_else(||AppError::Validation(
+        "liability evidence output must be a JSON object".into()
+    ))?;
+    let sections:[(&str,ProposalKind);11]=[
+        ("versionStatements",ProposalKind::LiabilityVersionStatement),
+        ("witnessStatements",ProposalKind::LiabilityWitnessStatement),
+        ("sceneEvidence",ProposalKind::LiabilitySceneEvidence),
+        ("policeEvidence",ProposalKind::LiabilityPoliceEvidence),
+        ("vehicleDamage",ProposalKind::LiabilityVehicleDamage),
+        ("photoVideoEvidence",ProposalKind::LiabilityPhotoVideoEvidence),
+        ("expertOpinions",ProposalKind::LiabilityExpertOpinion),
+        ("admissions",ProposalKind::LiabilityAdmission),
+        ("insurerPositions",ProposalKind::LiabilityInsurerPosition),
+        ("courtFindings",ProposalKind::LiabilityCourtFinding),
+        ("contradictions",ProposalKind::LiabilityContradiction),
+    ];
+    let mut canonical=Vec::new();
+    for (key,item_kind) in sections{
+        let Some(items)=obj.get(key) else { continue; };
+        if items.is_null(){ continue; }
+        let items=items.as_array().ok_or_else(||AppError::Validation(
+            format!("liability evidence field {key} must be an array")
+        ))?;
+        for item in items{
+            if !item.is_object(){
+                return Err(AppError::Validation(format!("every {key} item must be a JSON object")));
+            }
+            let payload=parse_structured_proposal(item_kind,item)?;
+            validate_source_ids(payload.source_ids(),allowed)?;
+            canonical.push((item_kind.capability_str().to_string(),payload.canonical_json()));
+        }
+    }
+    if canonical.len()>MAX_LIABILITY_ITEMS_PER_RUN{
+        return Err(AppError::Validation(format!(
+            "liability evidence output exceeds maximum item count ({MAX_LIABILITY_ITEMS_PER_RUN})"
+        )));
+    }
+    Ok(canonical)
+}
+
 fn mark_run_failed(db:&DbState,run_id:&str)->AppResult<()>{
     db.write(|conn|{
         conn.execute(
@@ -1335,6 +1998,16 @@ pub fn run_capability(
     }else if kind==ProposalKind::MedicalEvidence{
         format!(
             "Return one JSON object only (not an array) with up to {MAX_MEDICAL_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
+            kind.schema_instruction()
+        )
+    }else if kind==ProposalKind::WageEvidence{
+        format!(
+            "Return one JSON object only (not an array) with up to {MAX_WAGE_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
+            kind.schema_instruction()
+        )
+    }else if kind==ProposalKind::LiabilityEvidence{
+        format!(
+            "Return one JSON object only (not an array) with up to {MAX_LIABILITY_ITEMS_PER_RUN} items across all arrays combined, matching this schema: {}",
             kind.schema_instruction()
         )
     }else if kind.is_ledger(){
@@ -1591,6 +2264,24 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             ProposalPayload::MedicalPriorHistory{..}|ProposalPayload::MedicalOpinion{..}|
             ProposalPayload::MedicalGapSignal{..}|ProposalPayload::MedicalMissingEvidenceSignal{..}|
             ProposalPayload::MedicalContradiction{..}=>proposal_id.to_string(),
+            // Phase C, milestone C4: same rule as C2/C3 - approving a wage or
+            // liability evidence item writes no domain row and never touches the
+            // pre-existing Wage Ledger (`wage_records`) or Liability Ledger
+            // (`liability_facts`). A lawyer wanting a Ledger entry takes a
+            // separate, explicit action (the existing `extract_wage_record`/
+            // `extract_liability_fact` flows); this generic approval path only
+            // ever marks the item itself reviewed and accepted.
+            ProposalPayload::WageEmployment{..}|ProposalPayload::WageIncome{..}|
+            ProposalPayload::WagePayslip{..}|ProposalPayload::WageAnnualIncome{..}|
+            ProposalPayload::WageAbsence{..}|ProposalPayload::WageSickLeave{..}|
+            ProposalPayload::WageWorkLimitation{..}|ProposalPayload::WageEmploymentChange{..}|
+            ProposalPayload::WageBenefitPayment{..}|ProposalPayload::WageGapSignal{..}|
+            ProposalPayload::LiabilityVersionStatement{..}|ProposalPayload::LiabilityWitnessStatement{..}|
+            ProposalPayload::LiabilitySceneEvidence{..}|ProposalPayload::LiabilityPoliceEvidence{..}|
+            ProposalPayload::LiabilityVehicleDamage{..}|ProposalPayload::LiabilityPhotoVideoEvidence{..}|
+            ProposalPayload::LiabilityExpertOpinion{..}|ProposalPayload::LiabilityAdmission{..}|
+            ProposalPayload::LiabilityInsurerPosition{..}|ProposalPayload::LiabilityCourtFinding{..}|
+            ProposalPayload::LiabilityContradiction{..}=>proposal_id.to_string(),
         };
 
         let changed=tx.execute(
@@ -3115,5 +3806,597 @@ mod tests {
             "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
         ).map_err(AppError::Db)).unwrap();
         assert_eq!(status,"approved","an approved medical evidence item must survive a full close/reopen");
+    }
+
+    // ---- Phase C, milestone C4: Wage/Economic + Liability Evidence Intelligence --
+
+    fn wage_context(db:&DbState,matter_id:&str)->ContextManifest{
+        retrieval::build_context_manifest(db,matter_id,"extract_wage_evidence",None).unwrap()
+    }
+
+    fn liability_context(db:&DbState,matter_id:&str)->ContextManifest{
+        retrieval::build_context_manifest(db,matter_id,"extract_liability_evidence",None).unwrap()
+    }
+
+    // 1. employment item schema
+    #[test]
+    fn employment_item_schema_is_pending_and_dated_independently(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["אישור העסקה ממעסיק"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_employment",&context,json!({
+            "sourceIds":[source_id],"employer":"חברת הייטק בע\"מ","role":"מתכנת","employmentStatus":"employee",
+            "startDate":"2019-01-01","endDate":null,"confidence":0.8
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+        let unknown_status=json!({"sourceIds":["s1"],"employer":"x","role":null,"employmentStatus":"made_up","startDate":null,"endDate":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageEmployment,&unknown_status).is_err());
+    }
+
+    // 2. income period preserved + 3. gross/net distinction preserved
+    #[test]
+    fn income_period_and_gross_net_basis_are_preserved_never_converted(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let gross=json!({"sourceIds":["s1"],"amountCents":1500000,"amountBasis":"gross","incomeType":"salary",
+            "employerOrSource":null,"periodStart":"2024-01-01","periodEnd":"2024-01-31","currency":"ILS","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::WageIncome,&gross).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["periodStart"],"2024-01-01");
+        assert_eq!(canonical["periodEnd"],"2024-01-31");
+        assert_eq!(canonical["amountBasis"],"gross","the source's own stated basis must be preserved verbatim, never converted to net");
+
+        let net=json!({"sourceIds":["s1"],"amountCents":1200000,"amountBasis":"net","incomeType":"salary",
+            "employerOrSource":null,"periodStart":null,"periodEnd":null,"currency":"ILS","confidence":null});
+        assert_eq!(parse_structured_proposal(ProposalKind::WageIncome,&net).unwrap().canonical_json()["amountBasis"],"net");
+
+        let unknown_basis=json!({"sourceIds":["s1"],"amountCents":100,"amountBasis":"estimated","incomeType":"salary",
+            "employerOrSource":null,"periodStart":null,"periodEnd":null,"currency":"ILS","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageIncome,&unknown_basis).is_err());
+    }
+
+    // 4. payslip month preserved
+    #[test]
+    fn payslip_month_is_preserved_and_gross_net_stay_independent_fields(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let payslip=json!({"sourceIds":["s1"],"month":"2024-05","grossAmountCents":1000000,"netAmountCents":null,"components":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::WagePayslip,&payslip).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["month"],"2024-05");
+        assert!(canonical["netAmountCents"].is_null(),"a payslip stating only gross must never have TAHRIR derive a net figure");
+
+        let bad_month=json!({"sourceIds":["s1"],"month":"May 2024","grossAmountCents":null,"netAmountCents":null,"components":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WagePayslip,&bad_month).is_err());
+    }
+
+    // 5. annual income source type preserved
+    #[test]
+    fn annual_income_source_type_and_year_are_preserved(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let form106=json!({"sourceIds":["s1"],"sourceType":"form_106","year":"2023","amountCents":12000000,"employerOrSource":"מעסיק","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::WageAnnualIncome,&form106).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert_eq!(canonical["sourceType"],"form_106");
+        assert_eq!(canonical["year"],"2023");
+
+        let bad_year=json!({"sourceIds":["s1"],"sourceType":"form_106","year":"23","amountCents":null,"employerOrSource":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageAnnualIncome,&bad_year).is_err());
+        let bad_source_type=json!({"sourceIds":["s1"],"sourceType":"payslip","year":"2023","amountCents":null,"employerOrSource":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageAnnualIncome,&bad_source_type).is_err());
+    }
+
+    // 6. absence does not imply accident causation
+    #[test]
+    fn absence_stated_reason_is_preserved_verbatim_never_a_tahrir_causal_conclusion(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["דוח נוכחות מציין היעדרות"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_absence",&context,json!({
+            "sourceIds":[source_id],"startDate":"2024-04-01","endDate":"2024-04-10","statedReason":"מחלה","documentedBy":"מעסיק","confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0,"approving an absence must never write a TAHRIR-authored causal fact");
+        let text:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(text.contains("מחלה") && !text.to_lowercase().contains("caused"));
+    }
+
+    // 7. sick leave remains source determination
+    #[test]
+    fn sick_leave_certificate_requires_a_real_issuing_source(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let cert=json!({"sourceIds":["s1"],"startDate":"2024-04-01","endDate":"2024-04-05","issuingSource":"ד״ר לוי","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::WageSickLeave,&cert).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let missing_source=json!({"sourceIds":["s1"],"startDate":"2024-04-01","endDate":null,"issuingSource":"","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageSickLeave,&missing_source).is_err());
+        let missing_start=json!({"sourceIds":["s1"],"startDate":null,"endDate":null,"issuingSource":"ד״ר לוי","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageSickLeave,&missing_start).is_err());
+    }
+
+    // 8. employment change does not imply accident causation
+    #[test]
+    fn employment_change_is_never_automatically_attributed_to_the_incident(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["מכתב פיטורים"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_employment_change",&context,json!({
+            "sourceIds":[source_id],"changeType":"termination","date":"2024-05-01","description":"סיום העסקה כמצוין במכתב","confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let text:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(!text.to_lowercase().contains("caused"),"an employment change must never be TAHRIR-labeled as caused by the incident");
+        let unknown_type=json!({"sourceIds":["s1"],"changeType":"promoted","date":null,"description":"x","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageEmploymentChange,&unknown_type).is_err());
+    }
+
+    // 9. BTL/payment remains separate from salary
+    #[test]
+    fn benefit_payment_type_remains_a_distinct_kind_never_blended_into_income(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let btl=json!({"sourceIds":["s1"],"paymentType":"btl","amountCents":500000,"date":"2024-05-01","payer":"ביטוח לאומי","confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::WageBenefitPayment,&btl).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        assert_eq!(payload.canonical_json()["paymentType"],"btl");
+        // WageBenefitPayment and WageIncome are structurally distinct payload
+        // variants/proposal_kinds - a BTL payment can never be canonicalized as
+        // income.
+        assert_ne!(ProposalKind::WageBenefitPayment.capability_str(),ProposalKind::WageIncome.capability_str());
+        let unknown_type=json!({"sourceIds":["s1"],"paymentType":"lottery","amountCents":null,"date":null,"payer":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::WageBenefitPayment,&unknown_type).is_err());
+    }
+
+    // 10. missing wage evidence uses "not found" semantics
+    #[test]
+    fn wage_gap_signal_uses_not_found_semantics_never_a_non_existence_claim(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let gap=json!({"sourceIds":["s1"],"gapType":"payslips_missing_for_period","description":"לא נמצא בחומר שנקלט תיעוד לתלושים בין 03/2024 ל-06/2024","periodStart":"2024-03-01","periodEnd":"2024-06-01"});
+        let payload=parse_structured_proposal(ProposalKind::WageGapSignal,&gap).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let canonical=payload.canonical_json();
+        assert!(canonical["description"].as_str().unwrap().contains("לא נמצא"));
+        let unknown_type=json!({"sourceIds":["s1"],"gapType":"salary_too_low","description":"x","periodStart":null,"periodEnd":null});
+        assert!(parse_structured_proposal(ProposalKind::WageGapSignal,&unknown_type).is_err());
+    }
+
+    // 11. historical wage period never replaced with import time
+    #[test]
+    fn historical_wage_backfill_retains_the_original_period_not_todays_approval_date(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["תלוש שכר ישן משנת 2015"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_payslip",&context,json!({
+            "sourceIds":[source_id],"month":"2015-03","grossAmountCents":800000,"netAmountCents":null,"components":null,"confidence":0.7
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let timeline=crate::wage::build_wage_timeline(&t.db,&matter_id).unwrap();
+        assert_eq!(timeline.len(),1);
+        assert_eq!(timeline[0].business_date.as_deref(),Some("2015-03"),
+            "a historically-backfilled payslip must keep its real 2015 month, never today's ingestion/approval date");
+    }
+
+    // 13. party statement remains claim
+    #[test]
+    fn liability_version_statement_remains_a_claim_never_an_established_fact(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["גרסת הנתבע לאירוע"]);
+        let context=liability_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"liability_version_statement",&context,json!({
+            "sourceIds":[source_id],"assertedBy":"הנתבע","statement":"האור היה ירוק","issue":"צבע הרמזור",
+            "eventDate":"2024-01-01","datePrecision":"exact","confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"verified_facts",&matter_id),0,"a party's version must never be auto-verified as an established fact");
+        assert_eq!(count_table(&t.db,"liability_facts",&matter_id),0,"approving a version statement must never write to the Liability Ledger");
+        let missing_asserter=json!({"sourceIds":["s1"],"assertedBy":"","statement":"x","issue":null,"eventDate":null,"datePrecision":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityVersionStatement,&missing_asserter).is_err());
+    }
+
+    // 14. witness statement remains attributed
+    #[test]
+    fn liability_witness_statement_requires_a_real_named_witness(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let ok=json!({"sourceIds":["s1"],"witness":"עד ראייה","statement":"ראיתי את התאונה","issue":null,"date":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityWitnessStatement,&ok).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let missing_witness=json!({"sourceIds":["s1"],"witness":"","statement":"x","issue":null,"date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityWitnessStatement,&missing_witness).is_err());
+    }
+
+    // 15. police material does not auto-become legal conclusion
+    #[test]
+    fn police_evidence_stores_factual_content_only_never_a_legal_determination(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["דוח משטרתי מתאר את הזירה"]);
+        let context=liability_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"liability_police_evidence",&context,json!({
+            "sourceIds":[source_id],"reportType":"דוח תאונה","factualContent":"תיאור הזירה כפי שנרשם","date":"2024-01-01","confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"liability_facts",&matter_id),0,"a police report must never be auto-written to the Liability Ledger as a legal determination");
+    }
+
+    // 16. expert opinion remains attributed
+    #[test]
+    fn liability_expert_opinion_remains_attributed_never_a_tahrir_conclusion(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let opinion=json!({"sourceIds":["s1"],"expert":"מהנדס תנועה","specialty":"שחזור תאונות","opinionText":"מנגנון התאונה כפי שנותח","date":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityExpertOpinion,&opinion).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        assert_eq!(payload.canonical_json()["expert"],"מהנדס תנועה");
+        let missing_expert=json!({"sourceIds":["s1"],"expert":"","specialty":null,"opinionText":"x","date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityExpertOpinion,&missing_expert).is_err());
+    }
+
+    // 17. insurer position remains insurer position
+    #[test]
+    fn insurer_position_is_never_equated_with_the_truth(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let position=json!({"sourceIds":["s1"],"position":"disputes","detail":"המבטח כופר באחריות","insurer":"חברת ביטוח","date":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityInsurerPosition,&position).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        assert_eq!(payload.canonical_json()["position"],"disputes");
+        let unknown_position=json!({"sourceIds":["s1"],"position":"maybe","detail":null,"insurer":null,"date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityInsurerPosition,&unknown_position).is_err());
+    }
+
+    // 18. court interim statement does not become final judgment
+    #[test]
+    fn court_finding_type_is_preserved_verbatim_never_upgraded_to_final_judgment(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let interim=json!({"sourceIds":["s1"],"findingType":"interim_observation","description":"הערת ביניים בדיון","court":null,"date":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityCourtFinding,&interim).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        assert_eq!(payload.canonical_json()["findingType"],"interim_observation","an interim observation must never be silently upgraded to a final judgment");
+
+        let final_judgment=json!({"sourceIds":["s1"],"findingType":"final_judgment","description":"פסק דין חלוט","court":"בית משפט השלום","date":null,"confidence":null});
+        assert_eq!(parse_structured_proposal(ProposalKind::LiabilityCourtFinding,&final_judgment).unwrap().canonical_json()["findingType"],"final_judgment");
+
+        let unknown_type=json!({"sourceIds":["s1"],"findingType":"opinion","description":"x","court":null,"date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityCourtFinding,&unknown_type).is_err());
+    }
+
+    // 19. admission requires explicit supporting source
+    #[test]
+    fn admission_requires_an_explicit_statement_never_inferred_from_silence(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let admission=json!({"sourceIds":["s1"],"assertedBy":"הנתבע","statement":"אני מודה שלא בלמתי בזמן","date":null,"confidence":null});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityAdmission,&admission).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let missing_statement=json!({"sourceIds":["s1"],"assertedBy":"הנתבע","statement":"","date":null,"confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityAdmission,&missing_statement).is_err());
+    }
+
+    // 20. liability contradiction requires two real sources
+    #[test]
+    fn liability_contradiction_requires_two_real_distinct_sources(){
+        let allowed:HashSet<String>=["s1".to_string(),"s2".to_string()].into_iter().collect();
+        let valid=json!({"sourceIds":["s1","s2"],"itemA":"גרסה א","sourceAId":"s1","itemB":"גרסה ב","sourceBId":"s2","reason":"מנגנון שונה"});
+        let payload=parse_structured_proposal(ProposalKind::LiabilityContradiction,&valid).unwrap();
+        validate_source_ids(payload.source_ids(),&allowed).unwrap();
+        let self_conflict=json!({"sourceIds":["s1"],"itemA":"a","sourceAId":"s1","itemB":"b","sourceBId":"s1","reason":"r"});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityContradiction,&self_conflict).is_err());
+        let unknown_source=json!({"sourceIds":["s1","s2"],"itemA":"a","sourceAId":"s1","itemB":"b","sourceBId":"not-real","reason":"r"});
+        assert!(parse_structured_proposal(ProposalKind::LiabilityContradiction,&unknown_source).is_err());
+    }
+
+    // 21. no automatic fault percentage anywhere in the schema
+    #[test]
+    fn no_liability_item_schema_has_a_fault_or_negligence_percentage_field(){
+        for kind in [
+            ProposalKind::LiabilityVersionStatement,ProposalKind::LiabilityWitnessStatement,
+            ProposalKind::LiabilitySceneEvidence,ProposalKind::LiabilityPoliceEvidence,
+            ProposalKind::LiabilityVehicleDamage,ProposalKind::LiabilityPhotoVideoEvidence,
+            ProposalKind::LiabilityExpertOpinion,ProposalKind::LiabilityAdmission,
+            ProposalKind::LiabilityInsurerPosition,ProposalKind::LiabilityCourtFinding,
+            ProposalKind::LiabilityContradiction,
+        ]{
+            let instruction=kind.schema_instruction();
+            assert!(!instruction.to_lowercase().contains("fault"),"no schema instruction may mention a fault field");
+            assert!(!instruction.to_lowercase().contains("negligence"),"no schema instruction may mention a negligence field");
+        }
+    }
+
+    // 22 / 38. no automatic negligence conclusion / no automatic liability assignment
+    #[test]
+    fn approving_liability_items_never_writes_to_the_liability_ledger(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["ראיית זירה אובייקטיבית"]);
+        let context=liability_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"liability_scene_evidence",&context,json!({
+            "sourceIds":[source_id],"evidenceType":"skid_marks","description":"סימני בלימה שתועדו","issue":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        assert_eq!(count_table(&t.db,"liability_facts",&matter_id),0,"approving a C4 item must never automatically write to liability_facts, i.e. never assign liability");
+    }
+
+    // 23. source-less item rejected (wage + liability)
+    #[test]
+    fn wage_and_liability_items_without_a_real_source_are_rejected(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let no_sources=json!({"absences":[{"startDate":"2024-01-01","endDate":null,"statedReason":null,"documentedBy":null,"confidence":null,"sourceIds":[]}]});
+        assert!(canonicalize_wage_evidence_bundle(&no_sources,&allowed).is_err());
+        let unknown_source=json!({"versionStatements":[{"sourceIds":["not-real"],"assertedBy":"x","statement":"y","issue":null,"eventDate":null,"datePrecision":null,"confidence":null}]});
+        assert!(canonicalize_liability_evidence_bundle(&unknown_source,&allowed).is_err());
+    }
+
+    // 24. stale source rejected (wage + liability)
+    #[test]
+    fn stale_source_cannot_approve_a_wage_or_liability_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        let (version_id,_)=new_document_with_pages(&t.db,&matter_id,"wage",&["תלוש שכר"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_payslip",&context,json!({
+            "sourceIds":[source_id],"month":"2024-01","grossAmountCents":100000,"netAmountCents":null,"components":null,"confidence":null
+        })).unwrap();
+        t.db.write(|conn|{conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1",[version_id])?;Ok(())}).unwrap();
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+
+        let matter_id2=new_matter(&t.db);
+        let (version_id2,_)=new_document_with_pages(&t.db,&matter_id2,"court",&["גרסת אירוע"]);
+        let context2=liability_context(&t.db,&matter_id2);
+        let source_id2=first_source_id(&context2);
+        let proposal_id2=create_pending_proposal_for_test(&t.db,&matter_id2,"liability_version_statement",&context2,json!({
+            "sourceIds":[source_id2],"assertedBy":"תובע","statement":"גרסה","issue":null,"eventDate":null,"datePrecision":null,"confidence":null
+        })).unwrap();
+        t.db.write(|conn|{conn.execute("UPDATE document_versions SET stale=1 WHERE id=?1",[version_id2])?;Ok(())}).unwrap();
+        assert!(approve_proposal(&t.db,&proposal_id2,None).is_err());
+    }
+
+    // 25. cross-matter source rejected (wage + liability)
+    #[test]
+    fn cross_matter_source_cannot_approve_a_wage_or_liability_item(){
+        let t=new_test_db();
+        let matter_a=new_matter(&t.db);
+        let matter_b=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_b,"wage",&["תלוש שכר בתיק אחר"]);
+        let context_b=wage_context(&t.db,&matter_b);
+        let source_b=first_source_id(&context_b);
+        let proposal_id=insert_raw_pending_proposal(&t.db,&matter_a,"wage_payslip",json!({
+            "sourceIds":[source_b],"month":"2024-01","grossAmountCents":100000,"netAmountCents":null,"components":null,"confidence":null
+        }),serde_json::to_string(&context_b).unwrap(),context_b.manifest_sha256.clone());
+        assert!(approve_proposal(&t.db,&proposal_id,None).is_err());
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+    }
+
+    // 26. malformed bundle fails closed (wage + liability)
+    #[test]
+    fn malformed_wage_and_liability_bundle_output_fails_closed(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        assert!(canonicalize_wage_evidence_bundle(&json!(["not","an","object"]),&allowed).is_err());
+        assert!(canonicalize_wage_evidence_bundle(&json!({"employment":"not-an-array"}),&allowed).is_err());
+        assert!(canonicalize_wage_evidence_bundle(&json!({"employment":["not-an-object"]}),&allowed).is_err());
+        assert_eq!(canonicalize_wage_evidence_bundle(&json!({}),&allowed).unwrap().len(),0,"a well-formed but empty wage bundle is valid");
+
+        assert!(canonicalize_liability_evidence_bundle(&json!(["not","an","object"]),&allowed).is_err());
+        assert!(canonicalize_liability_evidence_bundle(&json!({"versionStatements":"not-an-array"}),&allowed).is_err());
+        assert!(canonicalize_liability_evidence_bundle(&json!({"versionStatements":["not-an-object"]}),&allowed).is_err());
+        assert_eq!(canonicalize_liability_evidence_bundle(&json!({}),&allowed).unwrap().len(),0,"a well-formed but empty liability bundle is valid");
+    }
+
+    // 27. provider extra fields stripped (wage + liability)
+    #[test]
+    fn provider_extra_fields_are_stripped_from_wage_and_liability_items(){
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let wage_bundle=json!({
+            "payslips":[{
+                "sourceIds":["s1"],"month":"2024-01","grossAmountCents":100000,"netAmountCents":null,"components":null,"confidence":0.5,
+                "chainOfThought":"must not persist","arbitrary":"must not persist"
+            }]
+        });
+        let wage_canonical=canonicalize_wage_evidence_bundle(&wage_bundle,&allowed).unwrap();
+        assert_eq!(wage_canonical.len(),1);
+        assert!(wage_canonical[0].1.get("chainOfThought").is_none());
+
+        let liability_bundle=json!({
+            "expertOpinions":[{
+                "sourceIds":["s1"],"expert":"מומחה","specialty":null,"opinionText":"חוות דעת","date":null,"confidence":0.5,
+                "internalReasoning":"must not persist"
+            }]
+        });
+        let liability_canonical=canonicalize_liability_evidence_bundle(&liability_bundle,&allowed).unwrap();
+        assert_eq!(liability_canonical.len(),1);
+        assert!(liability_canonical[0].1.get("internalReasoning").is_none());
+    }
+
+    // 28 / 29. item-level approval independent + sibling rejection isolation
+    #[test]
+    fn item_level_approval_and_rejection_are_independent_within_one_liability_run(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["גרסת תובע","עדות עד","ראיית זירה"]);
+        let context=liability_context(&t.db,&matter_id);
+        let allowed:HashSet<String>=context.sources.iter().map(|s|s.source_id.clone()).collect();
+        let (version_src,witness_src,scene_src)=(
+            context.sources[0].source_id.clone(),context.sources[1].source_id.clone(),context.sources[2].source_id.clone(),
+        );
+        let bundle=json!({
+            "versionStatements":[{"sourceIds":[version_src],"assertedBy":"תובע","statement":"גרסה","issue":null,"eventDate":null,"datePrecision":null,"confidence":null}],
+            "witnessStatements":[{"sourceIds":[witness_src],"witness":"עד","statement":"עדות","issue":null,"date":null,"confidence":null}],
+            "sceneEvidence":[{"sourceIds":[scene_src],"evidenceType":"skid_marks","description":"ראיה","issue":null,"confidence":null}],
+        });
+        let canonical=canonicalize_liability_evidence_bundle(&bundle,&allowed).unwrap();
+        assert_eq!(canonical.len(),3);
+        let run_id=insert_running_run(&t.db,&matter_id,"extract_liability_evidence",&context);
+        let context_value=serde_json::to_value(&context).unwrap();
+        persist_completed_run(&t.db,&run_id,&matter_id,&context.manifest_sha256,"resp",&context_value,&canonical).unwrap();
+
+        let ids:Vec<(String,String)>=t.db.read(|conn|{
+            let mut stmt=conn.prepare("SELECT id,proposal_kind FROM ai_proposals WHERE ai_run_id=?1 ORDER BY proposal_kind")?;
+            let rows=stmt.query_map([&run_id],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(rows)
+        }).unwrap();
+        assert_eq!(ids.len(),3);
+        let version_id=&ids.iter().find(|(_,k)|k=="liability_version_statement").unwrap().0;
+        let witness_id=&ids.iter().find(|(_,k)|k=="liability_witness_statement").unwrap().0;
+        let scene_id=&ids.iter().find(|(_,k)|k=="liability_scene_evidence").unwrap().0;
+
+        approve_proposal(&t.db,version_id,None).unwrap();
+        reject_proposal(&t.db,witness_id,"rejected",Some("לא רלוונטי")).unwrap();
+        assert_eq!(proposal_status(&t.db,version_id),"approved");
+        assert_eq!(proposal_status(&t.db,witness_id),"rejected","rejecting one sibling item must never affect another item from the same run");
+        assert_eq!(proposal_status(&t.db,scene_id),"pending","an untouched sibling item must remain pending");
+    }
+
+    // 30. rejected item remains in audit history
+    #[test]
+    fn rejected_wage_item_remains_visible_in_audit_history_never_deleted(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["הצעת AI שגויה"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_income",&context,json!({
+            "sourceIds":[source_id],"amountCents":999999,"amountBasis":"gross","incomeType":"other",
+            "employerOrSource":null,"periodStart":null,"periodEnd":null,"currency":"ILS","confidence":null
+        })).unwrap();
+        reject_proposal(&t.db,&proposal_id,"rejected",Some("לא נתמך במקור")).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"rejected");
+        let still_exists:i64=t.db.read(|conn|conn.query_row(
+            "SELECT count(*) FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(still_exists,1,"a rejected item must remain a real, queryable audit row, never deleted");
+    }
+
+    // 32. incremental document does not overwrite prior approved item
+    #[test]
+    fn a_new_incremental_document_never_overwrites_a_previously_approved_wage_item(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["תלוש שכר ראשון מ-2023"]);
+        let context1=wage_context(&t.db,&matter_id);
+        let source1=first_source_id(&context1);
+        let first_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_payslip",&context1,json!({
+            "sourceIds":[source1],"month":"2023-01","grossAmountCents":900000,"netAmountCents":null,"components":null,"confidence":0.7
+        })).unwrap();
+        approve_proposal(&t.db,&first_id,None).unwrap();
+
+        new_document_with_pages(&t.db,&matter_id,"wage",&["מסמך שכר חדש שנוסף מאוחר יותר"]);
+        let context2=wage_context(&t.db,&matter_id);
+        let source2=context2.sources.iter().find(|s|s.source_id!=source1).map(|s|s.source_id.clone()).unwrap_or(source1.clone());
+        let second_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_payslip",&context2,json!({
+            "sourceIds":[source2],"month":"2024-06","grossAmountCents":950000,"netAmountCents":null,"components":null,"confidence":0.6
+        })).unwrap();
+        approve_proposal(&t.db,&second_id,None).unwrap();
+
+        assert_eq!(proposal_status(&t.db,&first_id),"approved","an older approved wage item must remain untouched when a later document is processed");
+        let first_text:String=t.db.read(|conn|conn.query_row(
+            "SELECT structured_json FROM ai_proposals WHERE id=?1",[&first_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(first_text.contains("2023-01"),"the first item's content must remain exactly as originally approved");
+    }
+
+    // 37. C4 approval does not automatically mutate the Damage Engine
+    #[test]
+    fn approving_a_wage_item_never_touches_damage_engine_state(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["תלוש שכר"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_income",&context,json!({
+            "sourceIds":[source_id],"amountCents":100000,"amountBasis":"gross","incomeType":"salary",
+            "employerOrSource":null,"periodStart":null,"periodEnd":null,"currency":"ILS","confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let damage_inputs:i64=t.db.read(|conn|conn.query_row(
+            "SELECT count(*) FROM damage_inputs WHERE matter_id=?1",[&matter_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(damage_inputs,0,"approving a wage evidence item must never automatically create a Damage Engine input");
+    }
+
+    // 39 / 40. existing Wage/Liability Ledgers remain intact
+    #[test]
+    fn existing_wage_and_liability_ledgers_remain_untouched_by_c4_approvals(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["הכנסה מתועדת ותלוש שכר"]);
+        new_document_with_pages(&t.db,&matter_id,"court",&["ראיה אובייקטיבית"]);
+        let wage_ctx=wage_context(&t.db,&matter_id);
+        let wage_source=first_source_id(&wage_ctx);
+        let wage_proposal=create_pending_proposal_for_test(&t.db,&matter_id,"wage_income",&wage_ctx,json!({
+            "sourceIds":[wage_source],"amountCents":100000,"amountBasis":"gross","incomeType":"salary",
+            "employerOrSource":null,"periodStart":null,"periodEnd":null,"currency":"ILS","confidence":null
+        })).unwrap();
+        let liability_ctx=liability_context(&t.db,&matter_id);
+        let liability_source=first_source_id(&liability_ctx);
+        let liability_proposal=create_pending_proposal_for_test(&t.db,&matter_id,"liability_scene_evidence",&liability_ctx,json!({
+            "sourceIds":[liability_source],"evidenceType":"photograph","description":"תמונה מהזירה","issue":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&wage_proposal,None).unwrap();
+        approve_proposal(&t.db,&liability_proposal,None).unwrap();
+        assert_eq!(count_table(&t.db,"wage_records",&matter_id),0,"the pre-existing Wage Ledger must remain empty - C4 approval writes no ledger row");
+        assert_eq!(count_table(&t.db,"liability_facts",&matter_id),0,"the pre-existing Liability Ledger must remain empty - C4 approval writes no ledger row");
+        // The separate, pre-existing extract_wage_record/extract_liability_fact
+        // ledger-verify flow (unchanged by C4) still works exactly as before.
+        let ledger_context=context_for(&t.db,&matter_id,"extract_wage_record","שכר");
+        let ledger_source=first_source_id(&ledger_context);
+        let ledger_proposal=create_pending_proposal_for_test(&t.db,&matter_id,"extract_wage_record",&ledger_context,json!({
+            "sourceIds":[ledger_source],"periodStart":"2024-01-01","periodEnd":"2024-01-31","employerName":"מעסיק","grossAmountCents":100000
+        })).unwrap();
+        approve_proposal(&t.db,&ledger_proposal,None).unwrap();
+        assert_eq!(count_table(&t.db,"wage_records",&matter_id),1,"the pre-existing narrow extract_wage_record ledger flow must remain fully functional and unchanged");
+    }
+
+    // 36. reopen preserves approved C4 state (wage)
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reopening_the_database_preserves_approved_wage_evidence_state(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"wage",&["תלוש שכר"]);
+        let context=wage_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"wage_payslip",&context,json!({
+            "sourceIds":[source_id],"month":"2024-01","grossAmountCents":100000,"netAmountCents":null,"components":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let reopened=DbState::open(t.root.join("app.db")).unwrap();
+        let status:String=reopened.read(|conn|conn.query_row(
+            "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"approved","an approved wage evidence item must survive a full close/reopen");
+    }
+
+    // 36. reopen preserves approved C4 state (liability)
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reopening_the_database_preserves_approved_liability_evidence_state(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["חוות דעת מומחה"]);
+        let context=liability_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"liability_expert_opinion",&context,json!({
+            "sourceIds":[source_id],"expert":"מומחה","specialty":null,"opinionText":"חוות דעת","date":null,"confidence":null
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+        let reopened=DbState::open(t.root.join("app.db")).unwrap();
+        let status:String=reopened.read(|conn|conn.query_row(
+            "SELECT status FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"approved","an approved liability evidence item must survive a full close/reopen");
     }
 }

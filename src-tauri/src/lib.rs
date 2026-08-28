@@ -19,6 +19,7 @@ mod intake_tests;
 mod ledger;
 mod legal_docs;
 mod legal_rules;
+mod liability;
 mod matter_profile;
 mod medical;
 mod models;
@@ -31,6 +32,7 @@ mod search;
 mod security;
 mod source_snapshot;
 mod understanding;
+mod wage;
 mod workstreams;
 
 use db::DbState;
@@ -188,7 +190,12 @@ pub fn run() {
             commands::get_matter_brief,
             commands::get_medical_timeline,
             commands::get_prior_vs_post_incident,
-            commands::get_medical_brief
+            commands::get_medical_brief,
+            commands::get_wage_timeline,
+            commands::get_wage_comparison,
+            commands::get_wage_brief,
+            commands::get_liability_brief,
+            commands::get_liability_matrix
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");

@@ -112,7 +112,7 @@ export type AiStructuredProposal = {
   periodStart?: string | null;
   periodEnd?: string | null;
   employerName?: string | null;
-  grossAmountCents?: number;
+  grossAmountCents?: number | null;
   claimBasis?: string | null;
   liablePartyName?: string | null;
   description?: string;
@@ -189,6 +189,40 @@ export type AiStructuredProposal = {
   nextEncounterRef?: string | null;
   signalReason?: string;
   missingType?: string;
+  // Phase C, milestone C4: Wage/Economic + Liability Evidence Intelligence item fields
+  employer?: string;
+  role?: string | null;
+  employmentStatus?: string;
+  amountBasis?: string;
+  incomeType?: string;
+  employerOrSource?: string | null;
+  month?: string;
+  netAmountCents?: number | null;
+  components?: string | null;
+  sourceType?: string;
+  year?: string;
+  statedReason?: string | null;
+  documentedBy?: string | null;
+  issuingSource?: string;
+  changeType?: string;
+  paymentType?: string;
+  payer?: string | null;
+  gapType?: string;
+  witness?: string;
+  issue?: string | null;
+  evidenceType?: string;
+  reportType?: string;
+  factualContent?: string;
+  vehicle?: string | null;
+  damageLocation?: string | null;
+  documentedCondition?: string;
+  mediaType?: string | null;
+  expert?: string;
+  position?: string;
+  detail?: string | null;
+  insurer?: string | null;
+  findingType?: string;
+  court?: string | null;
 };
 
 // Phase C, milestone C2: Matter Understanding Core
@@ -249,6 +283,66 @@ export type MedicalBrief = {
   chronology: MedicalTimelineItem[];
   pendingMedicalReviewCount: number;
 };
+
+// Phase C, milestone C4, Part A: Wage/Economic Evidence Intelligence
+export type WageTimelineItem = {
+  id: string; kind: string; businessDate?: string | null;
+  title: string; description?: string | null; verified: boolean; insertedAt: string;
+};
+
+export type WageComparisonView = {
+  incidentDate?: string | null;
+  documentedBefore: WageTimelineItem[];
+  documentedAfter: WageTimelineItem[];
+  undated: WageTimelineItem[];
+};
+
+export type WageBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+export type WageBrief = {
+  matterId: string;
+  employment: WageBriefItem[];
+  income: WageBriefItem[];
+  payslips: WageBriefItem[];
+  annualIncome: WageBriefItem[];
+  absences: WageBriefItem[];
+  sickLeave: WageBriefItem[];
+  workLimitations: WageBriefItem[];
+  employmentChanges: WageBriefItem[];
+  benefitPayments: WageBriefItem[];
+  missingEvidenceSignals: WageBriefItem[];
+  chronology: WageTimelineItem[];
+  pendingWageReviewCount: number;
+};
+
+// Phase C, milestone C4, Part B: Liability Evidence Intelligence
+export type LiabilityBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+export type LiabilityBrief = {
+  matterId: string;
+  partyVersions: LiabilityBriefItem[];
+  witnesses: LiabilityBriefItem[];
+  sceneEvidence: LiabilityBriefItem[];
+  policeEvidence: LiabilityBriefItem[];
+  vehicleDamage: LiabilityBriefItem[];
+  photoVideoEvidence: LiabilityBriefItem[];
+  expertOpinions: LiabilityBriefItem[];
+  admissions: LiabilityBriefItem[];
+  insurerPositions: LiabilityBriefItem[];
+  courtFindings: LiabilityBriefItem[];
+  contradictions: LiabilityBriefItem[];
+  pendingLiabilityReviewCount: number;
+};
+
+export type LiabilityMatrixRow = {
+  issue: string | null;
+  versions: LiabilityBriefItem[];
+  witnesses: LiabilityBriefItem[];
+  objectiveEvidence: LiabilityBriefItem[];
+  unresolvedConflict: boolean;
+};
+
+export type LiabilityMatrix = { matterId: string; rows: LiabilityMatrixRow[] };
 
 export type AiProposal = {
   id: string; proposalKind: string;

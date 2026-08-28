@@ -31,7 +31,7 @@ function fieldValue(value?: string | number | null) {
   return String(value);
 }
 
-function formatMoney(cents?: number) {
+function formatMoney(cents?: number | null) {
   if (typeof cents !== "number") return "לא צוין";
   return (cents / 100).toLocaleString("he-IL", {style: "currency", currency: "ILS"});
 }
