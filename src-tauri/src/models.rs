@@ -126,3 +126,13 @@ pub struct ContextManifest {
     pub budget_chars_used: i64, pub budget_chars_limit: i64,
     pub manifest_sha256: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationResult {
+    pub category: String,
+    pub confidence: f64,
+    pub reason: String,
+    pub signals: Vec<String>,
+    pub classifier_version: String,
+}

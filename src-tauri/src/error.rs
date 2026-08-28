@@ -10,6 +10,14 @@ pub enum AppError {
     SourceSnapshotChanged,
     #[error("OCR_RUNTIME_MISSING")]
     OcrRuntimeMissing,
+    #[error("UNSUPPORTED_FORMAT: {0}")]
+    UnsupportedFormat(String),
+    #[error("PDFTOTEXT_FAILED: {0}")]
+    PdftotextFailed(String),
+    #[error("RASTERIZATION_FAILED: {0}")]
+    RasterizationFailed(String),
+    #[error("OCR_FAILED: {0}")]
+    OcrFailed(String),
     #[error("AI_CLIENT_EGRESS_NOT_APPROVED")]
     AiClientEgressNotApproved,
     #[error("AI_PROVIDER_REFUSAL")]

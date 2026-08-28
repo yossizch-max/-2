@@ -1161,6 +1161,97 @@ resolved after the repo owner updated the GitHub App's permissions **and** the
 workflow file was merged to `main` (GitHub only discovers `workflow_dispatch`
 workflows that exist on the default branch).
 
+## Phase C, milestone C1 — Document Intelligence / Smart Intake Pipeline (2026-08-28)
+
+First post-RC0 product milestone: a lawyer adds documents to a matter, clicks one
+action, and TAHRIR scans, hashes, extracts/OCRs, classifies, indexes, reports
+failures, and leaves every result auditable. Built entirely on the existing
+`scanner.rs`/`extraction.rs`/`document_pages`/`document_versions`/`extraction_runs`/
+FTS5/`retrieval.rs` - **no parallel document, OCR, or retrieval system**, and **no
+new migration** (009 was not needed - `documents.category*`,
+`document_pages.extraction_*`, and `extraction_runs` already had every column this
+milestone needed, unused by any prior milestone).
+
+- **`extraction.rs` hardening**: the single-document `extract_document` (used by the
+  pre-existing `extract_document_text` command) is now a thin wrapper over a new
+  version-scoped `extract_document_version` core, which both it and the new batch
+  pipeline share - one extraction code path, one place `document_pages`/
+  `extraction_runs` are ever written. `extraction_runs` is now a genuine audit trail:
+  every attempt inserts a `running` row before any file I/O or external process
+  starts, and is updated to `completed`/`failed` (with a real `error_code` and
+  `finished_at`) once resolved - never rewritten by a later retry, which always gets
+  its own fresh row. A failed attempt also sets `document_versions.extraction_state=
+  'failed'` (a new value, no schema change needed - the column was always free text)
+  so a failure is visible directly through the existing `list_documents` query, and
+  `case_health.rs`'s "documents needing attention" signal (previously only
+  `stale`/`blocked`) was extended to include it. Seven previously-generic
+  `AppError::Validation` sites were split into distinguishable typed errors
+  (`UnsupportedFormat`/`PdftotextFailed`/`RasterizationFailed`/`OcrFailed`, alongside
+  the pre-existing `OcrRuntimeMissing`/`SourceShaMismatch`/`SourceSnapshotChanged`),
+  mapped to seven stable `error_code` strings - never a generic "failed" when the real
+  cause is known. `document_pages.extraction_confidence` was investigated for
+  Tesseract pages: the current invocation reads plain stdout text, not a `--tsv`/hOCR
+  run with its own per-word confidence field, so populating it reliably would need a
+  real rewrite of the OCR call shape - left `NULL` with that reasoning documented in
+  the code, rather than fabricating a number. Native/DOCX pages were never assigned
+  one either.
+- **New `classification.rs`**: deterministic local document classification - a fixed-
+  order keyword rule table (medical/wage/court/expert_opinion/correspondence, the
+  exact term lists from the milestone spec) over filename + extracted text, returning
+  `category`/`confidence`/`reason`/`signals`/`classifier_version`. Pure organization
+  aid, explicitly never a source of a VerifiedFact, ledger entry, deadline, or
+  liability/damage conclusion - that boundary is stated in the module's own doc
+  comment. 10 unit tests, including an explicit identical-input-identical-output
+  determinism test.
+- **New `intake.rs`**: `process_matter_documents`, the one matter-scoped Smart Intake
+  orchestrator (`scanner::hash_pending` -> discover current non-stale, non-complete
+  document versions -> `extraction::extract_document_version` -> `classification::
+  classify`, skipping any document whose `category_source='manual'`). A single
+  document's extraction failure is caught per-document and never aborts the batch;
+  an already-`complete` version is never re-extracted (though it is still re-checked
+  for classification, which is cheap and idempotent, so a document extracted before
+  this milestone existed still gets a category). Returns a structured summary
+  (`discovered`/`hashed`/`alreadyComplete`/`extracted`/`ocred`/`classified`/`failed`/
+  `unsupported` plus a per-document outcome/error array) - no fake progress. Holds the
+  shared writer-mutex (`DbState::write`) only for short final persistence statements;
+  `DbState::read` opens an independent connection with no lock at all; the actual
+  pdftotext/pdftoppm/tesseract process execution and file hashing already happened
+  entirely outside any `db.write` closure in the pre-existing `scanner.rs`/
+  `extraction.rs` code this milestone reuses.
+- **`DocumentsTab.tsx` upgrade**: the old separate "scan" + per-document "extract"
+  buttons are replaced by one "סרוק ועבד מסמכים" action with a post-run summary line;
+  each row now shows category with an "אוטומטי"/"ידני" source badge, page count,
+  extraction method (native vs. OCR), and - for a failed document - a real,
+  human-readable error label (`error_code` -> Hebrew string map) plus a "נסה שוב"
+  retry button (calls the existing `extract_document_text`, which now goes through
+  the same audited core, creating a fresh `extraction_runs` row rather than rewriting
+  the failed one). A new expandable per-document detail panel (`get_document_pages` +
+  the new `list_extraction_runs` command) shows every extracted page/block's text,
+  method, and hash, plus the full extraction-attempt history - reading directly from
+  `document_pages`, never duplicating source-of-truth text into persistent frontend
+  state.
+- **Windows CI**: a new smoke-test step runs immediately after the existing "OCR
+  runtime files are present" check - generates a synthetic PNG (Hebrew text plus the
+  fixed ASCII token `TAHRIR1234`, no client data) via `System.Drawing` and invokes the
+  real vendored `tesseract.exe` against it with the exact same argument shape
+  `extraction.rs` uses, asserting a zero exit code, non-empty output, and that
+  `TAHRIR1234` is actually recovered. This is new: previously CI only proved the OCR
+  binaries were *present*, never that they successfully *execute* text recognition.
+  Deliberately does not assert Hebrew glyph accuracy, to avoid a flaky gate over
+  something this milestone isn't trying to benchmark.
+
+17 new backend tests (10 classification + 7 real-filesystem intake/audit/retrieval
+integration tests in a new `intake_tests.rs`, using the same real matter/
+matter_folder_bindings/on-disk-file fixture pattern `gate_f_partial.rs` established) -
+covering batch extraction of a real `.txt` and a real, `zip`-crate-constructed `.docx`
+fixture, matter isolation, an unsupported extension not blocking the rest of the
+batch, an already-complete version never being re-extracted, a manually-set category
+never being overwritten by a later intake run, a real retry sequence proving a second
+`extraction_runs` row is created without touching the first (including that a
+tampered-then-restored file's page content is never partially overwritten by the
+rejected attempt), and that a version `scanner.rs` has marked stale is neither
+re-extracted by intake nor ever returned by `retrieval::build_context_manifest`.
+
 ## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
 The full 24-step checklist below needs a running packaged Windows app, real scanned

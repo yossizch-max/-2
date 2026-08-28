@@ -317,7 +317,7 @@ fn compute_for_date(
              WHERE d.matter_id=?1
                AND (SELECT v.extraction_state FROM document_versions v
                     WHERE v.document_id=d.id AND v.matter_id=d.matter_id
-                    ORDER BY v.created_at DESC,v.id DESC LIMIT 1) IN ('stale','blocked')",
+                    ORDER BY v.created_at DESC,v.id DESC LIMIT 1) IN ('stale','blocked','failed')",
             [matter_id],
             |r| r.get(0),
         )?;

@@ -19,11 +19,48 @@ export type DocumentRow = {
   fileName: string;
   category: string;
   sourceState: "local" | "cloud_only" | "unknown";
-  extractionState: "not_started" | "pending" | "complete" | "blocked" | "stale";
+  extractionState: "not_started" | "pending" | "complete" | "blocked" | "stale" | "failed";
   currentVersionId?: string | null;
   currentSha256?: string | null;
   modifiedAt: string;
   occurrenceId?: string | null;
+  categorySource?: "auto" | "manual" | null;
+  categoryConfidence?: number | null;
+  pageCount: number;
+  extractionMethod?: string | null;
+  lastErrorCode?: string | null;
+};
+
+export type DocumentIntakeOutcome = {
+  documentId: string;
+  fileName: string;
+  outcome: "already_complete" | "extracted" | "ocred" | "classified" | "unsupported" | "failed";
+  category?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+export type DocumentIntakeSummary = {
+  discovered: number;
+  hashed: number;
+  alreadyComplete: number;
+  extracted: number;
+  ocred: number;
+  classified: number;
+  failed: number;
+  unsupported: number;
+  documents: DocumentIntakeOutcome[];
+};
+
+export type ExtractionRun = {
+  id: string;
+  matterId: string;
+  documentVersionId: string;
+  sourceSha256: string;
+  status: "running" | "completed" | "failed";
+  errorCode?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
 };
 
 export type ActionItem = {

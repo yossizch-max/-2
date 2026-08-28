@@ -47,8 +47,32 @@ struct ExtractedBlock {
     block_index: i64,
     display_text: String,
     extraction_method: &'static str,
+    extraction_confidence: Option<f64>,
 }
 
+/// Stable, distinguishable error codes stored in `extraction_runs.error_code` and
+/// surfaced per-document in `intake::process_matter_documents`'s batch result - never
+/// a generic "failed" when the real cause is known. Deliberately a closed, small set
+/// matching exactly what the pipeline can actually tell apart today; anything not
+/// mapped explicitly falls to "failed" honestly rather than guessing a category.
+pub(crate) fn extraction_error_code(e: &AppError) -> &'static str {
+    match e {
+        AppError::OcrRuntimeMissing => "runtime_missing",
+        AppError::UnsupportedFormat(_) => "unsupported_format",
+        AppError::PdftotextFailed(_) => "pdftotext_failed",
+        AppError::RasterizationFailed(_) => "rasterization_failed",
+        AppError::OcrFailed(_) => "ocr_failed",
+        AppError::SourceShaMismatch | AppError::SourceSnapshotChanged => "source_changed",
+        AppError::Db(_) | AppError::Io(_) => "persistence_failed",
+        _ => "failed",
+    }
+}
+
+/// Convenience wrapper kept for the existing single-document `extract_document_text`
+/// IPC command: resolves the document's current (most recent) version, then delegates
+/// to `extract_document_version` - the same core the batch intake pipeline
+/// (`intake::process_matter_documents`) uses, so there is exactly one extraction code
+/// path and exactly one place `extraction_runs` rows get written.
 pub fn extract_document(db: &DbState, document_id: &str, resource_root: &Path) -> AppResult<usize> {
     let candidate: Candidate = db.read(|conn| {
         conn.query_row(
@@ -66,9 +90,74 @@ pub fn extract_document(db: &DbState, document_id: &str, resource_root: &Path) -
             }),
         ).map_err(AppError::Db)
     })?;
+    extract_document_version(db, &candidate.matter_id, &candidate.document_version_id, &candidate.path, &candidate.source_sha256, resource_root)
+}
 
-    let snapshot = VerifiedSourceSnapshot::create(Path::new(&candidate.path), &candidate.source_sha256)?;
-    let extension = Path::new(&candidate.path)
+/// The one real extraction code path, version-scoped so a batch caller (which already
+/// has its own candidate list) never needs to re-derive it from a document_id. Writes
+/// a genuine `extraction_runs` audit row for every attempt: inserted as `running`
+/// before any file I/O or external process starts, updated to `completed`/`failed`
+/// (with `error_code` and `finished_at`) once the attempt is fully resolved. The
+/// audit row's own finishing write is best-effort - if extraction itself already
+/// succeeded or failed, that real outcome is what gets returned to the caller
+/// regardless of whether the audit UPDATE itself could be persisted; a `running` row
+/// that group cannot be resolved is still an honest state (it says exactly what is
+/// known: an attempt started and the pipeline cannot confirm how it ended) - never
+/// silently rewritten to look like a success.
+pub fn extract_document_version(
+    db: &DbState, matter_id: &str, document_version_id: &str, path: &str, source_sha256: &str, resource_root: &Path,
+) -> AppResult<usize> {
+    let run_id = Uuid::new_v4().to_string();
+    let started_at = Utc::now().to_rfc3339();
+    db.write(|conn| conn.execute(
+        "INSERT INTO extraction_runs(id,matter_id,document_version_id,source_sha256,status,started_at) VALUES(?1,?2,?3,?4,'running',?5)",
+        params![run_id, matter_id, document_version_id, source_sha256, started_at],
+    ).map_err(AppError::Db))?;
+
+    let result = extract_document_version_inner(db, matter_id, document_version_id, path, resource_root);
+
+    let finished_at = Utc::now().to_rfc3339();
+    let _ = match &result {
+        Ok(_) => db.write(|conn| {
+            conn.execute(
+                "UPDATE extraction_runs SET status='completed',finished_at=?2 WHERE id=?1",
+                params![run_id, finished_at],
+            )?;
+            Ok(())
+        }),
+        // Both the audit row and the version's own extraction_state move together, in
+        // one short transaction, so a failed attempt is visible two ways: the audit
+        // trail (extraction_runs, with a real error_code) and the version's own
+        // extraction_state='failed' - which is what list_documents/DocumentsTab.tsx
+        // already reads, so a failure shows up immediately without a join. A retry is
+        // just calling extract_document_version again on the same document_version_id
+        // - a fresh run_id, a fresh extraction_runs row - never rewriting this one.
+        Err(e) => db.write(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE extraction_runs SET status='failed',error_code=?2,finished_at=?3 WHERE id=?1",
+                params![run_id, extraction_error_code(e), finished_at],
+            )?;
+            tx.execute(
+                "UPDATE document_versions SET extraction_state='failed' WHERE id=?1",
+                [document_version_id],
+            )?;
+            tx.commit()?;
+            Ok(())
+        }),
+    };
+
+    result
+}
+
+fn extract_document_version_inner(
+    db: &DbState, matter_id: &str, document_version_id: &str, path: &str, resource_root: &Path,
+) -> AppResult<usize> {
+    let source_sha256: String = db.read(|conn| conn.query_row(
+        "SELECT content_sha256 FROM document_versions WHERE id=?1", [document_version_id], |r| r.get(0),
+    ).map_err(AppError::Db))?;
+    let snapshot = VerifiedSourceSnapshot::create(Path::new(path), &source_sha256)?;
+    let extension = Path::new(path)
         .extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
 
     let blocks = match extension.as_str() {
@@ -77,28 +166,28 @@ pub fn extract_document(db: &DbState, document_id: &str, resource_root: &Path) -
         "txt" => vec![ExtractedBlock {
             page_number: None, anchor_kind: "document", block_index: 0,
             display_text: std::fs::read_to_string(snapshot.path())?,
-            extraction_method: "native_text",
+            extraction_method: "native_text", extraction_confidence: None,
         }],
-        _ => return Err(AppError::Validation(format!("unsupported extraction type: {extension}"))),
+        other => return Err(AppError::UnsupportedFormat(other.to_string())),
     };
 
     snapshot.verify_unchanged()?;
 
     db.write(|conn| {
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM document_pages WHERE document_version_id=?1", [&candidate.document_version_id])?;
+        tx.execute("DELETE FROM document_pages WHERE document_version_id=?1", [document_version_id])?;
         for block in &blocks {
             let normalized = normalize_source_text(&block.display_text);
             let text_sha = hex::encode(Sha256::digest(normalized.as_bytes()));
             tx.execute(
                 "INSERT INTO document_pages(
                     id,matter_id,document_version_id,page_number,anchor_kind,block_index,
-                    display_text,normalized_text,text_sha256,extraction_method,created_at
-                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    display_text,normalized_text,text_sha256,extraction_method,extraction_confidence,created_at
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![
-                    Uuid::new_v4().to_string(), candidate.matter_id, candidate.document_version_id,
+                    Uuid::new_v4().to_string(), matter_id, document_version_id,
                     block.page_number, block.anchor_kind, block.block_index, block.display_text,
-                    normalized, text_sha, block.extraction_method, Utc::now().to_rfc3339()
+                    normalized, text_sha, block.extraction_method, block.extraction_confidence, Utc::now().to_rfc3339()
                 ],
             )?;
         }
@@ -106,7 +195,7 @@ pub fn extract_document(db: &DbState, document_id: &str, resource_root: &Path) -
             "UPDATE document_versions
              SET extraction_state='complete', extractor_version='alpha16.1-reconstructed'
              WHERE id=?1",
-            [&candidate.document_version_id],
+            [document_version_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -121,7 +210,8 @@ fn extract_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<ExtractedBloc
 
     let output = Command::new(&pdftotext)
         .args(["-layout", "-enc", "UTF-8"])
-        .arg(path).arg("-").output()?;
+        .arg(path).arg("-").output()
+        .map_err(|e| AppError::PdftotextFailed(e.to_string()))?;
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -134,6 +224,7 @@ fn extract_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<ExtractedBloc
                     block_index: 0,
                     display_text: page.to_string(),
                     extraction_method: "pdftotext",
+                    extraction_confidence: None,
                 }).collect());
         }
     }
@@ -159,9 +250,10 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
 
     let raster = Command::new(pdftoppm)
         .args(["-png", "-r", "220"])
-        .arg(path).arg(&prefix).output()?;
+        .arg(path).arg(&prefix).output()
+        .map_err(|e| AppError::RasterizationFailed(e.to_string()))?;
     if !raster.status.success() {
-        return Err(AppError::Validation("pdftoppm failed".into()));
+        return Err(AppError::RasterizationFailed(String::from_utf8_lossy(&raster.stderr).to_string()));
     }
 
     let mut images: Vec<PathBuf> = std::fs::read_dir(&temp.path)?
@@ -176,9 +268,10 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
             .arg(image).arg("stdout")
             .args(["-l", "heb+ara+eng", "--tessdata-dir"])
             .arg(&tessdata)
-            .output()?;
+            .output()
+            .map_err(|e| AppError::OcrFailed(format!("page {}: {e}", index + 1)))?;
         if !output.status.success() {
-            return Err(AppError::Validation(format!("tesseract failed on page {}", index + 1)));
+            return Err(AppError::OcrFailed(format!("page {}: {}", index + 1, String::from_utf8_lossy(&output.stderr))));
         }
         blocks.push(ExtractedBlock {
             page_number: Some((index + 1) as i64),
@@ -186,6 +279,14 @@ fn extract_scanned_pdf(path: &Path, resource_root: &Path) -> AppResult<Vec<Extra
             block_index: 0,
             display_text: String::from_utf8_lossy(&output.stdout).to_string(),
             extraction_method: "tesseract",
+            // Confidence: investigated (see docs/RELEASE_GATES.md's C1 writeup) whether
+            // `tesseract --tsv`/`hocr` mean-confidence output could populate this
+            // reliably. It cannot, without a real rewrite: this call reads stdout as
+            // plain UTF-8 text, and a TSV/hOCR run is a *different* output mode with
+            // its own per-word/per-line parsing surface, not a number obtainable from
+            // the same invocation. Left NULL rather than inventing one - a fabricated
+            // confidence value would be worse than an honestly-absent one.
+            extraction_confidence: None,
         });
     }
     Ok(blocks)
@@ -223,6 +324,7 @@ fn extract_docx(path: &Path) -> AppResult<Vec<ExtractedBlock>> {
         block_index: 0,
         display_text: text,
         extraction_method: "docx_xml",
+        extraction_confidence: None,
     }])
 }
 
