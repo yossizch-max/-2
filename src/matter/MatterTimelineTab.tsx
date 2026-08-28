@@ -34,7 +34,11 @@ export function MatterTimelineTab({matterId}:{matterId:string}) {
     <div className="timeline">
       {items?.map(item => <div className="proposal" key={`${item.kind}-${item.id}`}>
         <div className="header-actions">
-          <strong>{formatDate(item.businessDate)} · {item.title}</strong>
+          <strong>
+            {formatDate(item.businessDate)}
+            {item.datePrecision && item.datePrecision!=="exact" ? ` (${item.datePrecision})` : ""}
+            {" "}· {item.title}
+          </strong>
           <StatusBadge tone={item.verified?"ok":"warn"}>{item.verified?"מאומת":"נבדק ע״י AI"}</StatusBadge>
         </div>
         <small className="quiet">{KIND_LABELS[item.kind] ?? item.kind}</small>

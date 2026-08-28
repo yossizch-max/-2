@@ -8,7 +8,8 @@ const CAPABILITY = "extract_matter_understanding";
 
 const SECTION_ORDER = [
   "understanding_event", "understanding_date", "understanding_entity",
-  "understanding_claim", "understanding_amount", "understanding_contradiction", "understanding_question",
+  "understanding_claim", "understanding_amount", "understanding_issue",
+  "understanding_contradiction", "understanding_question",
 ] as const;
 
 const SECTION_LABELS: Record<string, string> = {
@@ -17,6 +18,7 @@ const SECTION_LABELS: Record<string, string> = {
   understanding_entity: "ישויות",
   understanding_claim: "טענות",
   understanding_amount: "סכומים",
+  understanding_issue: "פערים ונושאים פתוחים",
   understanding_contradiction: "סתירות אפשריות",
   understanding_question: "שאלות מוצעות לבדיקה",
 };
@@ -44,13 +46,15 @@ function ItemPreview({proposal}:{proposal:AiProposal}) {
       return <dl className="profile-fields">
         <div><dt>סוג</dt><dd>{fieldValue(s.entityType)}</dd></div>
         <div><dt>שם</dt><dd>{fieldValue(s.displayName)}</dd></div>
+        {s.context && <div><dt>תפקיד/הקשר</dt><dd>{s.context}</dd></div>}
       </dl>;
     case "understanding_event":
       return <dl className="profile-fields">
         <div><dt>סוג אירוע</dt><dd>{fieldValue(s.eventType)}</dd></div>
         <div><dt>כותרת</dt><dd>{fieldValue(s.title)}</dd></div>
         <div><dt>תיאור</dt><dd>{fieldValue(s.description)}</dd></div>
-        <div><dt>תאריך</dt><dd>{fieldValue(s.eventDate)}</dd></div>
+        <div><dt>תאריך האירוע</dt><dd>{fieldValue(s.eventDate)}{s.datePrecision && s.datePrecision!=="exact" ? ` (${s.datePrecision})` : ""}</dd></div>
+        {s.documentDate && <div><dt>תאריך המסמך</dt><dd>{s.documentDate}</dd></div>}
         {s.involvedEntities && s.involvedEntities.length > 0 && <div><dt>גורמים מעורבים</dt><dd>{s.involvedEntities.join(", ")}</dd></div>}
       </dl>;
     case "understanding_claim":
@@ -71,6 +75,11 @@ function ItemPreview({proposal}:{proposal:AiProposal}) {
         <div><dt>תאריך</dt><dd>{fieldValue(s.date)}</dd></div>
         <div><dt>סוג תאריך</dt><dd>{fieldValue(s.dateType)}</dd></div>
         <div><dt>הקשר</dt><dd>{fieldValue(s.context)}</dd></div>
+      </dl>;
+    case "understanding_issue":
+      return <dl className="profile-fields">
+        <div><dt>סוג</dt><dd>{fieldValue(s.issueType)}</dd></div>
+        <div><dt>תיאור</dt><dd>{fieldValue(s.description)}</dd></div>
       </dl>;
     case "understanding_contradiction":
       return <dl className="profile-fields">
@@ -128,12 +137,21 @@ export function UnderstandingTab({matterId}:{matterId:string}) {
   for (const kind of SECTION_ORDER) bySection.set(kind, []);
   for (const p of understandingProposals) bySection.get(p.proposalKind)?.push(p);
 
+  // C2 works identically for a brand-new matter and a historically-running one
+  // imported into TAHRIR - the only difference is workflow labeling, not a separate
+  // code path: the very first run over a matter's documents is framed as building
+  // an initial case picture from existing material; every run after that is framed
+  // as an incremental update. Both call the exact same command.
+  const isFirstRun = understandingProposals.length === 0;
+  const runButtonLabel = busy ? "מריץ..." : isFirstRun ? "בניית תמונת תיק מחומר קיים" : "עדכן את הבנת התיק";
+
   return <div className="grid-2">
     <section className="workspace-card">
       <span className="eyebrow">AI · MATTER UNDERSTANDING</span>
       <h2>הבנת התיק</h2>
       <p className="quiet">
-        AI מציע בלבד: ישויות, אירועים, טענות, סכומים, תאריכים וסתירות אפשריות מתוך המסמכים שנקלטו.
+        AI מציע בלבד: ישויות, אירועים, טענות, סכומים, תאריכים, פערים וסתירות אפשריות מתוך המסמכים שנקלטו.
+        היעדר ממצא בחומר שנקלט אינו אומר שהדבר אינו קיים - רק שלא נמצא בחומר שנקלט עד כה.
         כל הצעה דורשת אישור נפרד של עורך הדין ואינה משנה שום נתון בתיק לפני האישור.
       </p>
       {enabledProfiles.length===0 && <p className="quiet">אין ספק AI פעיל. יש להגדיר ולהפעיל ספק בעמוד ה-AI תחילה.</p>}
@@ -148,8 +166,12 @@ export function UnderstandingTab({matterId}:{matterId:string}) {
           מאשר שליחת חומר התיק החוצה להרצה זו
         </label>}
         <button className="btn primary" onClick={runAi} disabled={busy||!profileId}>
-          {busy?"מריץ...":"סרוק והבן את התיק"}
+          {runButtonLabel}
         </button>
+        {isFirstRun && <p className="quiet">
+          אם זהו תיק פעיל שיובא עם היסטוריה - הרצה זו תנסה לשחזר כרונולוגיה, ישויות וטענות מתוך המסמכים הקיימים.
+          תאריך האירוע ייקבע מתוך המקור עצמו, לעולם לא ממועד הקליטה.
+        </p>}
       </>}
       {runError && <p className="quiet">שגיאה: {runError}</p>}
       {lastRunId && !runError && <p className="quiet">הרצה הושלמה · {lastRunId.slice(0,12)}</p>}
@@ -159,7 +181,7 @@ export function UnderstandingTab({matterId}:{matterId:string}) {
       <h2>הצעות לבדיקה</h2>
       {loading && <p className="quiet">טוען הצעות...</p>}
       {error && <p className="quiet">שגיאה: {error}</p>}
-      {!loading && !error && understandingProposals.length===0 && <p className="quiet">אין עדיין הצעות הבנת-תיק בתיק זה.</p>}
+      {!loading && !error && understandingProposals.length===0 && <p className="quiet">לא זוהו עדיין הצעות הבנת-תיק בתיק זה.</p>}
       {SECTION_ORDER.map(kind => {
         const items = bySection.get(kind) ?? [];
         if (items.length===0) return null;

@@ -68,7 +68,14 @@ export function MatterBriefTab({matterId}:{matterId:string}) {
     </div>
 
     <div style={{marginTop:16}}>
-      <h3>מידע חסר / שאלות מוצעות</h3>
+      <h3>מידע שלא נמצא בחומר שנקלט</h3>
+      <p className="quiet">היעדר ממצא כאן אינו אומר שהדבר אינו קיים - רק שלא זוהה בחומר שנקלט עד כה.</p>
+      {brief.issues.length===0 && <p className="quiet">לא זוהו פערים או נושאים פתוחים.</p>}
+      {brief.issues.map(i=><ItemRow key={i.id} item={i} text={`${i.structured.issueType ?? "?"}: ${i.structured.description ?? ""}`}/>)}
+    </div>
+
+    <div style={{marginTop:16}}>
+      <h3>שאלות מוצעות לבדיקה</h3>
       {brief.missingInformation.length===0 && <p className="quiet">אין כרגע שאלות מוצעות.</p>}
       {brief.missingInformation.map(q=><ItemRow key={q.id} item={q} text={q.structured.question ?? ""}/>)}
     </div>
@@ -76,6 +83,7 @@ export function MatterBriefTab({matterId}:{matterId:string}) {
     <div className="meta-chips" style={{marginTop:16}}>
       <span>{brief.verifiedFactCount} עובדות מאומתות</span>
       <span>{brief.openConflictCount} סתירות פתוחות בין עובדות</span>
+      <span>{brief.pendingReviewCount} פריטי AI ממתינים לבדיקה</span>
     </div>
   </section>;
 }

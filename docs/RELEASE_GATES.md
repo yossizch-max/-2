@@ -1357,6 +1357,58 @@ insertion-order sort, matter isolation, pending-content labeling in the brief).
 Release Gate is the authority on the full count including the Windows-gated test,
 not asserted here.
 
+### C2 addendum — historical/backfill semantics, issues, event date precision (2026-08-28)
+
+A follow-up C2 instruction expanded the milestone's scope after the section above
+was written; this addendum documents what changed on top of it, on the same
+`codex/c2-matter-understanding` branch, same architecture, still no migration 009.
+
+- **New item type: `understanding_issue`** - a neutral description of a gap or open
+  question in the matter (`issueType`: `liability_disputed`/`missing_response`/
+  `disputed_mechanism`/`wage_loss_relevant`/`medical_continuity_unclear`/
+  `missing_documentation`/`other`, plus a free-text `description`). Distinct from
+  `suggestedQuestions` (a literal question to ask) and from `contradictions` (two
+  specific conflicting items) - an issue is neither. Same source-grounding, same
+  item-level approval, same no-domain-write-on-approval rule as every other kind.
+- **Event schema gained `datePrecision`** (`exact`/`month`/`year`/`approximate`/
+  `unknown`, Rust-validated) and **`documentDate`** (the date the source document
+  was itself written, independent of `eventDate`, the date the event happened). The
+  distinction from the ingestion/audit timestamp (`ai_runs.started_at`) is absolute
+  and was already true by construction (nothing in `extract_document_version`'s or
+  `ai.rs`'s pipeline ever derives a proposal field from a timestamp) - now directly
+  proven by two new tests using a historical fixture date far in the past against
+  the test suite's real current-time run timestamp.
+- **`entities` gained an optional `context`** field (role/context string), matching
+  the spec's "name / entity type / role-context / sourceIds" shape.
+- **Historical vs. incremental UX**: `UnderstandingTab.tsx` labels the action button
+  "בניית תמונת תיק מחומר קיים" (build a case picture from existing material) when a
+  matter has zero prior Matter Understanding proposals, and "עדכן את הבנת התיק"
+  (update) otherwise - purely a frontend label computed from already-fetched data,
+  calling the exact same `extract_matter_understanding` command either way. No
+  second data model, no second architecture, per the instruction's own constraint.
+- **`understanding.rs`**: `TimelineItem` gained `datePrecision` (populated only for
+  `understanding_event` rows, `None` for every domain source with an exact recorded
+  date) so the Timeline can visibly distinguish an approximate/unknown-precision
+  date from an exact one, surfaced in both `MatterTimelineTab.tsx` and
+  `MatterBriefTab.tsx`. `build_matter_brief` gained an `issues` section
+  ("מידע שלא נמצא בחומר שנקלט" - information not found in the currently ingested
+  sources, never "does not exist") and a `pendingReviewCount` aggregate across every
+  item kind, so "pending review items" is a real, computed brief section rather than
+  an implicit property of individual items.
+- **Prompt wording** (`ai.rs`'s `schema_instruction` for the bundle capability) and
+  UI copy now state the "not found in currently ingested sources, never does not
+  exist" boundary explicitly, matching the instruction's conceptual-boundary
+  requirement.
+- **9 new tests** (223/223 local total, up from 216): valid issue proposal + unknown
+  `issueType` rejected; `datePrecision`/`documentDate` accepted and an invalid
+  `datePrecision` rejected; event date proven to persist exactly as stated against
+  the run's real (different) audit timestamp; a historical-backfill scenario proving
+  the timeline sorts a 2015 event by its 2015 date, never by today's
+  approval/ingestion time; an empty bundle proven to never synthesize a "does not
+  exist" proposal; a rejected item proven to remain queryable in `ai_proposals` with
+  its original content and review note intact; an existing `calendar_events` row
+  proven to appear exactly once across repeated timeline reads (no duplication).
+
 ## Gate F, end-to-end synthetic acceptance — partially covered by a real automated test
 
 The full 24-step checklist below needs a running packaged Windows app, real scanned

@@ -122,6 +122,8 @@ export type AiStructuredProposal = {
   displayName?: string;
   eventType?: string;
   title?: string;
+  datePrecision?: string | null;
+  documentDate?: string | null;
   involvedEntities?: string[];
   assertedBy?: string;
   statement?: string;
@@ -132,6 +134,7 @@ export type AiStructuredProposal = {
   context?: string | null;
   date?: string;
   dateType?: string;
+  issueType?: string;
   itemA?: string;
   sourceAId?: string;
   itemB?: string;
@@ -145,6 +148,7 @@ export type AiStructuredProposal = {
 export type TimelineItem = {
   id: string; kind: string; businessDate: string; title: string;
   description?: string | null; verified: boolean; insertedAt: string;
+  datePrecision?: string | null;
 };
 
 export type MatterBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
@@ -157,10 +161,12 @@ export type MatterBrief = {
   chronology: TimelineItem[];
   claims: MatterBriefItem[];
   amounts: MatterBriefItem[];
+  issues: MatterBriefItem[];
   contradictions: MatterBriefItem[];
   missingInformation: MatterBriefItem[];
   verifiedFactCount: number;
   openConflictCount: number;
+  pendingReviewCount: number;
 };
 
 export type AiProposal = {

@@ -21,9 +21,9 @@ use uuid::Uuid;
 
 const MAX_LEDGER_PROPOSALS_PER_RUN: usize = 20;
 /// Phase C, milestone C2: a single `extract_matter_understanding` run returns up to
-/// 7 arrays (entities/events/claims/amounts/dates/contradictions/suggestedQuestions).
-/// This bounds their combined size - a safety valve against a runaway response, not
-/// a claim about how many items a matter typically has.
+/// 8 arrays (entities/events/claims/amounts/dates/issues/contradictions/
+/// suggestedQuestions). This bounds their combined size - a safety valve against a
+/// runaway response, not a claim about how many items a matter typically has.
 const MAX_UNDERSTANDING_ITEMS_PER_RUN: usize = 60;
 
 const ENTITY_TYPES: &[&str] = &[
@@ -31,13 +31,26 @@ const ENTITY_TYPES: &[&str] = &[
 ];
 const EVENT_TYPES: &[&str] = &[
     "accident","medical_treatment","hospitalization","examination","correspondence","claim_submission",
-    "insurer_response","payment","court_filing","court_decision","employment_absence","expert_examination","other",
+    "insurer_response","payment","court_filing","court_decision","employment_absence","expert_examination",
+    "negotiation_event","other",
 ];
+/// How precisely `eventDate` is known - lets the model say "this happened in March
+/// 2023" without fabricating a specific day. Never inferred by TAHRIR itself; the
+/// model states it, and an absent `eventDate` (precision irrelevant) simply means
+/// the source did not support a date at all - unknown stays unknown either way.
+const DATE_PRECISIONS: &[&str] = &["exact","month","year","approximate","unknown"];
 const AMOUNT_TYPES: &[&str] = &[
     "claim_amount","salary","medical_expense","insurer_offer","payment","deduction","settlement_proposal","other",
 ];
 const DATE_TYPES: &[&str] = &[
     "event_date","document_date","filing_date","treatment_date","payment_date","correspondence_date","other",
+];
+/// Neutral descriptions of a gap or open question about the matter - never a legal
+/// conclusion about who is right. Distinct from `suggestedQuestions` (a literal
+/// question to ask) and from `contradictions` (two specific conflicting items).
+const ISSUE_TYPES: &[&str] = &[
+    "liability_disputed","missing_response","disputed_mechanism","wage_loss_relevant",
+    "medical_continuity_unclear","missing_documentation","other",
 ];
 
 struct Profile {
@@ -60,6 +73,7 @@ enum ProposalKind {
     UnderstandingClaim,
     UnderstandingAmount,
     UnderstandingDate,
+    UnderstandingIssue,
     UnderstandingContradiction,
     UnderstandingQuestion,
 }
@@ -77,6 +91,7 @@ impl ProposalKind {
             "understanding_claim"=>Ok(Self::UnderstandingClaim),
             "understanding_amount"=>Ok(Self::UnderstandingAmount),
             "understanding_date"=>Ok(Self::UnderstandingDate),
+            "understanding_issue"=>Ok(Self::UnderstandingIssue),
             "understanding_contradiction"=>Ok(Self::UnderstandingContradiction),
             "understanding_question"=>Ok(Self::UnderstandingQuestion),
             _=>Err(AppError::Validation(format!("unknown AI proposal kind \"{v}\""))),
@@ -98,6 +113,7 @@ impl ProposalKind {
             Self::UnderstandingClaim=>"understanding_claim",
             Self::UnderstandingAmount=>"understanding_amount",
             Self::UnderstandingDate=>"understanding_date",
+            Self::UnderstandingIssue=>"understanding_issue",
             Self::UnderstandingContradiction=>"understanding_contradiction",
             Self::UnderstandingQuestion=>"understanding_question",
         }
@@ -117,9 +133,9 @@ impl ProposalKind {
             Self::MedicalEvent=>"{\"sourceIds\":[\"...\"],\"eventDate\":\"YYYY-MM-DD or null\",\"providerName\":\"string or null\",\"treatmentSummary\":\"grounded summary\"}. Do not invent dates, providers, diagnoses, disability, or treatment.",
             Self::WageRecord=>"{\"sourceIds\":[\"...\"],\"periodStart\":\"YYYY-MM-DD or null\",\"periodEnd\":\"YYYY-MM-DD or null\",\"employerName\":\"string or null\",\"grossAmountCents\":12345}. Do not estimate missing amounts or employers.",
             Self::LiabilityFact=>"{\"sourceIds\":[\"...\"],\"claimBasis\":\"string or null\",\"liablePartyName\":\"string or null\",\"description\":\"grounded factual statement\"}. Do not state legal conclusions as facts.",
-            Self::MatterUnderstanding=>"{\"entities\":[{\"sourceIds\":[\"...\"],\"entityType\":\"person|company|insurer|employer|medical_provider|court|government_body|expert|other\",\"displayName\":\"...\",\"confidence\":0.0}],\"events\":[{\"sourceIds\":[\"...\"],\"eventType\":\"accident|medical_treatment|hospitalization|examination|correspondence|claim_submission|insurer_response|payment|court_filing|court_decision|employment_absence|expert_examination|other\",\"title\":\"...\",\"description\":\"neutral, grounded\",\"eventDate\":\"YYYY-MM-DD or null\",\"involvedEntities\":[\"...\"],\"confidence\":0.0}],\"claims\":[{\"sourceIds\":[\"...\"],\"assertedBy\":\"who asserts this\",\"statement\":\"the assertion, never rewritten as an established fact\",\"target\":\"string or null\",\"confidence\":0.0}],\"amounts\":[{\"sourceIds\":[\"...\"],\"amountType\":\"claim_amount|salary|medical_expense|insurer_offer|payment|deduction|settlement_proposal|other\",\"amountCents\":12345,\"currency\":\"ILS unless the source states otherwise\",\"context\":\"string or null\",\"eventDate\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"dates\":[{\"sourceIds\":[\"...\"],\"date\":\"YYYY-MM-DD\",\"dateType\":\"event_date|document_date|filing_date|treatment_date|payment_date|correspondence_date|other\",\"context\":\"why this date matters\",\"confidence\":0.0}],\"contradictions\":[{\"sourceIds\":[\"sourceAId\",\"sourceBId\"],\"itemA\":\"...\",\"sourceAId\":\"...\",\"itemB\":\"...\",\"sourceBId\":\"...\",\"reason\":\"why these may conflict\"}],\"suggestedQuestions\":[{\"sourceIds\":[\"...\"],\"question\":\"...\"}]}. Every array may be empty; omit an item rather than inventing a date, amount, or entity the source does not support. A claim is never rewritten as an established fact. confidence reflects only model certainty, never legal certainty, and is optional.",
+            Self::MatterUnderstanding=>"{\"entities\":[{\"sourceIds\":[\"...\"],\"entityType\":\"person|company|insurer|employer|medical_provider|court|government_body|expert|other\",\"displayName\":\"...\",\"context\":\"role/context string or null\",\"confidence\":0.0}],\"events\":[{\"sourceIds\":[\"...\"],\"eventType\":\"accident|medical_treatment|hospitalization|examination|correspondence|claim_submission|insurer_response|payment|court_filing|court_decision|employment_absence|expert_examination|negotiation_event|other\",\"title\":\"...\",\"description\":\"neutral, grounded\",\"eventDate\":\"YYYY-MM-DD or null - the date the event itself happened, never the date the document was ingested\",\"datePrecision\":\"exact|month|year|approximate|unknown or null\",\"documentDate\":\"YYYY-MM-DD or null - the date the source document itself was written/dated, distinct from eventDate\",\"involvedEntities\":[\"...\"],\"confidence\":0.0}],\"claims\":[{\"sourceIds\":[\"...\"],\"assertedBy\":\"who asserts this\",\"statement\":\"the assertion, never rewritten as an established fact\",\"target\":\"string or null\",\"confidence\":0.0}],\"amounts\":[{\"sourceIds\":[\"...\"],\"amountType\":\"claim_amount|salary|medical_expense|insurer_offer|payment|deduction|settlement_proposal|other\",\"amountCents\":12345,\"currency\":\"ILS unless the source states otherwise\",\"context\":\"string or null\",\"eventDate\":\"YYYY-MM-DD or null\",\"confidence\":0.0}],\"dates\":[{\"sourceIds\":[\"...\"],\"date\":\"YYYY-MM-DD\",\"dateType\":\"event_date|document_date|filing_date|treatment_date|payment_date|correspondence_date|other\",\"context\":\"why this date matters\",\"confidence\":0.0}],\"issues\":[{\"sourceIds\":[\"...\"],\"issueType\":\"liability_disputed|missing_response|disputed_mechanism|wage_loss_relevant|medical_continuity_unclear|missing_documentation|other\",\"description\":\"a neutral description of the gap or open question, never a conclusion about who is right\",\"confidence\":0.0}],\"contradictions\":[{\"sourceIds\":[\"sourceAId\",\"sourceBId\"],\"itemA\":\"...\",\"sourceAId\":\"...\",\"itemB\":\"...\",\"sourceBId\":\"...\",\"reason\":\"why these may conflict\"}],\"suggestedQuestions\":[{\"sourceIds\":[\"...\"],\"question\":\"...\"}]}. Every array may be empty; omit an item rather than inventing a date, amount, or entity the source does not support - the absence of something in the supplied sources means \\\"not found in the currently ingested sources\\\", never \\\"does not exist\\\". A claim is never rewritten as an established fact. confidence reflects only model certainty, never legal certainty, and is optional.",
             Self::UnderstandingEntity|Self::UnderstandingEvent|Self::UnderstandingClaim|Self::UnderstandingAmount|
-            Self::UnderstandingDate|Self::UnderstandingContradiction|Self::UnderstandingQuestion=>
+            Self::UnderstandingDate|Self::UnderstandingIssue|Self::UnderstandingContradiction|Self::UnderstandingQuestion=>
                 "internal per-item schema - see extract_matter_understanding",
         }
     }
@@ -130,10 +146,11 @@ enum ProposalPayload {
     MedicalEvent { source_ids:Vec<String>, event_date:Option<String>, provider_name:Option<String>, treatment_summary:String },
     WageRecord { source_ids:Vec<String>, period_start:Option<String>, period_end:Option<String>, employer_name:Option<String>, gross_amount_cents:i64 },
     LiabilityFact { source_ids:Vec<String>, claim_basis:Option<String>, liable_party_name:Option<String>, description:String },
-    UnderstandingEntity { source_ids:Vec<String>, entity_type:String, display_name:String, confidence:Option<f64> },
+    UnderstandingEntity { source_ids:Vec<String>, entity_type:String, display_name:String, context:Option<String>, confidence:Option<f64> },
     UnderstandingEvent {
         source_ids:Vec<String>, event_type:String, title:String, description:String,
-        event_date:Option<String>, involved_entities:Vec<String>, confidence:Option<f64>,
+        event_date:Option<String>, date_precision:Option<String>, document_date:Option<String>,
+        involved_entities:Vec<String>, confidence:Option<f64>,
     },
     UnderstandingClaim { source_ids:Vec<String>, asserted_by:String, statement:String, target:Option<String>, confidence:Option<f64> },
     UnderstandingAmount {
@@ -141,6 +158,7 @@ enum ProposalPayload {
         context:Option<String>, event_date:Option<String>, confidence:Option<f64>,
     },
     UnderstandingDate { source_ids:Vec<String>, date:String, date_type:String, context:String, confidence:Option<f64> },
+    UnderstandingIssue { source_ids:Vec<String>, issue_type:String, description:String, confidence:Option<f64> },
     UnderstandingContradiction { source_ids:Vec<String>, item_a:String, source_a_id:String, item_b:String, source_b_id:String, reason:String },
     UnderstandingQuestion { source_ids:Vec<String>, question:String },
 }
@@ -157,6 +175,7 @@ impl ProposalPayload {
             Self::UnderstandingClaim{source_ids,..}|
             Self::UnderstandingAmount{source_ids,..}|
             Self::UnderstandingDate{source_ids,..}|
+            Self::UnderstandingIssue{source_ids,..}|
             Self::UnderstandingContradiction{source_ids,..}|
             Self::UnderstandingQuestion{source_ids,..}=>source_ids,
         }
@@ -189,18 +208,21 @@ impl ProposalPayload {
                 "liablePartyName":liable_party_name,
                 "description":description,
             }),
-            Self::UnderstandingEntity{source_ids,entity_type,display_name,confidence}=>json!({
+            Self::UnderstandingEntity{source_ids,entity_type,display_name,context,confidence}=>json!({
                 "sourceIds":source_ids,
                 "entityType":entity_type,
                 "displayName":display_name,
+                "context":context,
                 "confidence":confidence,
             }),
-            Self::UnderstandingEvent{source_ids,event_type,title,description,event_date,involved_entities,confidence}=>json!({
+            Self::UnderstandingEvent{source_ids,event_type,title,description,event_date,date_precision,document_date,involved_entities,confidence}=>json!({
                 "sourceIds":source_ids,
                 "eventType":event_type,
                 "title":title,
                 "description":description,
                 "eventDate":event_date,
+                "datePrecision":date_precision,
+                "documentDate":document_date,
                 "involvedEntities":involved_entities,
                 "confidence":confidence,
             }),
@@ -225,6 +247,12 @@ impl ProposalPayload {
                 "date":date,
                 "dateType":date_type,
                 "context":context,
+                "confidence":confidence,
+            }),
+            Self::UnderstandingIssue{source_ids,issue_type,description,confidence}=>json!({
+                "sourceIds":source_ids,
+                "issueType":issue_type,
+                "description":description,
                 "confidence":confidence,
             }),
             Self::UnderstandingContradiction{source_ids,item_a,source_a_id,item_b,source_b_id,reason}=>json!({
@@ -449,18 +477,27 @@ fn parse_structured_proposal(kind:ProposalKind,proposal:&Value)->AppResult<Propo
                 source_ids,
                 entity_type,
                 display_name:required_string_field(proposal,"displayName")?,
+                context:optional_string_field(proposal,"context")?,
                 confidence:optional_confidence_field(proposal,"confidence")?,
             })
         },
         ProposalKind::UnderstandingEvent=>{
             let event_type=required_string_field(proposal,"eventType")?;
             validate_in(&event_type,EVENT_TYPES,"eventType")?;
+            let date_precision=optional_string_field(proposal,"datePrecision")?;
+            if let Some(p)=&date_precision{ validate_in(p,DATE_PRECISIONS,"datePrecision")?; }
             Ok(ProposalPayload::UnderstandingEvent{
                 source_ids,
                 event_type,
                 title:required_string_field(proposal,"title")?,
                 description:required_string_field(proposal,"description")?,
+                // The event's own date, never the date this document happened to be
+                // ingested into TAHRIR - "eventDate"/"documentDate" are independent
+                // fields the model states from the source text, and neither is ever
+                // derived from `ai_runs.started_at`/any other audit timestamp.
                 event_date:optional_date_field(proposal,"eventDate")?,
+                date_precision,
+                document_date:optional_date_field(proposal,"documentDate")?,
                 involved_entities:optional_string_array_field(proposal,"involvedEntities")?,
                 confidence:optional_confidence_field(proposal,"confidence")?,
             })
@@ -495,6 +532,16 @@ fn parse_structured_proposal(kind:ProposalKind,proposal:&Value)->AppResult<Propo
                 date,
                 date_type,
                 context:required_string_field(proposal,"context")?,
+                confidence:optional_confidence_field(proposal,"confidence")?,
+            })
+        },
+        ProposalKind::UnderstandingIssue=>{
+            let issue_type=required_string_field(proposal,"issueType")?;
+            validate_in(&issue_type,ISSUE_TYPES,"issueType")?;
+            Ok(ProposalPayload::UnderstandingIssue{
+                source_ids,
+                issue_type,
+                description:required_string_field(proposal,"description")?,
                 confidence:optional_confidence_field(proposal,"confidence")?,
             })
         },
@@ -586,12 +633,13 @@ fn canonicalize_understanding_bundle(
     let obj=provider_output.as_object().ok_or_else(||AppError::Validation(
         "matter understanding output must be a JSON object".into()
     ))?;
-    let sections:[(&str,ProposalKind);7]=[
+    let sections:[(&str,ProposalKind);8]=[
         ("entities",ProposalKind::UnderstandingEntity),
         ("events",ProposalKind::UnderstandingEvent),
         ("claims",ProposalKind::UnderstandingClaim),
         ("amounts",ProposalKind::UnderstandingAmount),
         ("dates",ProposalKind::UnderstandingDate),
+        ("issues",ProposalKind::UnderstandingIssue),
         ("contradictions",ProposalKind::UnderstandingContradiction),
         ("suggestedQuestions",ProposalKind::UnderstandingQuestion),
     ];
@@ -959,7 +1007,8 @@ pub fn approve_proposal(db:&DbState,proposal_id:&str,review_note:Option<&str>)->
             // safety boundary: AI proposes, lawyer approves each *specific* effect).
             ProposalPayload::UnderstandingEntity{..}|ProposalPayload::UnderstandingEvent{..}|
             ProposalPayload::UnderstandingClaim{..}|ProposalPayload::UnderstandingAmount{..}|
-            ProposalPayload::UnderstandingDate{..}|ProposalPayload::UnderstandingContradiction{..}|
+            ProposalPayload::UnderstandingDate{..}|ProposalPayload::UnderstandingIssue{..}|
+            ProposalPayload::UnderstandingContradiction{..}|
             ProposalPayload::UnderstandingQuestion{..}=>proposal_id.to_string(),
         };
 
@@ -1616,6 +1665,157 @@ mod tests {
         })).unwrap();
         assert_eq!(proposal_status(&t.db,&proposal_id),"pending",
             "the source does not support a precise date - unknown must stay unknown, never fabricated");
+    }
+
+    #[test]
+    fn event_date_precision_and_document_date_are_independent_of_event_date(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["מכתב הודעה על תאונה שאירעה במרץ 2023"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        // a real value ("month") must be accepted...
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_event",&context,json!({
+            "sourceIds":[source_id],"eventType":"accident","title":"תאונה","description":"תאונה שאירעה במרץ 2023",
+            "eventDate":"2023-03-01","datePrecision":"month","documentDate":"2026-08-20","involvedEntities":[],"confidence":0.7
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+
+        // ...and an unknown value must fail closed, never silently accepted as some default.
+        let invalid=json!({
+            "sourceIds":[source_id],"eventType":"accident","title":"תאונה","description":"x",
+            "eventDate":"2023-03-01","datePrecision":"made_up_precision","documentDate":null,"involvedEntities":[],"confidence":null
+        });
+        assert!(parse_structured_proposal(ProposalKind::UnderstandingEvent,&invalid).is_err());
+    }
+
+    #[test]
+    fn event_date_is_never_replaced_by_the_run_or_ingestion_timestamp(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["דו״ח משטרה על תאונה מיום 2019-04-02"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let historical_date="2019-04-02";
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_event",&context,json!({
+            "sourceIds":[source_id],"eventType":"accident","title":"תאונה","description":"תאונה מיום 2019-04-02",
+            "eventDate":historical_date,"datePrecision":"exact","documentDate":null,"involvedEntities":[],"confidence":0.8
+        })).unwrap();
+
+        let stored_event_date:Option<String>=t.db.read(|conn|{
+            let json_text:String=conn.query_row(
+                "SELECT structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],|r|r.get(0)
+            )?;
+            let v:Value=serde_json::from_str(&json_text).unwrap();
+            Ok(v["eventDate"].as_str().map(str::to_string))
+        }).unwrap();
+        assert_eq!(stored_event_date.as_deref(),Some(historical_date),
+            "the event's own date must persist exactly as stated - never overwritten by Utc::now() or the run's started_at");
+
+        // The run itself is timestamped "now" (today, in this test suite's actual
+        // run time) - proving the two timestamps genuinely differ, not just that the
+        // event date field exists.
+        let run_started_at:String=t.db.read(|conn|conn.query_row(
+            "SELECT r.started_at FROM ai_runs r JOIN ai_proposals p ON p.ai_run_id=r.id WHERE p.id=?1",
+            [&proposal_id],|r|r.get(0)
+        ).map_err(AppError::Db)).unwrap();
+        assert!(!run_started_at.starts_with("2019"),
+            "sanity check: the run's own audit timestamp must be the real current time, not the historical event date");
+    }
+
+    #[test]
+    fn historical_backfill_imports_an_old_event_without_treating_import_time_as_event_time(){
+        // Simulates a running matter imported into TAHRIR years after the fact: the
+        // document is scanned/hashed/extracted "today" (C1's pipeline has no notion
+        // of backdating), but the event it describes happened years earlier and must
+        // retain that historical date through Matter Understanding and the timeline.
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"medical",&["סיכום אשפוז מבית החולים מיום 2015-06-10"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_event",&context,json!({
+            "sourceIds":[source_id],"eventType":"hospitalization","title":"אשפוז","description":"סיכום אשפוז מיום 2015-06-10",
+            "eventDate":"2015-06-10","datePrecision":"exact","documentDate":"2015-06-15","involvedEntities":[],"confidence":0.9
+        })).unwrap();
+        approve_proposal(&t.db,&proposal_id,None).unwrap();
+
+        let timeline=crate::understanding::build_matter_timeline(&t.db,&matter_id).unwrap();
+        assert_eq!(timeline.len(),1);
+        assert_eq!(timeline[0].business_date,"2015-06-10",
+            "the timeline must sort this event by its real 2015 date, never by today's ingestion/approval date");
+        assert!(!timeline[0].inserted_at.starts_with("2015"),
+            "insertedAt (audit time) legitimately reflects today - only businessDate must reflect the historical event");
+    }
+
+    #[test]
+    fn valid_issue_proposal_is_a_neutral_gap_never_a_legal_conclusion(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["אין מכתב תשובה מחברת הביטוח בתיק"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_issue",&context,json!({
+            "sourceIds":[source_id],"issueType":"missing_response","description":"לא נמצא מכתב תשובה מחברת הביטוח בחומר שנקלט",
+            "confidence":0.5
+        })).unwrap();
+        assert_eq!(proposal_status(&t.db,&proposal_id),"pending");
+
+        let unknown_type=json!({"sourceIds":[source_id],"issueType":"made_up","description":"x","confidence":null});
+        assert!(parse_structured_proposal(ProposalKind::UnderstandingIssue,&unknown_type).is_err());
+    }
+
+    #[test]
+    fn an_empty_bundle_never_asserts_that_something_does_not_exist(){
+        // "Not found in the currently ingested sources" is not the same claim as
+        // "does not exist" - the system must never manufacture a negative-existence
+        // proposal merely because a category came back empty.
+        let allowed:HashSet<String>=["s1".to_string()].into_iter().collect();
+        let empty=json!({"entities":[],"events":[],"claims":[],"amounts":[],"dates":[],"issues":[],"contradictions":[],"suggestedQuestions":[]});
+        let canonical=canonicalize_understanding_bundle(&empty,&allowed).unwrap();
+        assert!(canonical.is_empty(), "an empty category must persist zero items, never a synthesized \"not found\"/\"does not exist\" proposal");
+    }
+
+    #[test]
+    fn rejected_item_remains_queryable_in_audit_history(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        new_document_with_pages(&t.db,&matter_id,"court",&["עדות מתארת תאונה"]);
+        let context=understanding_context(&t.db,&matter_id);
+        let source_id=first_source_id(&context);
+        let proposal_id=create_pending_proposal_for_test(&t.db,&matter_id,"understanding_claim",&context,json!({
+            "sourceIds":[source_id],"assertedBy":"עד","statement":"עדות מתארת תאונה","target":null,"confidence":null
+        })).unwrap();
+        reject_proposal(&t.db,&proposal_id,"rejected",Some("not sufficiently grounded")).unwrap();
+
+        let (status,note,structured_json):(String,Option<String>,String)=t.db.read(|conn|conn.query_row(
+            "SELECT status,review_note,structured_json FROM ai_proposals WHERE id=?1",[&proposal_id],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(AppError::Db)).unwrap();
+        assert_eq!(status,"rejected");
+        assert_eq!(note.as_deref(),Some("not sufficiently grounded"));
+        assert!(structured_json.contains("עדות מתארת תאונה"),
+            "the original proposed content must remain intact and queryable for audit even after rejection - never deleted");
+    }
+
+    #[test]
+    fn existing_domain_events_appear_in_the_timeline_without_duplication(){
+        let t=new_test_db();
+        let matter_id=new_matter(&t.db);
+        let now=Utc::now().to_rfc3339();
+        t.db.write(|conn|{
+            conn.execute(
+                "INSERT INTO calendar_events(id,matter_id,title,starts_at,event_kind,status,created_at)
+                 VALUES(?1,?2,'דיון','2026-05-01T00:00:00Z','hearing','active',?3)",
+                params![Uuid::new_v4().to_string(),matter_id,now]
+            )?;
+            Ok(())
+        }).unwrap();
+        let timeline_a=crate::understanding::build_matter_timeline(&t.db,&matter_id).unwrap();
+        let timeline_b=crate::understanding::build_matter_timeline(&t.db,&matter_id).unwrap();
+        assert_eq!(timeline_a.len(),1,"the existing calendar_events row must appear exactly once");
+        assert_eq!(timeline_b.len(),1,"repeated timeline reads over an unchanged domain record must never duplicate it - the timeline is a read model, not a copy");
+        assert_eq!(timeline_a[0].id,timeline_b[0].id);
     }
 
     #[test]

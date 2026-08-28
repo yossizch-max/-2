@@ -25,6 +25,11 @@ pub struct TimelineItem {
     pub description: Option<String>,
     pub verified: bool,
     pub inserted_at: String,
+    /// "exact"|"month"|"year"|"approximate"|"unknown", only ever set for
+    /// `understanding_event` rows (the only source that lets the model state its own
+    /// confidence in a date). Every other domain source has an exact recorded date,
+    /// so this stays `None` for them rather than a misleading "exact" default.
+    pub date_precision: Option<String>,
 }
 
 /// Approved `understanding_event` proposals with a known `eventDate`. An item whose
@@ -53,6 +58,7 @@ fn push_understanding_events(conn: &Connection, matter_id: &str, out: &mut Vec<T
             description: v.get("description").and_then(Value::as_str).map(str::to_string),
             verified: false,
             inserted_at: started_at,
+            date_precision: v.get("datePrecision").and_then(Value::as_str).map(str::to_string),
         });
     }
     Ok(())
@@ -71,6 +77,7 @@ fn push_medical_events(conn: &Connection, matter_id: &str, out: &mut Vec<Timelin
             id, kind: "medical_event".to_string(), business_date: event_date,
             title: provider_name.unwrap_or_else(|| "אירוע רפואי".to_string()),
             description: Some(treatment_summary), verified: true, inserted_at: created_at,
+            date_precision: None,
         });
     }
     Ok(())
@@ -89,7 +96,7 @@ fn push_wage_records(conn: &Connection, matter_id: &str, out: &mut Vec<TimelineI
             id, kind: "wage_record".to_string(), business_date: period_start,
             title: employer_name.unwrap_or_else(|| "רשומת שכר".to_string()),
             description: Some(format!("שכר ברוטו {:.2} ₪", gross_amount_cents as f64 / 100.0)),
-            verified: true, inserted_at: created_at,
+            verified: true, inserted_at: created_at, date_precision: None,
         });
     }
     Ok(())
@@ -109,7 +116,7 @@ fn push_insurance_status_history(conn: &Connection, matter_id: &str, out: &mut V
         out.push(TimelineItem {
             id, kind: "insurance_status".to_string(), business_date: changed_at.clone(),
             title: format!("{insurer_name} · {to_status}"), description: note,
-            verified: true, inserted_at: changed_at,
+            verified: true, inserted_at: changed_at, date_precision: None,
         });
     }
     Ok(())
@@ -126,6 +133,7 @@ fn push_negotiation_events(conn: &Connection, matter_id: &str, out: &mut Vec<Tim
         out.push(TimelineItem {
             id, kind: "negotiation_event".to_string(), business_date: happened_at.clone(),
             title: event_kind, description: Some(summary), verified: true, inserted_at: happened_at,
+            date_precision: None,
         });
     }
     Ok(())
@@ -142,6 +150,7 @@ fn push_calendar_events(conn: &Connection, matter_id: &str, out: &mut Vec<Timeli
         out.push(TimelineItem {
             id, kind: "calendar_event".to_string(), business_date: starts_at.clone(),
             title, description: Some(event_kind), verified: true, inserted_at: starts_at,
+            date_precision: None,
         });
     }
     Ok(())
@@ -209,7 +218,16 @@ pub fn build_matter_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
         let amounts = fetch_items("understanding_amount", false)?;
         let contradictions = fetch_items("understanding_contradiction", false)?;
         let entities = fetch_items("understanding_entity", false)?;
+        // "issues" = neutral gaps/open questions found in the source material
+        // ("information not found in the currently ingested sources" per C2's
+        // conceptual boundary - never "does not exist"); "suggestedQuestions" are
+        // the model's own literal review questions. Kept as two distinct brief
+        // sections since they answer different questions for the reviewing lawyer.
+        let issues = fetch_items("understanding_issue", false)?;
         let missing_info = fetch_items("understanding_question", false)?;
+        let pending_review_count = claims.iter().chain(amounts.iter()).chain(contradictions.iter())
+            .chain(entities.iter()).chain(issues.iter()).chain(missing_info.iter())
+            .filter(|item| item["pending"] == Value::Bool(true)).count() as i64;
 
         let verified_fact_count = count(conn, "SELECT count(*) FROM verified_facts WHERE matter_id=?1 AND status='valid'", matter_id)?;
         let open_conflict_count = count(conn, "SELECT count(*) FROM fact_conflicts WHERE matter_id=?1 AND status='unresolved'", matter_id)?;
@@ -222,10 +240,12 @@ pub fn build_matter_brief(db: &DbState, matter_id: &str) -> AppResult<Value> {
             "chronology": timeline,
             "claims": claims,
             "amounts": amounts,
+            "issues": issues,
             "contradictions": contradictions,
             "missingInformation": missing_info,
             "verifiedFactCount": verified_fact_count,
             "openConflictCount": open_conflict_count,
+            "pendingReviewCount": pending_review_count,
         }))
     })
 }
