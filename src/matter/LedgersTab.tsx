@@ -100,7 +100,10 @@ function LedgerEntryRow<T extends CommonEntry>({matterId,kind,entry,summary,mana
   </div>;
 }
 
-function MedicalSection({matterId}:{matterId:string}) {
+// UX Milestone 1: ledger data (verified medical events / wage records / liability
+// facts) is never its own "Ledgers" sub-tab inside עבודת התיק - each section is
+// exported so it can appear directly inside its own domain's evidence view instead.
+export function MedicalSection({matterId}:{matterId:string}) {
   const {data:entries,loading,error,reload}=useCommand(
     ()=>commands.list_medical_events({matterId}) as Promise<MedicalEvent[]>, [matterId]
   );
@@ -164,7 +167,7 @@ function MedicalSection({matterId}:{matterId:string}) {
   </section>;
 }
 
-function WageSection({matterId}:{matterId:string}) {
+export function WageSection({matterId}:{matterId:string}) {
   const {data:entries,loading,error,reload}=useCommand(
     ()=>commands.list_wage_records({matterId}) as Promise<WageRecord[]>, [matterId]
   );
@@ -232,7 +235,7 @@ function WageSection({matterId}:{matterId:string}) {
   </section>;
 }
 
-function LiabilitySection({matterId}:{matterId:string}) {
+export function LiabilitySection({matterId}:{matterId:string}) {
   const {data:entries,loading,error,reload}=useCommand(
     ()=>commands.list_liability_facts({matterId}) as Promise<LiabilityFact[]>, [matterId]
   );

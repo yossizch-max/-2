@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { AppShell, type NavKey } from "./components/AppShell";
-import { Inspector } from "./components/Inspector";
 import { CommandPalette } from "./components/CommandPalette";
 import { TodayPage } from "./pages/TodayPage";
 import { MattersPage } from "./pages/MattersPage";
@@ -38,7 +37,7 @@ export default function App() {
     : <SettingsPage onNavigate={navigate}/>;
 
   return <>
-    <AppShell active={nav} onNavigate={k=>{setMatterId(null);setNav(k);}} onCommand={()=>setPalette(true)} inspector={<Inspector/>}>{page}</AppShell>
+    <AppShell active={nav} onNavigate={k=>{setMatterId(null);setNav(k);}} onCommand={()=>setPalette(true)}>{page}</AppShell>
     <CommandPalette open={palette} onClose={()=>setPalette(false)} onNavigate={navigate}/>
   </>;
 }

@@ -3,22 +3,27 @@ import { OverviewTab } from "./OverviewTab";
 import { UnderstandingTab } from "./UnderstandingTab";
 import { MatterTimelineTab } from "./MatterTimelineTab";
 import { MatterBriefTab } from "./MatterBriefTab";
-import { FactsAITab } from "./FactsAITab";
+import { RequirementsPanel } from "./MissingEvidenceTab";
 import type { Matter } from "../types";
 
 // UX Milestone 1: "בית התיק" - the always-first entry into a matter. Direct
 // document intake (OverviewTab) is the default view; matter-level understanding,
-// timeline, brief, and the AI findings queue are one click away as segments of the
-// same screen rather than four more top-level tabs to remember.
+// timeline and brief are one click away as segments of the same screen rather than
+// three more top-level tabs to remember. The AI findings queue is a Milestone 3
+// experience and is intentionally not present here yet. Missing evidence has no
+// dedicated tab either - it appears directly below as a persistent, case-wide
+// panel, always visible regardless of which segment above is active.
 export function MatterHomeTab({matter,onMatterChanged}:{matter:Matter;onMatterChanged:()=>void}) {
-  return <SegmentedSubTabs
-    initial="summary"
-    segments={[
-      ["summary","סיכום",<OverviewTab matter={matter} onMatterChanged={onMatterChanged}/>],
-      ["understanding","הבנת התיק",<UnderstandingTab matterId={matter.id}/>],
-      ["timeline","ציר זמן",<MatterTimelineTab matterId={matter.id}/>],
-      ["brief","תדריך תיק",<MatterBriefTab matterId={matter.id}/>],
-      ["ai","הצעות AI",<FactsAITab matterId={matter.id}/>],
-    ]}
-  />;
+  return <div>
+    <SegmentedSubTabs
+      initial="summary"
+      segments={[
+        ["summary","סיכום",<OverviewTab matter={matter} onMatterChanged={onMatterChanged}/>],
+        ["understanding","הבנת התיק",<UnderstandingTab matterId={matter.id}/>],
+        ["timeline","ציר זמן",<MatterTimelineTab matterId={matter.id}/>],
+        ["brief","תדריך תיק",<MatterBriefTab matterId={matter.id}/>],
+      ]}
+    />
+    <RequirementsPanel matterId={matter.id}/>
+  </div>;
 }

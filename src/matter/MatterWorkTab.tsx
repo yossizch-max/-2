@@ -13,28 +13,37 @@ import { LiabilityEvidenceTab } from "./LiabilityEvidenceTab";
 import { LiabilityBriefTab } from "./LiabilityBriefTab";
 import { DamageTab } from "./DamageTab";
 import { NegotiationTab } from "./NegotiationTab";
-import { WorkstreamsTab } from "./WorkstreamsTab";
-import { MissingEvidenceTab } from "./MissingEvidenceTab";
-import { LedgersTab } from "./LedgersTab";
-import { TasksCalendarTab } from "./TasksCalendarTab";
+import { MedicalSection, WageSection, LiabilitySection } from "./LedgersTab";
+import { RequirementsPanel } from "./MissingEvidenceTab";
 
-type CardKey="medical"|"wage"|"liability"|"damageNegotiation"|"management";
+type CardKey="medical"|"wage"|"liability"|"damageNegotiation";
 
 const CARDS:Array<[CardKey,string,string]>=[
   ["medical","🩺","רפואי"],
   ["wage","💰","שכר והכנסה"],
   ["liability","⚖️","אחריות"],
   ["damageNegotiation","🤝","נזק ומו״מ"],
-  ["management","🗂️","ניהול תיק"],
 ];
 
-// UX Milestone 1: "עבודת התיק" - a workstream/ledger/missing-evidence concept never
-// appears as its own top-level tab or as raw backend language here; each card shows
-// only a colored dot + one word, and the underlying kind (workstreams.rs's own
-// ALLOWED_KINDS) is never printed on screen.
-const WORKSTREAM_KIND_FOR_CARD:Record<CardKey,string|null>={
-  medical:"medical", wage:"wage", liability:"liability", damageNegotiation:"negotiation", management:null,
+// UX Milestone 1: "עבודת התיק" has exactly these four domain cards - no fifth
+// "ניהול תיק" card, and no Workstreams/Ledgers/Missing Evidence/Tasks sub-tabs.
+// Their backend functionality is preserved without a dedicated tab: a workstream's
+// status only ever drives the card's own status dot below (never an editable list
+// here); ledger data (MedicalSection/WageSection/LiabilitySection) and missing-
+// evidence items (RequirementsPanel, filtered to the domain) render directly inside
+// the relevant domain's own evidence/negotiation view; tasks/calendar stay reachable
+// through the global "משימות ויומן" nav destination, not from inside a matter.
+const WORKSTREAM_KIND_FOR_CARD:Record<CardKey,string>={
+  medical:"medical", wage:"wage", liability:"liability", damageNegotiation:"negotiation",
 };
+
+const MISSING_EVIDENCE_KEYS_FOR_CARD:Record<CardKey,string[]>={
+  medical:["medical_records_initial","medical_records_full_file","expert_opinion"],
+  wage:["wage_stubs","employer_incident_report"],
+  liability:["police_report","witness_statements","vehicle_photos"],
+  damageNegotiation:["insurance_policy"],
+};
+
 function statusDotClass(status?:string){
   if(status==="blocked")return "blocked";
   if(status==="active")return "active-status";
@@ -54,37 +63,42 @@ export function MatterWorkTab({matterId}:{matterId:string}) {
   const {data:workstreams}=useCommand(
     ()=>commands.list_matter_workstreams({matterId}) as Promise<Workstream[]>, [matterId]
   );
-  const statusFor=(card:CardKey)=>{
-    const kind=WORKSTREAM_KIND_FOR_CARD[card];
-    if(!kind)return undefined;
-    return workstreams?.find(w=>w.kind===kind)?.status;
-  };
+  const statusFor=(card:CardKey)=>workstreams?.find(w=>w.kind===WORKSTREAM_KIND_FOR_CARD[card])?.status;
 
   if(open){
     const content=
       open==="medical" ? <SegmentedSubTabs segments={[
-          ["evidence","ראיות",<MedicalEvidenceTab matterId={matterId}/>],
+          ["evidence","ראיות",<>
+            <MedicalSection matterId={matterId}/>
+            <RequirementsPanel matterId={matterId} filterKeys={MISSING_EVIDENCE_KEYS_FOR_CARD.medical} title="ראיות חסרות - רפואי"/>
+            <MedicalEvidenceTab matterId={matterId}/>
+          </>],
           ["timeline","ציר זמן",<MedicalTimelineTab matterId={matterId}/>],
           ["brief","תדריך",<MedicalBriefTab matterId={matterId}/>],
         ]}/>
       : open==="wage" ? <SegmentedSubTabs segments={[
-          ["evidence","ראיות",<WageEvidenceTab matterId={matterId}/>],
+          ["evidence","ראיות",<>
+            <WageSection matterId={matterId}/>
+            <RequirementsPanel matterId={matterId} filterKeys={MISSING_EVIDENCE_KEYS_FOR_CARD.wage} title="ראיות חסרות - שכר והכנסה"/>
+            <WageEvidenceTab matterId={matterId}/>
+          </>],
           ["timeline","ציר זמן",<WageTimelineTab matterId={matterId}/>],
           ["brief","תדריך",<WageBriefTab matterId={matterId}/>],
         ]}/>
       : open==="liability" ? <SegmentedSubTabs segments={[
-          ["evidence","ראיות",<LiabilityEvidenceTab matterId={matterId}/>],
+          ["evidence","ראיות",<>
+            <LiabilitySection matterId={matterId}/>
+            <RequirementsPanel matterId={matterId} filterKeys={MISSING_EVIDENCE_KEYS_FOR_CARD.liability} title="ראיות חסרות - אחריות"/>
+            <LiabilityEvidenceTab matterId={matterId}/>
+          </>],
           ["brief","תדריך",<LiabilityBriefTab matterId={matterId}/>],
         ]}/>
-      : open==="damageNegotiation" ? <SegmentedSubTabs segments={[
-          ["damage","נזק",<DamageTab matterId={matterId}/>],
-          ["negotiation","מו״מ וביטוח",<NegotiationTab matterId={matterId}/>],
-        ]}/>
       : <SegmentedSubTabs segments={[
-          ["workstreams","מסלולי עבודה",<WorkstreamsTab matterId={matterId}/>],
-          ["evidence","ראיות חסרות",<MissingEvidenceTab matterId={matterId}/>],
-          ["ledgers","פנקסים",<LedgersTab matterId={matterId}/>],
-          ["tasks","משימות ויומן",<TasksCalendarTab matterId={matterId}/>],
+          ["damage","נזק",<DamageTab matterId={matterId}/>],
+          ["negotiation","מו״מ וביטוח",<>
+            <RequirementsPanel matterId={matterId} filterKeys={MISSING_EVIDENCE_KEYS_FOR_CARD.damageNegotiation} title="ראיות חסרות - נזק ומו״מ"/>
+            <NegotiationTab matterId={matterId}/>
+          </>],
         ]}/>;
     return <div>
       <button className="btn secondary" onClick={()=>setOpen(null)} style={{marginBottom:14}}>← חזרה לעבודת התיק</button>

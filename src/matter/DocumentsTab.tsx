@@ -2,10 +2,11 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { StatusBadge } from "../components/StatusBadge";
+import { DirectIntakeZone } from "./DirectIntakeZone";
 import type { DocumentRow, DocumentIntakeSummary, ExtractionRun, DocumentPage } from "../types";
 
 const CATEGORIES = ["general","medical","court","wage","correspondence","expert_opinion"];
-const CATEGORY_LABELS: Record<string,string> = {
+export const CATEGORY_LABELS: Record<string,string> = {
   general: "כללי", medical: "רפואי", court: "בית משפט", wage: "שכר",
   correspondence: "התכתבות", expert_opinion: "חוות דעת",
 };
@@ -89,11 +90,13 @@ export function DocumentsTab({matterId}:{matterId:string}) {
     finally{ setBusy(null); }
   };
 
-  return <section className="workspace-card">
+  return <div className="matter-tab">
+    <DirectIntakeZone matterId={matterId} onImported={reload}/>
+    <section className="workspace-card">
     <div className="card-head"><div><span className="eyebrow">SOURCE GRAPH</span><h2>מסמכים</h2></div>
-      <button className="btn primary" onClick={processDocuments} disabled={busy==="process"}>{busy==="process"?"סורק ומעבד...":"סרוק ועבד מסמכים"}</button>
+      <button className="btn secondary" onClick={processDocuments} disabled={busy==="process"}>{busy==="process"?"מעבד...":"עבד מחדש מסמכים ממתינים"}</button>
     </div>
-    <p className="quiet">פעולה אחת: איתור קבצים חדשים, גיבוב, חילוץ טקסט (כולל OCR לסרוקים), וסיווג אוטומטי. סיווג ידני אינו נדרס לעולם.</p>
+    <p className="quiet">גרירת קבצים למעלה קולטת ומעבדת אוטומטית. הכפתור כאן מריץ שוב את החילוץ עבור מסמכים שממתינים או שהעיבוד שלהם נכשל.</p>
     {processError && <p className="quiet">שגיאה: {processError}</p>}
     {summary && <div className="workspace-card" style={{marginTop:8,marginBottom:8}}>
       <strong>{summary.discovered} מסמכים · {summary.extracted} חולצו · {summary.ocred} OCR · {summary.alreadyComplete} כבר הושלמו
@@ -103,7 +106,7 @@ export function DocumentsTab({matterId}:{matterId:string}) {
     </div>}
     {loading && <p className="quiet">טוען מסמכים...</p>}
     {error && <p className="quiet">שגיאה: {error}</p>}
-    {!loading && !error && documents?.length===0 && <p className="quiet">אין עדיין מסמכים בתיק זה. יש לוודא שהתיקייה משויכת ולסרוק.</p>}
+    {!loading && !error && documents?.length===0 && <p className="quiet">אין עדיין מסמכים בתיק זה. גררו קובץ לאזור למעלה כדי להתחיל.</p>}
     <div className="table documents-table">
       <div className="tr th"><span>קובץ</span><span>קטגוריה</span><span>מצב מקור</span><span>חילוץ</span><span>פעולות</span></div>
       {documents?.map(d=><div key={d.id}>
@@ -138,5 +141,6 @@ export function DocumentsTab({matterId}:{matterId:string}) {
         {expandedId===d.id && d.currentVersionId && <DocumentDetail documentVersionId={d.currentVersionId}/>}
       </div>)}
     </div>
-  </section>;
+    </section>
+  </div>;
 }

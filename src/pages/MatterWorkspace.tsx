@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
-import { CASE_TYPES, type Matter } from "../types";
+import { CASE_TYPES, WORKFLOW_STAGES, type Matter } from "../types";
 import { MatterHomeTab } from "../matter/MatterHomeTab";
 import { DocumentsTab } from "../matter/DocumentsTab";
 import { MatterWorkTab } from "../matter/MatterWorkTab";
@@ -15,7 +15,6 @@ import { MatterDraftingTab } from "../matter/MatterDraftingTab";
 // lives as a segment inside one of these four (see MatterHomeTab/MatterWorkTab/
 // MatterDraftingTab) rather than as its own tab a lawyer has to remember.
 type Tab="home"|"documents"|"work"|"drafting";
-const STAGES=["intake","evidence_collection","treatment_and_records","negotiation","litigation","closed"];
 
 function EditMatterModal({matter,onClose,onSaved}:{matter:Matter;onClose:()=>void;onSaved:()=>void}) {
   const [title,setTitle]=useState(matter.title);
@@ -72,11 +71,11 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
 
   return <div className="page matter-page">
     <div className="matter-header">
-      <div><button className="back-link" onClick={onBack}>→ תיקים</button><span className="eyebrow">{matter.internalNumber} · {matter.matterType}</span><h1>{matter.title}</h1>
+      <div><button className="back-link" onClick={onBack}>→ תיקים</button><span className="eyebrow">{matter.internalNumber} · {CASE_TYPES.find(t=>t.value===matter.matterType)?.label ?? matter.matterType}</span><h1>{matter.title}</h1>
         <div className="meta-chips">
           <span>{matter.documentCount} מסמכים</span><span>{matter.verifiedFactCount} עובדות</span>
           <select value={matter.workflowStage} disabled={stageBusy} onChange={e=>changeStage(e.target.value)}>
-            {STAGES.map(s=><option key={s} value={s}>{s}</option>)}
+            {WORKFLOW_STAGES.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
       </div>

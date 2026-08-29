@@ -2,6 +2,7 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { LegalRulesPage } from "./LegalRulesPage";
+import { Inspector } from "../components/Inspector";
 import type { LegalRuleset } from "../types";
 
 type Suggestion={id:string;pathDisplay:string;suggestedTitle:string;fileCount:number;createdAt:string};
@@ -120,5 +121,10 @@ export function SettingsPage({onNavigate}:{onNavigate?:(target:string)=>void}) {
     </section>}
 
     <div className="settings-list">{rows.map(([a,b])=><div className="setting-row" key={a}><strong>{a}</strong><span>{b}</span></div>)}</div>
+
+    <section className="workspace-card">
+      <span className="eyebrow">DIAGNOSTICS</span>
+      <Inspector/>
+    </section>
   </div>;
 }

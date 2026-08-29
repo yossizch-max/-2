@@ -10,8 +10,8 @@ const primaryNav: Array<[NavKey,string,string]> = [
   ["today","היום","⌂"],["matters","תיקים","▣"],["calendar","משימות ויומן","□"],["search","חיפוש","⌕"],
 ];
 
-export function AppShell({active,onNavigate,onCommand,children,inspector}:{
-  active:NavKey; onNavigate:(k:NavKey)=>void; onCommand:()=>void; children:ReactNode; inspector:ReactNode
+export function AppShell({active,onNavigate,onCommand,children}:{
+  active:NavKey; onNavigate:(k:NavKey)=>void; onCommand:()=>void; children:ReactNode
 }) {
   return <div className="app-shell">
     <header className="topbar">
@@ -19,7 +19,6 @@ export function AppShell({active,onNavigate,onCommand,children,inspector}:{
       <button className="global-search" onClick={onCommand}><span>חיפוש או פעולה</span><kbd>Ctrl K</kbd></button>
       <div className="health-inline"><span className="health-dot"/><span>מקומי · מאובטח</span></div>
     </header>
-    <aside className="inspector-pane">{inspector}</aside>
     <main className="workspace">{children}</main>
     <nav className="nav-rail" aria-label="ניווט ראשי">
       <div className="nav-main">

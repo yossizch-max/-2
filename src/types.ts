@@ -484,6 +484,15 @@ export const CASE_TYPES: Array<{value: string; label: string}> = [
   {value: "other", label: "אחר"},
 ];
 
+export const WORKFLOW_STAGES: Array<{value: string; label: string}> = [
+  {value: "intake", label: "קליטה"},
+  {value: "evidence_collection", label: "איסוף ראיות"},
+  {value: "treatment_and_records", label: "טיפול ותיעוד"},
+  {value: "negotiation", label: "מו\"מ"},
+  {value: "litigation", label: "ליטיגציה"},
+  {value: "closed", label: "סגור"},
+];
+
 export const PARTY_ROLES: Array<{value: string; label: string}> = [
   {value: "client", label: "לקוח"},
   {value: "party", label: "צד"},

@@ -2066,3 +2066,93 @@ nav-secondary layout rules). No migration, no Rust change, no command/IPC change
 pre-existing warnings only), `cargo test --locked -- --test-threads=1` (no Rust
 source changed this step, still 314/314), `npm audit --audit-level=high` (0
 vulnerabilities), `git diff --check` (clean).
+
+## UX Milestone 1 (completed) — Acceptance-Gap Fixes (2026-08-29)
+
+Same branch, third commit. A design review against the approved V4 roadmap found
+six UX acceptance gaps in the prior two commits. All six are fixed here; no
+migration and no Rust source changed - every fix is a frontend reorganization.
+
+1. **Direct intake was Matter-Home-only.** `DirectIntakeZone` (the drag/pick
+   component from the first commit) is extracted to its own file, `src/matter/
+   DirectIntakeZone.tsx`, and both `OverviewTab.tsx` (בית התיק) and
+   `DocumentsTab.tsx` (מסמכים) render the exact same component/instance calling
+   the exact same `import_document_files` path - one intake implementation, two
+   entry points, zero duplicated backend logic. `DocumentsTab`'s pre-existing
+   "process" button is relabeled "עבד מחדש מסמכים ממתינים" (its real behavior -
+   retry extraction on already-registered documents) so it no longer reads as a
+   competing/first-class intake action.
+
+2. **Matter Work reduced from 5 cards to exactly 4** (רפואי/שכר והכנסה/אחריות/נזק
+   ומו״מ - the "ניהול תיק" card is gone) and Workstreams/Ledgers/Missing Evidence/
+   Tasks no longer appear as sub-tabs anywhere in `MatterWorkTab.tsx`. Their backend
+   functionality is preserved contextually rather than behind a tab:
+   - **Workstreams** stay read-only, driving each card's own status dot
+     (`list_matter_workstreams`, unchanged) - never rendered as an editable list.
+   - **Missing evidence**: `MissingEvidenceTab.tsx`'s interactive list is factored
+     into an exported `RequirementsPanel({matterId, filterKeys?, title?})`. בית
+     התיק renders it unfiltered as a persistent panel below the segmented tabs
+     (visible regardless of which segment is active); each domain's evidence
+     segment in עבודת התיק renders it filtered to that domain's own requirement
+     keys (e.g. medical → `medical_records_initial`/`medical_records_full_file`/
+     `expert_opinion`). One component, one read/update path, two placements.
+   - **Ledger data**: `LedgersTab.tsx`'s three domain sections (`MedicalSection`/
+     `WageSection`/`LiabilitySection`) are exported and render directly inside
+     their matching domain's evidence segment in עבודת התיק, above the existing
+     AI evidence-intelligence panel - not as a separate "Ledgers" destination.
+   - **Tasks/calendar**: no in-matter tab; unchanged, reachable only through the
+     existing global "משימות ויומן" nav destination.
+
+3. **"הצעות AI" removed as a בית התיק sub-tab.** `MatterHomeTab.tsx` no longer
+   renders `FactsAITab` (the generic AI-findings review UI) - that experience
+   belongs to Milestone 3 and is intentionally not built yet. `FactsAITab.tsx`
+   itself is untouched and unused, not deleted.
+
+4. **The permanent Inspector pane is gone from every normal screen.** `AppShell`
+   no longer takes an `inspector` prop or renders an `<aside>` - `App.tsx` and the
+   `.app-shell` grid (`330px + workspace + nav-rail` → `workspace + nav-rail`) both
+   shrink accordingly. The live `Inspector` component (DB/source-index/OCR/AI
+   health) moves into `SettingsPage.tsx` as a secondary "DIAGNOSTICS" section, so
+   the same real-time health check is one click away in Settings instead of
+   occupying screen space on every page.
+
+5. **Raw/internal language removed from Matter Home** (`OverviewTab.tsx`, the
+   default בית התיק segment): "מסמכים אחרונים" now shows a document's category
+   and state through the same plain-language maps used everywhere else in the
+   product - category via `DocumentsTab`'s exported `CATEGORY_LABELS` (no more raw
+   `general`/`medical`/`court` strings) and state via a new three-state map
+   (`DOCUMENT_STATE_LABELS`: complete→נקרא, not_started/pending→בתהליך, blocked/
+   stale/failed→דורש טיפול) instead of the backend's six-value `extractionState`
+   enum. The empty-documents message no longer instructs the lawyer to go scan
+   the Office Root folder ("סרקו את תיקיית התיק") - it now points at the
+   drag-and-drop zone directly above it, matching the actual primary intake path.
+   `matter.matterType` and `matter.workflowStage` (both raw snake_case codes) are
+   now shown/selected through their Hebrew labels - `CASE_TYPES` (already existed)
+   and a new `WORKFLOW_STAGES` map in `types.ts` - everywhere they appear
+   (`MatterWorkspace.tsx`'s header/stage selector and `OverviewTab.tsx`'s KPI tile).
+
+6. **Backend safeguards and tests untouched.** No file under `src-tauri/src/`
+   changed in this commit; `direct_intake.rs`'s 10 tests and the full 314-test
+   suite are unaffected because nothing they cover changed.
+
+**Files changed**: `src/matter/DirectIntakeZone.tsx` (new, extracted from
+`OverviewTab.tsx`), `src/matter/OverviewTab.tsx`, `src/matter/DocumentsTab.tsx`,
+`src/matter/MatterWorkTab.tsx`, `src/matter/MatterHomeTab.tsx`, `src/matter/
+LedgersTab.tsx` (three sections exported), `src/matter/MissingEvidenceTab.tsx`
+(`RequirementsPanel` extracted and exported), `src/components/AppShell.tsx`,
+`src/App.tsx`, `src/pages/SettingsPage.tsx`, `src/pages/MatterWorkspace.tsx`,
+`src/types.ts` (`WORKFLOW_STAGES` added), `src/styles/app.css`. No migration, no
+Rust change, no command/IPC contract change.
+
+**QA**: `npm run build` (clean), `npm run contract:check` (135/135, unchanged),
+`npm run qa:static` (all checks pass, unchanged), `cargo check --locked` (clean,
+pre-existing warnings only), `cargo test --locked -- --test-threads=1` (314/314,
+unchanged - no Rust source touched), `npm audit --audit-level=high` (0
+vulnerabilities), `git diff --check` (clean).
+
+**Remaining acceptance gate**: a live Windows test - create matter → drag a real
+PDF → automatic OCR/processing → the same Matter Home updates → open Documents →
+the document is present and readable. This has not been exercised in this
+environment (no real Tauri webview) and is the one item still open before this
+branch could be considered fully accepted; the branch remains unmerged into `main`
+pending that test.
