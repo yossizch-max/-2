@@ -35,7 +35,7 @@ export default function App() {
     : nav==="search" ? <SearchPage onOpenMatter={setMatterId}/>
     : nav==="templates" ? <TemplatesPage/>
     : nav==="ai" ? <AISettingsPage/>
-    : <SettingsPage/>;
+    : <SettingsPage onNavigate={navigate}/>;
 
   return <>
     <AppShell active={nav} onNavigate={k=>{setMatterId(null);setNav(k);}} onCommand={()=>setPalette(true)} inspector={<Inspector/>}>{page}</AppShell>

@@ -2,30 +2,19 @@ import { useState } from "react";
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
 import { CASE_TYPES, type Matter } from "../types";
-import { OverviewTab } from "../matter/OverviewTab";
+import { MatterHomeTab } from "../matter/MatterHomeTab";
 import { DocumentsTab } from "../matter/DocumentsTab";
-import { FactsAITab } from "../matter/FactsAITab";
-import { DamageTab } from "../matter/DamageTab";
-import { TasksCalendarTab } from "../matter/TasksCalendarTab";
-import { LegalDocumentsTab } from "../matter/LegalDocumentsTab";
-import { AuthoritiesTab } from "../matter/AuthoritiesTab";
-import { WorkstreamsTab } from "../matter/WorkstreamsTab";
-import { MissingEvidenceTab } from "../matter/MissingEvidenceTab";
-import { LedgersTab } from "../matter/LedgersTab";
-import { NegotiationTab } from "../matter/NegotiationTab";
-import { UnderstandingTab } from "../matter/UnderstandingTab";
-import { MatterTimelineTab } from "../matter/MatterTimelineTab";
-import { MatterBriefTab } from "../matter/MatterBriefTab";
-import { MedicalEvidenceTab } from "../matter/MedicalEvidenceTab";
-import { MedicalTimelineTab } from "../matter/MedicalTimelineTab";
-import { MedicalBriefTab } from "../matter/MedicalBriefTab";
-import { WageEvidenceTab } from "../matter/WageEvidenceTab";
-import { WageTimelineTab } from "../matter/WageTimelineTab";
-import { WageBriefTab } from "../matter/WageBriefTab";
-import { LiabilityEvidenceTab } from "../matter/LiabilityEvidenceTab";
-import { LiabilityBriefTab } from "../matter/LiabilityBriefTab";
+import { MatterWorkTab } from "../matter/MatterWorkTab";
+import { MatterDraftingTab } from "../matter/MatterDraftingTab";
 
-type Tab="overview"|"documents"|"facts"|"understanding"|"timeline"|"brief"|"medicalEvidence"|"medicalTimeline"|"medicalBrief"|"wageEvidence"|"wageTimeline"|"wageBrief"|"liabilityEvidence"|"liabilityBrief"|"damage"|"negotiation"|"workstreams"|"evidence"|"ledgers"|"tasks"|"legal"|"research";
+// UX Milestone 1: exactly four top-level entries into a matter - בית התיק /
+// מסמכים / עבודת התיק / ניסוח - per the approved information architecture. Every
+// tab that previously lived at this top level (understanding/timeline/brief,
+// medical/wage/liability evidence+timeline+brief, damage/negotiation, workstreams/
+// missing-evidence/ledgers/tasks, legal documents/authorities) still exists; it now
+// lives as a segment inside one of these four (see MatterHomeTab/MatterWorkTab/
+// MatterDraftingTab) rather than as its own tab a lawyer has to remember.
+type Tab="home"|"documents"|"work"|"drafting";
 const STAGES=["intake","evidence_collection","treatment_and_records","negotiation","litigation","closed"];
 
 function EditMatterModal({matter,onClose,onSaved}:{matter:Matter;onClose:()=>void;onSaved:()=>void}) {
@@ -67,10 +56,10 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
   const {data:matter,loading,error,reload}=useCommand(
     ()=>commands.get_matter({matterId}) as Promise<Matter>, [matterId]
   );
-  const [tab,setTab]=useState<Tab>("overview");
+  const [tab,setTab]=useState<Tab>("home");
   const [editing,setEditing]=useState(false);
   const [stageBusy,setStageBusy]=useState(false);
-  const tabs:Array<[Tab,string]>=[["overview","סקירה"],["documents","מסמכים"],["facts","עובדות ו־AI"],["understanding","הבנת התיק"],["timeline","ציר זמן"],["brief","תדריך תיק"],["medicalEvidence","ראיות רפואיות"],["medicalTimeline","ציר זמן רפואי"],["medicalBrief","תדריך רפואי"],["wageEvidence","ראיות שכר"],["wageTimeline","ציר זמן שכר"],["wageBrief","תדריך שכר"],["liabilityEvidence","ראיות אחריות"],["liabilityBrief","תדריך אחריות"],["damage","נזק"],["negotiation","מו״מ וביטוח"],["workstreams","מסלולי עבודה"],["evidence","ראיות חסרות"],["ledgers","פנקסים"],["tasks","משימות ויומן"],["legal","מסמכים משפטיים"],["research","מחקר"]];
+  const tabs:Array<[Tab,string]>=[["home","בית התיק"],["documents","מסמכים"],["work","עבודת התיק"],["drafting","ניסוח"]];
 
   const changeStage=async(stage:string)=>{
     setStageBusy(true);
@@ -97,7 +86,10 @@ export function MatterWorkspace({matterId,onBack}:{matterId:string;onBack:()=>vo
       {tabs.map(([key,label])=><button key={key} aria-current={tab===key?"page":undefined} className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
     </nav>
     <div className="tab-body">
-      {tab==="overview"?<OverviewTab matter={matter} onMatterChanged={reload}/>:tab==="documents"?<DocumentsTab matterId={matterId}/>:tab==="facts"?<FactsAITab matterId={matterId}/>:tab==="understanding"?<UnderstandingTab matterId={matterId}/>:tab==="timeline"?<MatterTimelineTab matterId={matterId}/>:tab==="brief"?<MatterBriefTab matterId={matterId}/>:tab==="medicalEvidence"?<MedicalEvidenceTab matterId={matterId}/>:tab==="medicalTimeline"?<MedicalTimelineTab matterId={matterId}/>:tab==="medicalBrief"?<MedicalBriefTab matterId={matterId}/>:tab==="wageEvidence"?<WageEvidenceTab matterId={matterId}/>:tab==="wageTimeline"?<WageTimelineTab matterId={matterId}/>:tab==="wageBrief"?<WageBriefTab matterId={matterId}/>:tab==="liabilityEvidence"?<LiabilityEvidenceTab matterId={matterId}/>:tab==="liabilityBrief"?<LiabilityBriefTab matterId={matterId}/>:tab==="damage"?<DamageTab matterId={matterId}/>:tab==="negotiation"?<NegotiationTab matterId={matterId}/>:tab==="workstreams"?<WorkstreamsTab matterId={matterId}/>:tab==="evidence"?<MissingEvidenceTab matterId={matterId}/>:tab==="ledgers"?<LedgersTab matterId={matterId}/>:tab==="tasks"?<TasksCalendarTab matterId={matterId}/>:tab==="legal"?<LegalDocumentsTab matterId={matterId}/>:<AuthoritiesTab matterId={matterId}/>}
+      {tab==="home"?<MatterHomeTab matter={matter} onMatterChanged={reload}/>
+        :tab==="documents"?<DocumentsTab matterId={matterId}/>
+        :tab==="work"?<MatterWorkTab matterId={matterId}/>
+        :<MatterDraftingTab matterId={matterId}/>}
     </div>
     {editing && <EditMatterModal matter={matter} onClose={()=>setEditing(false)} onSaved={reload}/>}
   </div>;

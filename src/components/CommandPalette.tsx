@@ -28,7 +28,7 @@ export function CommandPalette({open,onClose,onNavigate}:{open:boolean;onClose:(
   },[open,onClose]);
 
   if(!open) return null;
-  const actions:[string,string][]=[["today","היום"],["matters","פתח תיקים"],["actions","מרכז פעולה"],["search","חיפוש מסמכים"],["ai","הגדרות AI"]];
+  const actions:[string,string][]=[["today","היום"],["matters","פתח תיקים"],["actions","מרכז פעולה"],["calendar","משימות ויומן"],["search","חיפוש מסמכים"],["templates","תבניות"],["ai","הגדרות AI"],["settings","הגדרות ובריאות"]];
 
   return <div className="modal-backdrop" onMouseDown={(e: MouseEvent<HTMLDivElement>)=>{if(e.target===e.currentTarget)onClose();}}>
     <div ref={dialogRef} className="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-title">

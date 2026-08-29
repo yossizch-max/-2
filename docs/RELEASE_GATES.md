@@ -1988,5 +1988,81 @@ confirmation is deferred to the real Windows build, per this project's establish
 verification discipline for every other desktop-native feature.
 
 **Explicitly out of scope for this change** (Milestones 2-4 of the same proposal,
-not started): the AI policy gate's payload preview/cryptographic binding, the AI
-findings stream, and the "עבודת התיק"/"ניסוח" workspace consolidation.
+not started): the AI policy gate's payload preview/cryptographic binding.
+
+This commit shipped only the direct-intake backend and a drop zone bolted onto the
+pre-existing 22-tab matter workspace and 8-item global nav - narrower than what the
+approved roadmap called Milestone 1 ("מעטפת + בית תיק + קליטה, יחד"). The follow-up
+below completes it.
+
+## UX Milestone 1 (completed) — Shell/Navigation + Matter Home (2026-08-29)
+
+Same branch (`codex/ux-m1-direct-intake`), same milestone, second commit. Adds the
+"simplified shell/navigation" and "Matter Home" pieces the user's approval required
+alongside direct intake, per the locked-in thesis: TAHRIR is one legal case the
+system organizes behind the scenes, not a collection of modules - a lawyer should
+never need to know what a workstream, ledger, or extraction run is.
+
+**In-matter navigation reduced from 22 tabs to exactly 4** (`MatterWorkspace.tsx`),
+per the approved information architecture:
+- **בית התיק** (`MatterHomeTab.tsx`) - the default landing tab. Wraps the direct-
+  intake `OverviewTab` (segment "סיכום", still the default) plus הבנת התיק/ציר
+  זמן/תדריך תיק/הצעות AI as segments of one screen via the new `SegmentedSubTabs`
+  primitive, instead of five separate top-level tabs.
+- **מסמכים** (`DocumentsTab`, unchanged).
+- **עבודת התיק** (`MatterWorkTab.tsx`) - a 5-card grid (רפואי/שכר והכנסה/אחריות/נזק
+  ומו״מ/ניהול תיק). Each card shows a plain-language status dot (חסום/פעיל/הושלם/
+  טרם התחיל - never `workstreams.rs`'s raw `ALLOWED_KINDS`/`ALLOWED_STATUSES`
+  values) sourced from the unmodified `list_matter_workstreams`, and opens the
+  relevant existing tabs (evidence/timeline/brief per domain, damage/negotiation)
+  as segments. "ניהול תיק" is this change's own addition beyond the roadmap's literal
+  4-card list, added specifically to keep Workstreams/Missing Evidence/Ledgers/
+  Tasks reachable without deleting any of that functionality.
+- **ניסוח** (`MatterDraftingTab.tsx`) - consolidates the former "מסמכים משפטיים" and
+  "מחקר" tabs as segments of one screen.
+
+No backend, schema, command, or IPC contract changed in this step - every tab
+still calls the exact same commands it always did; only how a lawyer reaches them
+changed. `contract:check` stayed at 135/135 (no drift) throughout.
+
+**Global navigation reduced to 4 primary + 1 secondary** (`AppShell.tsx`): the
+primary rail now shows only היום/תיקים/משימות ויומן/חיפוש. "מרכז פעולה"/"תבניות"/
+"AI" - capabilities, not destinations, per the approved IA - are no longer primary
+rail buttons but remain fully reachable via Ctrl+K (`CommandPalette.tsx`'s action
+list now covers all eight routes, previously only 5 of 8) and via a new "כלים
+נוספים" section on `SettingsPage.tsx` (AI settings / Templates / Action Center
+buttons, wired through a new optional `onNavigate` prop threaded from `App.tsx`).
+Settings itself renders as a visually separate `.nav-secondary` entry pinned to
+the bottom of the rail, matching the roadmap's "4 ראשיים + 1 משני" model. On the
+mobile bottom-bar layout the secondary entry is hidden (still reachable via
+Ctrl+K/Settings-from-within-Settings), keeping the 4-button bar it already had.
+`CalendarPage.tsx` renamed its title/eyebrow to "משימות ויומן" - its data logic
+(aggregating committed deadlines + open tasks across active matters) was already
+correct and untouched.
+
+**Acceptance test, re-confirmed against the new structure**: open TAHRIR → create a
+matter → the matter opens directly on בית התיק → drag a PDF onto it → automatic
+local processing begins with no button press (`DirectIntakeZone`, unchanged from
+the prior commit) → the same בית התיק screen updates on its own (`onMatterChanged`
+still threaded through) → the lawyer sees what was received and can move to עבודת
+התיק/ניסוח without ever encountering the words "workstream," "ledger," "extraction
+run," or "proposal kind." As before, the backend half of this flow is covered by
+`direct_intake.rs`'s own tests; the interactive drag-and-drop half depends on the
+real Tauri webview and has not been exercised in a live app in this environment.
+
+**Files changed**: `src/components/SegmentedSubTabs.tsx` (new), `src/matter/
+MatterHomeTab.tsx` (new), `src/matter/MatterWorkTab.tsx` (new), `src/matter/
+MatterDraftingTab.tsx` (new), `src/pages/MatterWorkspace.tsx` (rewritten: 22-entry
+`Tab` union/array/render ternary → 4), `src/components/AppShell.tsx` (nav array
+reduced, secondary settings entry added), `src/components/CommandPalette.tsx`
+(action list extended to all 8 routes), `src/pages/CalendarPage.tsx` (label
+rename only), `src/pages/SettingsPage.tsx` (`onNavigate` prop + quick-links
+section), `src/App.tsx` (threads `navigate` into `SettingsPage`), `src/styles/
+app.css` (`.segmented-sub-row`/`.work-cards`/`.work-card`/`.status-dot` + nav-rail/
+nav-secondary layout rules). No migration, no Rust change, no command/IPC change.
+
+**QA**: `npm run build` (clean), `npm run contract:check` (135/135, unchanged),
+`npm run qa:static` (all checks pass, unchanged), `cargo check --locked` (clean,
+pre-existing warnings only), `cargo test --locked -- --test-threads=1` (no Rust
+source changed this step, still 314/314), `npm audit --audit-level=high` (0
+vulnerabilities), `git diff --check` (clean).

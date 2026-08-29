@@ -1,9 +1,13 @@
 import type { ReactNode } from "react";
 export type NavKey = "today"|"matters"|"actions"|"calendar"|"search"|"templates"|"ai"|"settings";
 
-const nav: Array<[NavKey,string,string]> = [
-  ["today","היום","⌂"],["matters","תיקים","▣"],["actions","מרכז פעולה","✓"],["calendar","יומן","□"],
-  ["search","חיפוש","⌕"],["templates","תבניות","▤"],["ai","AI","AI"],["settings","הגדרות","⚙"]
+// UX Milestone 1: the primary rail carries only the four destinations a lawyer
+// reaches for constantly (Today / Matters / Tasks & Calendar / Search). Action
+// Center, Templates and AI are capabilities, not destinations - they stay fully
+// reachable (Ctrl+K, or from Settings) without competing for rail space; Settings
+// itself is a secondary, visually distinct entry rather than a sixth peer button.
+const primaryNav: Array<[NavKey,string,string]> = [
+  ["today","היום","⌂"],["matters","תיקים","▣"],["calendar","משימות ויומן","□"],["search","חיפוש","⌕"],
 ];
 
 export function AppShell({active,onNavigate,onCommand,children,inspector}:{
@@ -19,9 +23,14 @@ export function AppShell({active,onNavigate,onCommand,children,inspector}:{
     <main className="workspace">{children}</main>
     <nav className="nav-rail" aria-label="ניווט ראשי">
       <div className="nav-main">
-        {nav.map(([key,label,icon]) => <button key={key} aria-current={active===key?"page":undefined} className={active===key?"active":""} onClick={()=>onNavigate(key)}>
+        {primaryNav.map(([key,label,icon]) => <button key={key} aria-current={active===key?"page":undefined} className={active===key?"active":""} onClick={()=>onNavigate(key)}>
           <span className="nav-icon">{icon}</span><span>{label}</span>
         </button>)}
+      </div>
+      <div className="nav-secondary">
+        <button aria-current={active==="settings"?"page":undefined} className={active==="settings"?"active":""} onClick={()=>onNavigate("settings")}>
+          <span className="nav-icon">⚙</span><span>הגדרות</span>
+        </button>
       </div>
     </nav>
   </div>;

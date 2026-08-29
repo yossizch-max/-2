@@ -20,7 +20,7 @@ async function loadCalendar(){
 export function CalendarPage() {
   const {data,loading,error}=useCommand(loadCalendar,[]);
   return <div className="page">
-    <div className="page-head"><div><span className="eyebrow">CALENDAR</span><h1>יומן ומשימות</h1><p>מועד משפטי הוא אובייקט עם מקור וכלל, לא תא תאריך.</p></div></div>
+    <div className="page-head"><div><span className="eyebrow">TASKS &amp; CALENDAR</span><h1>משימות ויומן</h1><p>מועד משפטי הוא אובייקט עם מקור וכלל, לא תא תאריך.</p></div></div>
     {loading && <p className="quiet">טוען...</p>}
     {error && <p className="quiet">שגיאה: {error}</p>}
     <section className="workspace-card"><h2>מועדים מחייבים</h2>

@@ -7,7 +7,7 @@ import type { LegalRuleset } from "../types";
 type Suggestion={id:string;pathDisplay:string;suggestedTitle:string;fileCount:number;createdAt:string};
 type ScanRun={id:string;rootPath:string;status:string;startedAt:string;finishedAt?:string|null;discoveredCount:number;hashedCount:number;errorCount:number};
 
-export function SettingsPage() {
+export function SettingsPage({onNavigate}:{onNavigate?:(target:string)=>void}) {
   const [showLegalRules,setShowLegalRules]=useState(false);
   const {data:rulesets}=useCommand(
     ()=>commands.list_legal_rulesets({}) as Promise<LegalRuleset[]>, []
@@ -70,6 +70,16 @@ export function SettingsPage() {
 
   return <div className="page">
     <div className="page-head"><div><span className="eyebrow">SYSTEM</span><h1>הגדרות ובריאות</h1><p>הצפנה, שחזור, סריקה, OCR, Rulesets ו־AI.</p></div></div>
+
+    {onNavigate && <section className="workspace-card">
+      <h2>כלים נוספים</h2>
+      <p className="quiet">AI ותבניות הן יכולות שנפתחות מכאן או מ־Ctrl+K, לא יעדי ניווט קבועים.</p>
+      <div className="header-actions">
+        <button className="btn secondary" onClick={()=>onNavigate("ai")}>הגדרות AI</button>
+        <button className="btn secondary" onClick={()=>onNavigate("templates")}>תבניות</button>
+        <button className="btn secondary" onClick={()=>onNavigate("actions")}>מרכז פעולה</button>
+      </div>
+    </section>}
 
     <section className="workspace-card">
       <div className="card-head"><div><span className="eyebrow">GOVERNANCE</span><h2>כללים משפטיים</h2></div>
