@@ -1,20 +1,15 @@
 import { commands } from "../lib/ipc";
 import { useCommand } from "../lib/hooks";
-import { REQUIREMENT_KEYS, WORKSTREAM_KINDS } from "../types";
+import { loadMatterActionPlan } from "../lib/actionCenter";
+import { ActionCandidateRow } from "../components/ActionCandidateRow";
 
 type HealthFactor = {
   code:string; severity:"critical"|"high"|"attention"; count:number; penalty:number;
 };
 
-type NextBestAction = {
-  code:string; priority:"critical"|"high"|"normal";
-  targetId?:string|null; dueAt?:string|null; label?:string|null; secondaryLabel?:string|null;
-  requirementKey?:string|null; workstreamKind?:string|null;
-};
-
 type CaseHealth = {
   matterId:string; score:number; band:"good"|"attention"|"risk"; asOf:string;
-  factors:HealthFactor[]; nextBestAction:NextBestAction;
+  factors:HealthFactor[];
 };
 
 const FACTOR_LABELS:Record<string,string> = {
@@ -37,65 +32,24 @@ const FACTOR_LABELS:Record<string,string> = {
   pending_ai_review:"הצעות AI שממתינות לבדיקת עורך דין",
 };
 
-function requirementLabel(key?:string|null){
-  return REQUIREMENT_KEYS.find(x=>x.value===key)?.label ?? key ?? "ראיה";
-}
-function workstreamLabel(kind?:string|null){
-  return WORKSTREAM_KINDS.find(x=>x.value===kind)?.label ?? kind ?? "מסלול עבודה";
-}
-
-function actionText(action:NextBestAction):{title:string;detail:string}{
-  switch(action.code){
-    case "resolve_overdue_deadline":
-      return {title:`טפל מיד במועד: ${action.label??"מועד מחייב"}`, detail:action.dueAt?`המועד היה ${action.dueAt}`:"מועד מחייב שעבר"};
-    case "prepare_upcoming_deadline":
-      return {title:`הכן את הפעולה למועד: ${action.label??"מועד מחייב"}`, detail:action.dueAt?`יעד: ${action.dueAt}`:"מועד מחייב קרוב"};
-    case "review_fact_conflict":
-      return {title:"בדוק סתירה פתוחה בין עובדות מאומתות", detail:"נדרשת הכרעה אנושית לפני שימוש בעובדות הסותרות"};
-    case "complete_overdue_task":
-      return {title:action.label??"בצע משימה באיחור", detail:action.dueAt?`יעד שעבר: ${action.dueAt}`:"משימה פתוחה באיחור"};
-    case "unblock_workstream":
-      return {title:`פתח את החסימה במסלול ${workstreamLabel(action.workstreamKind)}`, detail:"המסלול מסומן כחסום"};
-    case "refresh_required_evidence":
-      return {title:`רענן: ${requirementLabel(action.requirementKey)}`, detail:"נדרש לפי מדיניות המשרד ומסומן כמיושן"};
-    case "collect_required_evidence":
-      return {title:`השג: ${requirementLabel(action.requirementKey)}`, detail:"חסר לפי מדיניות המשרד"};
-    case "follow_up_negotiation":
-      return {title:`בצע מעקב מו״מ מול ${action.label??"המבטחת"}`, detail:`מעקב תפעולי: ${action.secondaryLabel??"פריט מו״מ"}${action.dueAt?` · יעד: ${action.dueAt}`:""}`};
-    case "follow_up_waiting":
-      return {title:`בצע מעקב מול ${action.label??"הגורם החיצוני"}`, detail:`ממתינים ל${action.secondaryLabel??"פריט"}${action.dueAt?` · מעקב: ${action.dueAt}`:""}`};
-    case "refresh_stale_evidence":
-      return {title:"רענן נתונים מאומתים שהתיישנו", detail:"יש עובדה או רשומת פנקס מאומתת שסומנה stale"};
-    case "repair_document_extraction":
-      return {title:"טפל במסמכים שחילוץ הטקסט שלהם דורש תשומת לב", detail:"יש מסמך blocked או stale"};
-    case "review_ai_proposals":
-      return {title:"בדוק את תור הצעות ה־AI", detail:"ההצעות נשמרו כטיוטות ואינן מאושרות אוטומטית"};
-    case "complete_open_task":
-      return {title:action.label??"בצע את המשימה הפתוחה הבאה", detail:action.dueAt?`יעד: ${action.dueAt}`:"משימה פתוחה"};
-    case "follow_up_required_evidence":
-      return {title:`עקוב אחרי: ${requirementLabel(action.requirementKey)}`, detail:"הראיה כבר התבקשה וטרם נאספה"};
-    case "review_waiting_item":
-      return {title:`בדוק סטטוס מול ${action.label??"הגורם החיצוני"}`, detail:`ממתינים ל${action.secondaryLabel??"פריט"}`};
-    case "start_workstream":
-      return {title:`התחל את מסלול ${workstreamLabel(action.workstreamKind)}`, detail:"המסלול רלוונטי לתיק אך טרם התחיל"};
-    default:
-      return {title:"קבע את הפעולה היזומה הבאה בתיק", detail:"לא נמצא כרגע אות תפעולי דחוף יותר"};
-  }
-}
-
 function bandLabel(band:CaseHealth["band"]){
   if(band==="good")return "תקין תפעולית";
   if(band==="attention")return "דורש תשומת לב";
   return "סיכון תפעולי";
 }
 
+// Phase C, milestone C5: the "next best action" here is no longer computed
+// independently by this panel - it is the same Matter Action Plan's primary
+// action that Today and the Action Center use, from action_engine.rs.
 export function CaseHealthPanel({matterId}:{matterId:string}){
   const {data,loading,error}=useCommand(
     ()=>commands.get_case_health({matterId}) as Promise<CaseHealth>, [matterId]
   );
+  const {data:plan,loading:planLoading,error:planError,reload:reloadPlan}=useCommand(
+    ()=>loadMatterActionPlan(matterId), [matterId]
+  );
   if(loading)return <section className="workspace-card"><h2>בריאות תיק</h2><p className="quiet">מחשב מצב תפעולי...</p></section>;
   if(error||!data)return <section className="workspace-card"><h2>בריאות תיק</h2><p className="quiet">לא ניתן לחשב כרגע: {error??"שגיאה לא ידועה"}</p></section>;
-  const next=actionText(data.nextBestAction);
   return <div className="grid-2">
     <section className="workspace-card">
       <div className="card-head">
@@ -112,7 +66,14 @@ export function CaseHealthPanel({matterId}:{matterId:string}){
     </section>
     <section className="workspace-card">
       <span className="eyebrow">NEXT BEST ACTION</span><h2>הפעולה הבאה</h2>
-      <div className="next-action"><strong>{next.title}</strong><p>{next.detail}</p></div>
+      {planLoading && <p className="quiet">מחשב...</p>}
+      {planError && <p className="quiet">לא ניתן לחשב כרגע: {planError}</p>}
+      {plan && !plan.primaryAction && <p className="quiet">לא נמצא כרגע אות תפעולי דחוף.</p>}
+      {plan?.primaryAction && <ActionCandidateRow candidate={plan.primaryAction} onChanged={reloadPlan}/>}
+      {plan && plan.alternatives.length>0 && <div style={{marginTop:10}}>
+        <span className="eyebrow">חלופות</span>
+        {plan.alternatives.map(a=><ActionCandidateRow key={a.fingerprint} candidate={a} onChanged={reloadPlan}/>)}
+      </div>}
       <p className="quiet">העדיפות נגזרת רק ממצב התיק הקיים; TAHRIR אינה מבצעת את הפעולה או מאשרת אותה בעצמה.</p>
     </section>
   </div>;

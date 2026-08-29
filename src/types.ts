@@ -63,17 +63,6 @@ export type ExtractionRun = {
   finishedAt?: string | null;
 };
 
-export type ActionItem = {
-  id: string;
-  matterId?: string;
-  matterTitle?: string;
-  kind: "critical" | "review" | "waiting" | "resume" | "new";
-  title: string;
-  subtitle: string;
-  actionLabel: string;
-  dueAt?: string | null;
-};
-
 export type Deadline = {
   id: string; matterId: string; action: string; dueAt: string;
   state: "draft" | "committed" | "superseded" | "completed";
@@ -377,6 +366,45 @@ export type LiabilityMatrixRow = {
 };
 
 export type LiabilityMatrix = { matterId: string; regime: LiabilityRegime; rows: LiabilityMatrixRow[] };
+
+// Phase C, milestone C5: Action Orchestrator / Matter Agent Core. One backend
+// source of truth for "what should the lawyer deal with next" - never an
+// AI-computed score, never something the frontend re-ranks on its own.
+export type ActionCandidate = {
+  actionCode: string;
+  matterId: string;
+  matterTitle: string;
+  title: string;
+  reason: string;
+  sourceType: string;
+  sourceId?: string | null;
+  targetId?: string | null;
+  workstreamKind?: string | null;
+  requirementKey?: string | null;
+  dueAt?: string | null;
+  urgency: string;
+  blocking: boolean;
+  rankCategory: number;
+  humanActionOptions: string[];
+  fingerprint: string;
+  recommendationState: "active" | "acknowledged" | "snoozed" | "dismissed" | "converted_to_task";
+  snoozedUntil?: string | null;
+};
+
+export type UrgencyCount = { urgency: string; count: number };
+
+export type ActionPlan = {
+  matterId: string;
+  matterTitle: string;
+  asOf: string;
+  primaryAction: ActionCandidate | null;
+  alternatives: ActionCandidate[];
+  candidates: ActionCandidate[];
+  blockers: string[];
+  countsByUrgency: UrgencyCount[];
+};
+
+export type ActionCenterEntry = { matterId: string; matterTitle: string; plan: ActionPlan };
 
 export type AiProposal = {
   id: string; proposalKind: string;

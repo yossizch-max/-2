@@ -1908,3 +1908,134 @@ Per-step outcome:
 Gate E's packaged installer and real scanned documents, doing steps 4-6, 9-11, and
 confirming 7/19/20's real (non-`.txt`) paths. Steps 16/17 no longer block this — both
 are implemented and covered by the automated test.
+
+## Phase C, milestone C5 — Action Orchestrator / Matter Agent Core (2026-08-29)
+
+Built on `codex/c5-action-orchestrator`, branched from the exact green C4-merge-to-main
+commit `2323e1d44f5a1d4b1920371309e83a872b14cee6` (confirmed green on Windows Release
+Gate run #53). **Not an autonomous agent** - it answers "what should the lawyer deal
+with next, why now, based on what, and what are the alternatives?" over TAHRIR's
+existing operational state; it never autonomously executes a substantive action.
+
+**Architecture reconnaissance findings (both confirmed by direct code reading before
+any C5 code was written):**
+1. Two independent, disagreeing prioritization systems existed: `case_health.rs`'s
+   backend `NextBestAction` (a single top pick via an if-let chain over deadlines/
+   tasks/workstreams/requirements/waiting_for/stale evidence/pending AI review) and
+   `src/lib/actionCenter.ts` (an independent per-matter re-fetch of deadlines/tasks/
+   waiting_for with its own hardcoded `{critical,review,waiting,resume,new}` sort) -
+   zero shared code between them, confirmed by reading both in full.
+2. `legal_deadlines` genuinely had no "satisfied" transition anywhere in production
+   code - only `save_manual_deadline` (draft), `commit_deadline` (draft→committed),
+   and `supersede_deadline` (→superseded, with a transactional draft replacement).
+   `'completed'` appeared only as an untested raw-SQL value in one `case_health.rs`
+   test fixture, never reachable via any real command.
+
+**New module `action_engine.rs`** is the single backend source of truth for the
+ranked candidate list. It does **not** modify `case_health.rs` (its score/factor
+computation answers a different question and its 40+ existing tests were not worth
+destabilizing for a milestone that doesn't need to touch them) - it is an independent,
+fresh generalization of the same signal-gathering shape, extended to also cover C3/C4
+approved signals (`medical_gap_signal`, `medical_missing_evidence_signal`,
+`medical_contradiction`, `wage_gap_signal`, `liability_issue`,
+`liability_contradiction`) that `case_health.rs` never looked at.
+
+**Migration `009_action_orchestration_v20.sql` (v19→v20) - the first migration since
+001-008 that is actually justified.** Two genuinely new pieces of persistent domain
+state, per the same discipline established in `003_matter_profile_v14.sql`
+("`ALTER TABLE ADD COLUMN` is not idempotent in SQLite, so no existing table is
+altered"):
+- `legal_deadline_satisfaction` (new side table, one row per satisfied deadline:
+  `deadline_id`, `matter_id`, `satisfied_at`, `satisfaction_note`) instead of ALTERing
+  `legal_deadlines` - confirmed empirically: an initial draft used
+  `ALTER TABLE legal_deadlines ADD COLUMN satisfied_at TEXT` and failed
+  `db::tests::migration_is_idempotent_across_repeated_app_launches` with
+  `"duplicate column name: satisfied_at"` on the second `execute_batch` pass, exactly
+  the failure mode 003's own comment predicted; switched to a side table and the
+  idempotency test passed. `legal_deadlines.state` moving to `'satisfied'` itself
+  needed no schema change - the column has never had a DB-level `CHECK` (Rust-
+  validated only, same as every other state transition on this table).
+- `action_recommendations` (fingerprint-keyed recommendation lifecycle: `active`/
+  `acknowledged`/`snoozed`/`dismissed`/`converted_to_task`, `UNIQUE(matter_id,
+  fingerprint)`, delete-guarded like every other matter-scoped table in this schema).
+  Action *candidates* are computed fresh on every read from existing tables, never
+  duplicated into an agent-memory store - only a human's *response* to a candidate is
+  new persistent state.
+
+Verified via a direct Python `sqlite3` check: applying migrations 001-009 three times
+in sequence produces `user_version=20`, zero `PRAGMA foreign_key_check` issues, and
+both new tables present after every pass.
+
+**Deterministic ranking** (`RANK_OVERDUE_DEADLINE`=1 through `RANK_BACKLOG`=10 in
+`action_engine.rs`) - a fully explicit, testable lexicographic hierarchy, never a
+blended score or model probability:
+1. overdue committed legal deadline, 2. imminent committed legal deadline (≤14 days),
+3. overdue task, 4. blocking conflict (blocked workstream / unresolved fact conflict /
+approved C3-C4 contradiction), 5. evidence blocking progress (required missing/stale
+evidence / approved C3-C4 gap-evidence signal), 6. overdue negotiation/waiting
+follow-up, 7. integrity issue (stale verified evidence / extraction failure),
+8. pending lawyer review (pending AI proposals / draft deadlines / ledger drafts /
+approved liability issues), 9. open task, 10. backlog (recommended evidence / not-
+started workstreams / requested-but-not-yet-received evidence).
+
+**Fingerprinting**: `sha256(matter_id|action_code|target_key)` - the same real-world
+condition (a specific deadline/task/workstream-kind/requirement-key id) always hashes
+to the same fingerprint; superseding a deadline creates a new row with a new id, so
+its candidate gets a genuinely new fingerprint, never hidden by a stale dismissal of
+the old one (asserted directly by
+`superseding_a_deadline_produces_a_new_fingerprint_not_hidden_by_old_dismissal`).
+
+**Critical-action safety**: `set_recommendation_state` looks up the live candidate for
+the fingerprint and rejects a `dismissed` transition outright when its `action_code`
+is `resolve_overdue_deadline`/`prepare_upcoming_deadline` - a committed legal deadline
+can only be marked satisfied, superseded, or display-snoozed (which never touches
+`legal_deadlines` itself), never permanently hidden by a generic dismiss.
+
+**Human-action boundary**: `satisfy_deadline` is the only path that can set
+`legal_deadlines.state='satisfied'`, reachable only from `'committed'`. `convert_to_
+task` creates exactly one real `tasks` row and records the backlink via
+`action_recommendations.converted_task_id`, so a second click against the same
+fingerprint returns the same task id rather than creating a duplicate. Merely
+computing a plan or the Action Center never writes anything - asserted directly by
+`no_domain_mutation_happens_merely_from_computing_a_plan` and `no_task_or_deadline_
+is_ever_auto_created_by_reading_the_action_center`.
+
+**No AI Advisor in this milestone.** `action_engine.rs` makes zero capability calls
+anywhere - the deterministic engine works completely with AI disabled, which is the
+spec's hard requirement. An optional AI Advisor producing additional
+`strategic_action_suggestion` items (pending lawyer review, never outranking a
+deterministic critical obligation, never auto-creating a task or deadline) through the
+existing `ai.rs` bundle-capability/no-domain-write pattern is left for a future
+milestone rather than bolted on here without its own focused design pass.
+
+**Backend commands**: `get_matter_action_plan`, `get_action_center`,
+`set_action_recommendation_state`, `convert_action_to_task`, `mark_deadline_
+satisfied` - all defined directly in `action_engine.rs` (same pattern as
+`case_health::get_case_health`), registered in `lib.rs`.
+
+**Frontend unification**: `src/lib/actionCenter.ts` is now a thin pass-through over
+`get_action_center`/`get_matter_action_plan` - it no longer fetches deadlines/tasks/
+waiting_for itself or computes any ordering. `TodayPage`/`ActionCenterPage`/
+`CaseHealthPanel` all render the same `ActionCandidateRow` component over the same
+backend-ranked `ActionCandidate` list; `TodayPage`'s day-bucketing is presentation
+grouping only (which section a candidate is *shown* in), never a re-rank. Hebrew
+`title`/`reason` strings are generated once in `action_engine.rs` and rendered as-is,
+eliminating the large per-action-code translation `switch` that previously lived only
+in `CaseHealthPanel.tsx`.
+
+**Tests**: 50 new tests in `action_engine.rs` (48 run locally/CI-Linux; the 2 close/
+reopen persistence tests are `#[cfg(target_os = "windows")]`-gated, same established
+pattern as every other reopen test in this codebase since RC0, verified on the real
+Windows CI runner) covering deadline satisfaction lifecycle, the full ranking
+hierarchy, plan/tie-break determinism, fingerprint stability, dismiss/snooze
+semantics, task conversion, cross-surface consistency (Action Center ordering vs. a
+matter's own plan; Case Health and Action Plan never disagree on an overdue deadline's
+presence), C3/C4/historical-date integration, close/reopen persistence, and integrity
+rejection (malformed state, cross-matter mutation, invalid fingerprint, critical-
+recommendation dismiss, no automatic domain mutation). Total backend suite: 353 tests
+locally green (355 including the two Windows-gated reopen tests).
+
+**QA**: `npm ci`/`npm audit --audit-level=high` (0 vulnerabilities)/
+`npm run contract:check` (138/138)/`npm run qa:static` (all checks pass)/
+`npm run build`/`cargo check --locked`/`cargo test --locked -- --test-threads=1`
+(353/353)/`git diff --check` (clean) all executed and green before commit.

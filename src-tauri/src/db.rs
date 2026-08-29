@@ -25,6 +25,7 @@ impl DbState {
         conn.execute_batch(include_str!("../migrations/006_matter_ledgers_v17.sql"))?;
         conn.execute_batch(include_str!("../migrations/007_retrieval_context_v18.sql"))?;
         conn.execute_batch(include_str!("../migrations/008_negotiation_insurance_v19.sql"))?;
+        conn.execute_batch(include_str!("../migrations/009_action_orchestration_v20.sql"))?;
         Ok(Self { path, writer: Arc::new(Mutex::new(conn)), key: Arc::new(key) })
     }
 
@@ -69,6 +70,7 @@ mod tests {
     const MIGRATION_006: &str = include_str!("../migrations/006_matter_ledgers_v17.sql");
     const MIGRATION_007: &str = include_str!("../migrations/007_retrieval_context_v18.sql");
     const MIGRATION_008: &str = include_str!("../migrations/008_negotiation_insurance_v19.sql");
+    const MIGRATION_009: &str = include_str!("../migrations/009_action_orchestration_v20.sql");
 
     /// Phase B, milestone B5a step 0: FTS5 is not a Cargo feature on rusqlite - the
     /// bundled SQLCipher build this project already links (`bundled-sqlcipher-
@@ -102,6 +104,7 @@ mod tests {
         conn.execute_batch(MIGRATION_006).unwrap();
         conn.execute_batch(MIGRATION_007).unwrap();
         conn.execute_batch(MIGRATION_008).unwrap();
+        conn.execute_batch(MIGRATION_009).unwrap();
         // A real app re-runs the full schema on every launch against an
         // already-initialized database; every statement must tolerate that.
         conn.execute_batch(MIGRATION_001).unwrap();
@@ -112,6 +115,7 @@ mod tests {
         conn.execute_batch(MIGRATION_006).unwrap();
         conn.execute_batch(MIGRATION_007).unwrap();
         conn.execute_batch(MIGRATION_008).unwrap();
+        conn.execute_batch(MIGRATION_009).unwrap();
         // Counted excluding document_pages_fts and its own FTS5-internal shadow
         // tables (_data/_idx/_docsize/_config/_content) - their exact number is an
         // FTS5 implementation detail, not something to hardcode a guess for here;
@@ -121,9 +125,65 @@ mod tests {
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'document_pages_fts%'",
             [], |r| r.get(0),
         ).unwrap();
-        assert_eq!(table_count, 57, "the 57 real application tables must be unaffected by FTS5's own shadow tables");
+        assert_eq!(table_count, 59, "the 59 real application tables must be unaffected by FTS5's own shadow tables");
         let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(user_version, 19);
+        assert_eq!(user_version, 20);
+    }
+
+    #[test]
+    fn a_v19_database_upgrades_cleanly_to_v20_without_touching_matters_or_deadlines() {
+        // simulates an install that already has 001-008 applied (with a real
+        // committed deadline) before the app is upgraded to a build that also ships
+        // 009 - migration 009 adds no columns to legal_deadlines (it is not ALTERed
+        // at all; satisfaction is a new side table), so every existing row must
+        // survive completely untouched.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_001).unwrap();
+        conn.execute_batch(MIGRATION_002).unwrap();
+        conn.execute_batch(MIGRATION_003).unwrap();
+        conn.execute_batch(MIGRATION_004).unwrap();
+        conn.execute_batch(MIGRATION_005).unwrap();
+        conn.execute_batch(MIGRATION_006).unwrap();
+        conn.execute_batch(MIGRATION_007).unwrap();
+        conn.execute_batch(MIGRATION_008).unwrap();
+        let matter_id = "m1";
+        conn.execute(
+            "INSERT INTO matters(id,title,matter_type,status,workflow_stage,created_at,updated_at)
+             VALUES(?1,'existing matter','traffic_accident','active','intake','x','x')",
+            [matter_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO legal_deadlines(id,matter_id,action,due_at,state,trigger_source_ref,committed_at,created_at)
+             VALUES('d1',?1,'file response','2026-01-01','committed','manual','2025-12-01','2025-12-01')",
+            [matter_id],
+        ).unwrap();
+        conn.execute_batch(MIGRATION_009).unwrap();
+        let recs_table_exists: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_recommendations'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(recs_table_exists, 1);
+        let satisfaction_table_exists: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='legal_deadline_satisfaction'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(satisfaction_table_exists, 1);
+        let (state, due_at, committed_at): (String, String, String) = conn.query_row(
+            "SELECT state,due_at,committed_at FROM legal_deadlines WHERE id='d1'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(state, "committed");
+        assert_eq!(due_at, "2026-01-01");
+        assert_eq!(committed_at, "2025-12-01");
+        let satisfaction_rows: i64 = conn.query_row(
+            "SELECT count(*) FROM legal_deadline_satisfaction WHERE deadline_id='d1'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(satisfaction_rows, 0);
+        let matter_survived: String = conn.query_row(
+            "SELECT title FROM matters WHERE id=?1", [matter_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(matter_survived, "existing matter");
     }
 
     #[test]

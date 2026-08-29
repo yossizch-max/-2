@@ -1948,7 +1948,7 @@ mod tests {
                 assert_eq!(count, 1, "missing B7 trigger {trigger}");
             }
             let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-            assert_eq!(user_version, 19);
+            assert_eq!(user_version, 20);
             Ok(())
         })
         .unwrap();

@@ -1,3 +1,4 @@
+mod action_engine;
 mod ai;
 mod ai_review;
 mod authorities;
@@ -195,7 +196,12 @@ pub fn run() {
             commands::get_wage_comparison,
             commands::get_wage_brief,
             commands::get_liability_brief,
-            commands::get_liability_matrix
+            commands::get_liability_matrix,
+            action_engine::get_matter_action_plan,
+            action_engine::get_action_center,
+            action_engine::set_action_recommendation_state,
+            action_engine::convert_action_to_task,
+            action_engine::mark_deadline_satisfied
         ])
         .run(tauri::generate_context!())
         .expect("error while running TAHRIR");
