@@ -112,7 +112,7 @@ export type AiStructuredProposal = {
   periodStart?: string | null;
   periodEnd?: string | null;
   employerName?: string | null;
-  grossAmountCents?: number;
+  grossAmountCents?: number | null;
   claimBasis?: string | null;
   liablePartyName?: string | null;
   description?: string;
@@ -189,6 +189,61 @@ export type AiStructuredProposal = {
   nextEncounterRef?: string | null;
   signalReason?: string;
   missingType?: string;
+  // Phase C, milestone C4: Wage/Economic + Liability Evidence Intelligence item fields
+  employer?: string;
+  role?: string | null;
+  employmentStatus?: string;
+  amountBasis?: string;
+  incomeType?: string;
+  employerOrSource?: string | null;
+  month?: string;
+  netAmountCents?: number | null;
+  components?: string | null;
+  sourceType?: string;
+  year?: string;
+  statedReason?: string | null;
+  documentedBy?: string | null;
+  issuingSource?: string;
+  changeType?: string;
+  paymentType?: string;
+  payer?: string | null;
+  gapType?: string;
+  witness?: string;
+  issue?: string | null;
+  evidenceType?: string;
+  reportType?: string;
+  factualContent?: string;
+  vehicle?: string | null;
+  damageLocation?: string | null;
+  documentedCondition?: string;
+  mediaType?: string | null;
+  expert?: string;
+  position?: string;
+  detail?: string | null;
+  insurer?: string | null;
+  findingType?: string;
+  court?: string | null;
+  // Phase C, milestone C4 v2: regime-aware expansion - additional item fields
+  periodPrecision?: string | null;
+  overtimeCents?: number | null;
+  bonusCents?: number | null;
+  pensionContributionCents?: number | null;
+  monthsWorked?: number | null;
+  jobDescription?: string | null;
+  hoursText?: string | null;
+  statedSalaryText?: string | null;
+  terminationReasonStated?: string | null;
+  documentType?: string;
+  taxYear?: string;
+  revenueCents?: number | null;
+  expensesCents?: number | null;
+  profitCents?: number | null;
+  employerContributionCents?: number | null;
+  employeeContributionCents?: number | null;
+  pensionComponent?: string | null;
+  trainingFund?: string | null;
+  unitsText?: string | null;
+  incapacityDegreeText?: string | null;
 };
 
 // Phase C, milestone C2: Matter Understanding Core
@@ -249,6 +304,79 @@ export type MedicalBrief = {
   chronology: MedicalTimelineItem[];
   pendingMedicalReviewCount: number;
 };
+
+// Phase C, milestone C4, Part A: Wage/Economic Evidence Intelligence
+export type WageTimelineItem = {
+  id: string; kind: string; businessDate?: string | null;
+  title: string; description?: string | null; verified: boolean; insertedAt: string;
+};
+
+export type WageComparisonView = {
+  incidentDate?: string | null;
+  documentedBefore: WageTimelineItem[];
+  documentedAfter: WageTimelineItem[];
+  undated: WageTimelineItem[];
+};
+
+export type WageBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+export type WageBrief = {
+  matterId: string;
+  employment: WageBriefItem[];
+  income: WageBriefItem[];
+  payslips: WageBriefItem[];
+  annualIncome: WageBriefItem[];
+  employerConfirmations: WageBriefItem[];
+  selfEmployedIncome: WageBriefItem[];
+  pensionContributions: WageBriefItem[];
+  absences: WageBriefItem[];
+  sickLeave: WageBriefItem[];
+  workLimitations: WageBriefItem[];
+  employmentChanges: WageBriefItem[];
+  benefitPayments: WageBriefItem[];
+  missingEvidenceSignals: WageBriefItem[];
+  chronology: WageTimelineItem[];
+  pendingWageReviewCount: number;
+};
+
+// Phase C, milestone C4, Part B: Liability Evidence Intelligence
+export type LiabilityBriefItem = { id: string; status: string; pending: boolean; structured: AiStructuredProposal };
+
+// The liability regime a matter's evidence is organized under - reused from
+// `matters.matter_type` via `liability::liability_regime_for_matter`, never a
+// separate classification model. `ftl_road_accident` = Israel's Compensation for
+// Road Accident Victims Law (largely fault-independent); `ordinary_negligence` =
+// general tort principles; `unknown_requires_review` = not yet determinable from
+// the matter's own type, never guessed.
+export type LiabilityRegime = "ftl_road_accident" | "ordinary_negligence" | "unknown_requires_review";
+
+export type LiabilityBrief = {
+  matterId: string;
+  regime: LiabilityRegime;
+  partyVersions: LiabilityBriefItem[];
+  witnesses: LiabilityBriefItem[];
+  sceneEvidence: LiabilityBriefItem[];
+  policeEvidence: LiabilityBriefItem[];
+  vehicleDamage: LiabilityBriefItem[];
+  photoVideoEvidence: LiabilityBriefItem[];
+  expertOpinions: LiabilityBriefItem[];
+  admissions: LiabilityBriefItem[];
+  insurerPositions: LiabilityBriefItem[];
+  courtFindings: LiabilityBriefItem[];
+  liabilityIssues: LiabilityBriefItem[];
+  contradictions: LiabilityBriefItem[];
+  pendingLiabilityReviewCount: number;
+};
+
+export type LiabilityMatrixRow = {
+  issue: string | null;
+  versions: LiabilityBriefItem[];
+  witnesses: LiabilityBriefItem[];
+  objectiveEvidence: LiabilityBriefItem[];
+  unresolvedConflict: boolean;
+};
+
+export type LiabilityMatrix = { matterId: string; regime: LiabilityRegime; rows: LiabilityMatrixRow[] };
 
 export type AiProposal = {
   id: string; proposalKind: string;

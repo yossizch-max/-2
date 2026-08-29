@@ -1,6 +1,6 @@
 use crate::{
-    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, matter_profile, medical, models, requirements, scanner, search, security,
-    understanding, workstreams,
+    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, liability, matter_profile, medical, models, requirements, scanner, search, security,
+    understanding, wage, workstreams,
     error::{AppError,AppResult}, AppState
 };
 use chrono::Utc;
@@ -1169,6 +1169,47 @@ pub fn get_prior_vs_post_incident(state: State<'_, AppState>, payload: Value) ->
 pub fn get_medical_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     medical::build_medical_brief(&state.db,matter_id)
+}
+
+/// Phase C, milestone C4, Part A: read-only Wage Timeline - see `wage.rs`.
+#[tauri::command]
+pub fn get_wage_timeline(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    Ok(serde_json::to_value(wage::build_wage_timeline(&state.db,matter_id)?)?)
+}
+
+/// Phase C, milestone C4, Part A: neutral pre/post-incident Wage Comparison - see
+/// `wage.rs`. `filter` is an optional free-text substring match, never a
+/// wage-loss calculation.
+#[tauri::command]
+pub fn get_wage_comparison(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let filter=payload.get("filter").and_then(Value::as_str);
+    wage::build_wage_comparison(&state.db,matter_id,filter)
+}
+
+/// Phase C, milestone C4, Part A: generated Wage Brief over approved/verified
+/// state - see `wage.rs`.
+#[tauri::command]
+pub fn get_wage_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    wage::build_wage_brief(&state.db,matter_id)
+}
+
+/// Phase C, milestone C4, Part B: generated Liability Brief over approved/verified
+/// state - see `liability.rs`.
+#[tauri::command]
+pub fn get_liability_brief(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    liability::build_liability_brief(&state.db,matter_id)
+}
+
+/// Phase C, milestone C4, Part B: neutral Liability Evidence Matrix - see
+/// `liability.rs`. Never outputs a winner or a fault score.
+#[tauri::command]
+pub fn get_liability_matrix(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    liability::build_liability_matrix(&state.db,matter_id)
 }
 
 #[tauri::command]
