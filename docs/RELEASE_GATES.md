@@ -1908,3 +1908,85 @@ Per-step outcome:
 Gate E's packaged installer and real scanned documents, doing steps 4-6, 9-11, and
 confirming 7/19/20's real (non-`.txt`) paths. Steps 16/17 no longer block this — both
 are implemented and covered by the automated test.
+
+## UX Milestone 1 — Direct Document Intake (2026-08-29)
+
+Built on `codex/ux-m1-direct-intake`, branched from `main` at the C4 merge commit
+`2323e1d44f5a1d4b1920371309e83a872b14cee6` (not from the unmerged `codex/c5-action-
+orchestrator` - this UX track is independent of Phase C's own numbering). Implements
+the first of a four-milestone UX redesign proposal (navigation/workflow document,
+not committed to this repo) approved with four specific engineering requirements;
+this change delivers exactly Milestone 1 and nothing from Milestones 2-4.
+
+**Problem, confirmed by reading the real code before writing any:** the existing
+`scanner.rs`/`matter_folder_bindings` model requires a lawyer to bind a matter to an
+Office Root folder before any document is indexed - a genuine prerequisite for that
+workflow, but not something normal document intake should depend on. There was no
+canonical "drag one file onto a matter" path at all.
+
+**New module `direct_intake.rs`** - the canonical direct-import path, additive only:
+- `copy_verified`/`verify_copy`: hashes the source file at its original location,
+  copies it into a new `AppState.documents_root/<matter_id>/<uuid>-<filename>` path
+  (a fresh field, independent of `office_root` - the scanner stays fully optional),
+  re-hashes the copy, and deletes it immediately on any mismatch rather than ever
+  registering unverified bytes. `verify_copy` is split out specifically so this
+  comparison-and-cleanup contract is unit-testable without forcing a real filesystem
+  race.
+- `import_one`: registers the verified copy using the *exact* existing `documents`/
+  `document_versions`/`file_occurrences` model the scanner itself writes into - a
+  `file_occurrence` row pointing at the managed copy (never the original Downloads/
+  Desktop path), with `document_id`/`document_version_id` set immediately (no
+  scan-then-hash two-step).
+- `import_and_process`: imports every given path (one file's failure never blocks
+  the rest of the batch), then calls the *unmodified* `intake::process_matter_
+  documents` - which already discovers any document version behind a live
+  `file_occurrence` regardless of how it got there, so the same extraction/OCR/
+  classification pipeline a folder scan uses runs automatically, with zero
+  duplicated pipeline logic.
+
+**New commands**: `choose_document_files` (native multi-file picker, the "בחר
+קבצים" fallback) and `import_document_files` (`matterId`, `paths[]` → the same
+`DocumentIntakeSummary` shape `process_matter_documents` already returns, extended
+with `imported`/`importErrors`).
+
+**Frontend**: a `DirectIntakeZone` component on `OverviewTab.tsx` (today's closest
+existing screen to the redesign proposal's "Matter Home") - a drop target using
+`@tauri-apps/api/webview`'s `getCurrentWebview().onDragDropEvent` (real OS file
+paths, Tauri v2) plus the picker button, showing plain-language status only
+("נקלטו N מסמכים", "N קבצים דורשים טיפול") - no extraction-state enum, hash, or OCR
+engine name anywhere in this view. A successful import calls both the tab's own
+`reload` and the matter-level `reload` passed down from `MatterWorkspace.tsx`, so
+document/fact counts update immediately without navigating away.
+
+**Acceptance test** (the one specified): open TAHRIR → create a matter → drag a PDF
+directly onto the matter's overview screen → automatic local processing begins with
+no button press → the same screen updates on its own → the lawyer can see what was
+received and what to do next. The backend half of this flow (copy/verify/register/
+extract/classify) is covered end-to-end by `direct_intake.rs`'s own tests; the
+interactive drag-and-drop half depends on the real Tauri webview and has not been
+exercised in a live app in this environment - see the QA note below.
+
+**Tests**: 10 new tests in `direct_intake.rs` covering provenance registration,
+the managed copy's independence from the original file (deleted after import, the
+occurrence still resolves), that imported content is genuinely read via the
+unmodified `process_matter_documents` pipeline (a `.txt` fixture's Hebrew text is
+found in `document_pages` afterward), hash-mismatch rejection and cleanup (both the
+happy and unhappy path through `verify_copy` directly), a real import failure
+writing nothing to the database, per-file failure isolation within a batch, cross-
+matter isolation for same-named files, and that the Office Root scanner's own
+tables (`matter_folder_bindings`/`matter_suggestions`/`scan_runs`) stay completely
+untouched by direct import. Full suite: 314/314 local (304 pre-existing + 10 new) -
+zero regressions in provenance, versioning, verification, or legal-rule tests.
+
+**QA**: `npm ci`/`npm audit --audit-level=high` (0 vulnerabilities)/
+`npm run contract:check` (135/135)/`npm run qa:static` (all checks pass)/
+`npm run build`/`cargo check --locked`/`cargo test --locked -- --test-threads=1`
+(314/314)/`git diff --check` (clean) all executed and green before commit. The
+interactive drag-and-drop flow itself depends on the real Tauri webview/IPC bridge
+and could not be exercised in a plain browser in this environment - full end-to-end
+confirmation is deferred to the real Windows build, per this project's established
+verification discipline for every other desktop-native feature.
+
+**Explicitly out of scope for this change** (Milestones 2-4 of the same proposal,
+not started): the AI policy gate's payload preview/cryptographic binding, the AI
+findings stream, and the "עבודת התיק"/"ניסוח" workspace consolidation.

@@ -50,6 +50,11 @@ export type DocumentIntakeSummary = {
   failed: number;
   unsupported: number;
   documents: DocumentIntakeOutcome[];
+  // UX Milestone 1: only present when the summary came from a direct import
+  // (import_document_files) rather than a plain office-root re-scan (process_
+  // matter_documents on its own never sets these).
+  imported?: number;
+  importErrors?: { fileName: string; errorMessage: string }[];
 };
 
 export type ExtractionRun = {

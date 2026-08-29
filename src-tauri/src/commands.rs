@@ -1,5 +1,5 @@
 use crate::{
-    ai, authorities, damage, extraction, intake, ledger, legal_docs, legal_rules, liability, matter_profile, medical, models, requirements, scanner, search, security,
+    ai, authorities, damage, direct_intake, extraction, intake, ledger, legal_docs, legal_rules, liability, matter_profile, medical, models, requirements, scanner, search, security,
     understanding, wage, workstreams,
     error::{AppError,AppResult}, AppState
 };
@@ -711,6 +711,36 @@ pub fn classify_document_manual(state: State<'_, AppState>, payload: Value) -> A
 pub fn process_matter_documents(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
     let matter_id=required_string(&payload,"matterId")?;
     intake::process_matter_documents(&state.db,matter_id,&state.resource_root)
+}
+
+/// UX Milestone 1: native multi-file picker, the "בחר קבצים" fallback to dragging
+/// files directly onto a matter - not a folder picker, and not tied to Office Root
+/// in any way.
+#[tauri::command]
+pub fn choose_document_files(app: AppHandle, state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let _=(&state,&payload);
+    let picked=app.dialog().file().blocking_pick_files();
+    let paths:Vec<String>=picked.unwrap_or_default().into_iter().map(|p|p.to_string()).collect();
+    Ok(json!({"paths":paths}))
+}
+
+/// UX Milestone 1: the canonical direct-import path (drag-and-drop or the picker
+/// above) - copies each file into a TAHRIR-managed location, verifies the copy by
+/// hash, registers provenance, then immediately runs the existing extraction/OCR/
+/// classification pipeline. See direct_intake.rs for the full contract.
+#[tauri::command]
+pub fn import_document_files(state: State<'_, AppState>, payload: Value) -> AppResult<Value> {
+    let matter_id=required_string(&payload,"matterId")?;
+    let paths=payload.get("paths").and_then(Value::as_array)
+        .ok_or_else(||AppError::Validation("paths is required".into()))?;
+    let source_paths:Vec<PathBuf>=paths.iter()
+        .filter_map(Value::as_str)
+        .map(PathBuf::from)
+        .collect();
+    if source_paths.is_empty() {
+        return Err(AppError::Validation("at least one file path is required".into()));
+    }
+    direct_intake::import_and_process(&state.db,matter_id,&source_paths,&state.documents_root,&state.resource_root)
 }
 
 /// Extraction audit trail (C1): every extraction attempt for a document's current

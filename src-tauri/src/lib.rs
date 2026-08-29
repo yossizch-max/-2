@@ -6,6 +6,7 @@ mod classification;
 mod commands;
 mod damage;
 mod db;
+mod direct_intake;
 mod error;
 mod extraction;
 mod fact_conflicts;
@@ -44,6 +45,10 @@ pub struct AppState {
     pub db: DbState,
     pub office_root: Mutex<Option<PathBuf>>,
     pub resource_root: PathBuf,
+    /// UX Milestone 1: where direct-imported document copies live, independent of
+    /// any Office Root binding - normal document intake never depends on this being
+    /// configured, matching the scanner staying a fully optional advanced workflow.
+    pub documents_root: PathBuf,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,6 +64,7 @@ pub fn run() {
                 db,
                 office_root:Mutex::new(None),
                 resource_root:resource_dir.join("resources"),
+                documents_root:data_dir.join("documents"),
             });
             Ok(())
         })
@@ -112,6 +118,8 @@ pub fn run() {
             commands::get_document_pages,
             commands::classify_document_manual,
             commands::process_matter_documents,
+            commands::choose_document_files,
+            commands::import_document_files,
             commands::list_extraction_runs,
             commands::list_tasks,
             commands::create_task,
