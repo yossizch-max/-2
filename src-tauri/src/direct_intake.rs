@@ -27,6 +27,7 @@ use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::fs;
+use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -131,6 +132,29 @@ fn import_one(db: &DbState, matter_id: &str, source_path: &Path, documents_root:
     Ok(document_id)
 }
 
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() { s.to_string() }
+    else if let Some(s) = payload.downcast_ref::<String>() { s.clone() }
+    else { "unknown error".to_string() }
+}
+
+/// Runs `f`, catching any panic and turning it into a normal `AppError` instead of
+/// letting it unwind. A dropped file's exact path/metadata reaches this code from a
+/// real OS-level drag-and-drop event - a source too varied to exhaustively test
+/// against (locked files, cloud-storage placeholders, unusual reparse points,
+/// permission-denied mid-read) - so this is the last line of defense: whatever goes
+/// wrong while importing one file becomes one more per-file error, exactly like any
+/// other single-file failure, and never something the caller (an async Tauri
+/// command) needs to unwind through.
+fn catch_and_describe<T>(f: impl FnOnce() -> AppResult<T> + UnwindSafe) -> AppResult<T> {
+    match catch_unwind(f) {
+        Ok(result) => result,
+        Err(payload) => Err(AppError::Validation(format!(
+            "unexpected failure while processing this file: {}", panic_message(payload)
+        ))),
+    }
+}
+
 /// Imports every given source path for one matter, then immediately runs the
 /// existing `intake::process_matter_documents` batch pipeline - unchanged, so
 /// extraction/OCR/classification for the newly imported files happens through
@@ -151,7 +175,7 @@ pub fn import_and_process(
 
     for source_path in source_paths {
         let file_name = source_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        match import_one(db, matter_id, source_path, documents_root) {
+        match catch_and_describe(|| import_one(db, matter_id, source_path, documents_root)) {
             Ok(_) => imported += 1,
             Err(e) => import_errors.push(json!({ "fileName": file_name, "errorMessage": e.to_string() })),
         }
@@ -388,5 +412,43 @@ mod tests {
         assert_eq!(bindings, 0);
         assert_eq!(suggestions, 0);
         assert_eq!(scan_runs, 0);
+    }
+
+    #[test]
+    fn a_panic_during_a_single_files_import_is_caught_and_described_instead_of_propagating() {
+        // import_and_process wraps every per-file import in catch_and_describe - this
+        // is the safety net for whatever a real OS-delivered drag-and-drop path can
+        // throw at us that no enumerated error path already covers. This test proves
+        // the wrapper itself never lets a panic escape, regardless of what import_one
+        // does today.
+        let result: AppResult<()> = catch_and_describe(|| panic!("simulated unexpected failure"));
+        match result {
+            Err(AppError::Validation(msg)) => assert!(
+                msg.contains("simulated unexpected failure"),
+                "the panic's own message must survive into the returned error: {msg}"
+            ),
+            other => panic!("expected a Validation error describing the panic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_panic_with_a_string_payload_is_also_described_correctly() {
+        let result: AppResult<()> = catch_and_describe(|| {
+            let owned = format!("boom {}", 1 + 1);
+            panic!("{owned}");
+        });
+        match result {
+            Err(AppError::Validation(msg)) => assert!(msg.contains("boom 2")),
+            other => panic!("expected a Validation error describing the panic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn catch_and_describe_passes_through_a_normal_result_unchanged() {
+        assert_eq!(catch_and_describe(|| Ok::<_, AppError>(42)).unwrap(), 42);
+        assert!(matches!(
+            catch_and_describe(|| Err::<i32, _>(AppError::NotFound("matter".into()))),
+            Err(AppError::NotFound(_))
+        ));
     }
 }

@@ -2156,3 +2156,122 @@ the document is present and readable. This has not been exercised in this
 environment (no real Tauri webview) and is the one item still open before this
 branch could be considered fully accepted; the branch remains unmerged into `main`
 pending that test.
+
+## UX Milestone 1 — Drag-and-Drop Crash Hardening (2026-08-29), investigation and defensive fix, NOT independently confirmed as the fix
+
+That live Windows test above found a real, release-blocking bug: on real Windows,
+dragging a file onto the direct-intake area closed the entire application
+immediately. **This session cannot launch a Windows GUI or a live Tauri webview at
+all** - there is no Windows OS, no display, and no way to perform a physical/native
+OS-level drag-and-drop gesture in this sandboxed Linux environment. Everything below
+is the result of static, evidence-based investigation of the exact pinned dependency
+source and this repo's own code, not a live reproduction - **the original crash was
+not reproduced here, and the fix below is not independently confirmed to resolve
+it.** A real Windows test of this exact commit is still required before this can be
+called closed.
+
+**Investigation, in the order it was actually done:**
+1. Checked `Cargo.toml` for `panic = "abort"` - absent, so an ordinary Rust panic
+   should not by itself take down the whole process (confirms nothing here converts
+   a ordinary panic into a hard abort by policy).
+2. Read `direct_intake.rs`/`commands.rs` end to end for `.unwrap()`/`.expect()`/
+   array-index panics reachable from a normal file drop - found none; every failure
+   path already returns a typed `AppError`.
+3. Read `tauri.conf.json` - no custom `dragDropEnabled` override (default `true`),
+   no window-close handlers, no `process::exit` anywhere in this repo.
+4. Read the JS side (`@tauri-apps/api` 2.11.1's actual installed `webview.js`, not
+   just its `.d.ts`) - confirmed `onDragDropEvent`'s real payload shape matches what
+   `DirectIntakeZone.tsx` assumes; not a type mismatch.
+5. Read the exact pinned native Windows implementation this build actually links:
+   `wry-0.55.1/src/webview2/drag_drop.rs`. Windows file drop is implemented as a
+   real Win32 OLE `IDropTarget` COM object (`RegisterDragDrop`) registered directly
+   on the WebView2 child window - a native callback invoked by the OS across a COM
+   vtable (`extern "system"`) boundary, entirely outside the DOM/JS layer. Inside
+   `iterate_filenames`, `DragEnter`/`Drop` call
+   `data_obj.as_ref().expect("Received null IDataObject")` - **a genuine `panic!()`**
+   that fires if the OS ever hands this callback a null `IDataObject` for the drag
+   (a real, documented Windows quirk for some drag sources - cloud-storage
+   placeholder files, some Explorer views, browser-originated drags; adjacent
+   Tauri issue: `tauri-apps/tauri#11274`, drag events from "Recent files" behaving
+   abnormally on Windows).
+6. This matters specifically because a Rust panic that unwinds across an
+   `extern "system"`/COM FFI boundary is undefined behavior, and Rust's runtime
+   is documented to hard-abort the whole process rather than unwind through it -
+   with no error dialog, no JS console message, no rejected promise. That is the
+   only mechanism found anywhere in this investigation that would produce exactly
+   the reported symptom (immediate, total app closure, Windows-only, no visible
+   error) rather than a graceful in-app error.
+7. Confirmed `wry::DragDropEvent` (the exact pinned 0.55.1 source) has only
+   `Enter`/`Over`/`Drop`/`Leave` variants, so `tauri-runtime-wry`'s defensive
+   `_ => unimplemented!()` catch-all (required only because the enum is
+   `#[non_exhaustive]`) is dead code against this specific pinned version - ruled
+   out as the cause.
+8. Confirmed via `cargo update -p wry --dry-run` that this repo is already on the
+   latest `tauri`/`wry` versions resolvable within the existing `tauri = "2"`
+   constraint - no version bump is available as a fix.
+9. This native panic path lives inside a third-party vendored crate (`wry`) whose
+   source this repo does not own and cannot safely patch as a "smallest change."
+
+**What was fixed, entirely within this repo's own code** (three real, independently
+verified issues found along the way, all addressed regardless of whether #5/#6
+above is the actual trigger):
+1. **`src-tauri/src/direct_intake.rs`**: every per-file import in
+   `import_and_process`'s loop is now wrapped in a new `catch_and_describe` helper
+   (`std::panic::catch_unwind`) instead of calling `import_one` directly. Any
+   panic during a single file's import - from any cause, known or not yet
+   enumerated (locked file, cloud placeholder, permission denial mid-read,
+   anything a real OS-delivered path can throw that no existing `AppError` path
+   already covers) - is now converted into one more `import_errors` entry, exactly
+   like any other single-file failure, and can never propagate out of the async
+   Tauri command. Verified safe against `DbState`'s existing mutex-poisoning
+   handling: `db.write` already returns a graceful `AppError::Validation` on a
+   poisoned lock rather than unwrapping (`db.rs:44-45`, pre-existing), so catching
+   a panic that occurred mid-transaction degrades to visible per-file errors, never
+   a second panic.
+2. **`src/matter/DirectIntakeZone.tsx`**: fixed a real async-cleanup race in the
+   drag-drop listener registration effect. `onDragDropEvent(...)` resolves
+   asynchronously (it subscribes to four separate Tauri events internally); if the
+   component unmounted (matter/tab switch) before that promise resolved, the old
+   code left `unlisten` as `undefined` forever, so the eventually-registered
+   listener was never released - opening several matters in a row could leave
+   multiple stale drag-drop listeners all firing on the same webview at once. A
+   `cancelled` flag now unlistens immediately if the component is already gone by
+   the time registration resolves.
+3. Same file: the drag-drop event callback's body is now wrapped in try/catch (an
+   unexpected payload shape can no longer become an uncaught exception), the
+   `paths.length===0` check moved inside `runImport`'s own try block (so `runImport`
+   itself can never throw synchronously, only ever reject gracefully into `setError`),
+   and the registration promise chain gained a `.catch()`. The failed-import summary
+   now shows each file's actual `errorMessage`, not just its name - satisfying
+   "unsupported/malformed/unreadable/locked files must produce a clear user-visible
+   error" as an explicit UI guarantee, not an implicit one.
+
+**New tests** (`direct_intake.rs`, 3 added): `a_panic_during_a_single_files_import_
+is_caught_and_described_instead_of_propagating` and `a_panic_with_a_string_payload_
+is_also_described_correctly` prove `catch_and_describe` converts both `&str`- and
+`String`-payload panics into a descriptive `AppError::Validation` instead of
+propagating; `catch_and_describe_passes_through_a_normal_result_unchanged` proves
+the wrapper is a no-op for the ordinary `Ok`/`Err` case. These test the safety-net
+mechanism directly (with a synthetic panicking closure) rather than forcing an
+artificial panic into legitimate business logic that has no natural panic trigger
+today.
+
+**Files changed**: `src-tauri/src/direct_intake.rs`, `src/matter/
+DirectIntakeZone.tsx`. No schema/migration change, no command/IPC contract change
+(confirmed by `contract:check` staying at 135/135), no other file touched -
+`process_matter_documents`, provenance/versioning, hash verification, and every
+other existing backend safeguard are untouched.
+
+**QA**: `npm run build` (clean) / `npm run contract:check` (135/135, unchanged) /
+`npm run qa:static` (all checks pass, unchanged) / `cargo check --locked` (clean,
+pre-existing warnings only) / `cargo test --locked -- --test-threads=1` (**317/317**
+- 314 + 3 new, 0 failed) / `npm audit --audit-level=high` (0 vulnerabilities) /
+`git diff --check` (clean) - all executed and green.
+
+**What was NOT done, stated plainly**: the live Windows acceptance flow (create
+matter → drag a real PDF → app stays open → auto-processing → Matter Home updates →
+Documents shows the file → file opens/reads) and the failure-case test (drag an
+unsupported/invalid file → app stays open → clear error shown) were **not**
+executed - this environment has no Windows GUI to run them on. This commit is a
+rigorous, evidence-grounded hardening pass, not a confirmed fix. The branch remains
+unmerged pending an actual Windows re-test of this exact commit.

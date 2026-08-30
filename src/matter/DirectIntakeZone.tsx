@@ -18,9 +18,9 @@ export function DirectIntakeZone({matterId,onImported}:{matterId:string;onImport
   const dragCounter=useRef(0);
 
   const runImport=async(paths:string[])=>{
-    if(paths.length===0)return;
-    setBusy(true);setError(null);setSummary(null);
     try{
+      if(paths.length===0)return;
+      setBusy(true);setError(null);setSummary(null);
       const result=await commands.import_document_files({matterId,paths}) as DocumentIntakeSummary;
       setSummary(result);
       onImported();
@@ -36,15 +36,32 @@ export function DirectIntakeZone({matterId,onImported}:{matterId:string;onImport
     }catch(e){ setError(String(e)); }
   };
 
+  // A dragged file must never be able to take the whole app down with it: this
+  // effect never lets an exception inside the native drag-drop callback escape
+  // uncaught, and it never leaks a stale listener registration. `getCurrentWebview
+  // ().onDragDropEvent` resolves asynchronously (it subscribes to four separate
+  // Tauri events internally) - if this component unmounts (matter/tab switch)
+  // before that promise settles, the old code left `unlisten` as `undefined`
+  // forever, so the listener it eventually registered was never released. Opening
+  // several matters in a row could then leave multiple stale drag-drop listeners
+  // all still firing on the current webview at once. `cancelled` closes that race:
+  // if we've already unmounted by the time registration resolves, unlisten
+  // immediately instead of leaving it dangling.
   useEffect(()=>{
+    let cancelled=false;
     let unlisten:(()=>void)|undefined;
     getCurrentWebview().onDragDropEvent((event)=>{
-      const payload=event.payload as {type:string;paths?:string[]};
-      if(payload.type==="enter"||payload.type==="over"){ dragCounter.current+=1; setDragOver(true); }
-      else if(payload.type==="leave"){ dragCounter.current=0; setDragOver(false); }
-      else if(payload.type==="drop"){ dragCounter.current=0; setDragOver(false); runImport(payload.paths??[]); }
-    }).then(fn=>{ unlisten=fn; });
-    return ()=>{ unlisten?.(); };
+      try{
+        const payload=event.payload as {type:string;paths?:string[]};
+        if(payload.type==="enter"||payload.type==="over"){ dragCounter.current+=1; setDragOver(true); }
+        else if(payload.type==="leave"){ dragCounter.current=0; setDragOver(false); }
+        else if(payload.type==="drop"){ dragCounter.current=0; setDragOver(false); void runImport(payload.paths??[]); }
+      }catch(e){ setError(String(e)); setDragOver(false); dragCounter.current=0; }
+    }).then(fn=>{
+      if(cancelled){ fn(); return; }
+      unlisten=fn;
+    }).catch(e=>{ setError(String(e)); });
+    return ()=>{ cancelled=true; unlisten?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[matterId]);
 
@@ -66,9 +83,12 @@ export function DirectIntakeZone({matterId,onImported}:{matterId:string;onImport
         {summary.ocred?` · ${summary.ocred} עם OCR`:""}
         {summary.classified?` · ${summary.classified} סווגו`:""}
       </strong>
-      {(summary.importErrors?.length??0)>0 && <p className="quiet" style={{marginTop:6}}>
-        {summary.importErrors!.length} קבצים לא נקלטו: {summary.importErrors!.map(e=>e.fileName).join(", ")}
-      </p>}
+      {(summary.importErrors?.length??0)>0 && <div style={{marginTop:6}}>
+        <p className="quiet">{summary.importErrors!.length} קבצים לא נקלטו:</p>
+        {summary.importErrors!.map((e,i)=><p className="quiet" key={i} style={{margin:"2px 0"}}>
+          <strong>{e.fileName}</strong> — {e.errorMessage}
+        </p>)}
+      </div>}
       {(summary.failed??0)>0 && <p className="quiet" style={{marginTop:6}}>{summary.failed} מסמכים דורשים טיפול — ראו רשימת המסמכים למטה.</p>}
     </div>}
   </section>;
